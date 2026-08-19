@@ -64,10 +64,17 @@ interface SavingsGoal {
   savings_logs?: { id: string; amount: number; created_at: string }[];
 }
 
+// Module-level in-memory cache for instant cross-tab navigation
+let cachedGoals: SavingsGoal[] = [];
+let cachedGlobalDailyLimit: number | null = null;
+let cachedTodayExpenseTotal: number = 0;
+let cachedUserProfile: { whatsapp_number: string; is_whatsapp_verified: boolean } | null = null;
+let hasLoadedGoalsOnce = false;
+
 export default function NabungPage() {
   const { user } = useDouit();
-  const [goals, setGoals] = useState<SavingsGoal[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [goals, setGoals] = useState<SavingsGoal[]>(cachedGoals);
+  const [loading, setLoading] = useState<boolean>(!hasLoadedGoalsOnce);
 
   // Modals state
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -78,7 +85,7 @@ export default function NabungPage() {
   // Create Form State
   const [title, setTitle] = useState("");
   const [targetAmount, setTargetAmount] = useState<string>("");
-  const [maxDailyExpense, setMaxDailyExpense] = useState<string>("");
+  const [maxDailyExpense, setMaxDailyExpense] = useState<string>(cachedGlobalDailyLimit ? String(cachedGlobalDailyLimit) : "");
   const [durationMode, setDurationMode] = useState<'DAYS' | 'DATE'>('DAYS');
   const [daysCount, setDaysCount] = useState<string>("30");
   const [targetDate, setTargetDate] = useState<string>(() => {
@@ -88,14 +95,14 @@ export default function NabungPage() {
   });
   const [storageType, setStorageType] = useState<'GOPAY_MERCHANT' | 'TUNAI' | 'BANK_TRANSFER'>('GOPAY_MERCHANT');
   const [storageDetail, setStorageDetail] = useState("");
-  const [whatsappNumber, setWhatsappNumber] = useState("");
+  const [whatsappNumber, setWhatsappNumber] = useState(cachedUserProfile?.whatsapp_number || "");
   const [reminderCount, setReminderCount] = useState<number>(1);
   const [reminderTimes, setReminderTimes] = useState<string[]>(['08:00']);
 
   // WhatsApp OTP Verification State
   const phoneInputRef = useRef<HTMLInputElement>(null);
-  const [userProfile, setUserProfile] = useState<{ whatsapp_number: string; is_whatsapp_verified: boolean } | null>(null);
-  const [isVerified, setIsVerified] = useState(false);
+  const [userProfile, setUserProfile] = useState<{ whatsapp_number: string; is_whatsapp_verified: boolean } | null>(cachedUserProfile);
+  const [isVerified, setIsVerified] = useState(cachedUserProfile?.is_whatsapp_verified || false);
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState("");
   const [cooldown, setCooldown] = useState(0);
@@ -155,50 +162,72 @@ export default function NabungPage() {
     return () => clearInterval(interval);
   }, [submitting]);
 
-
   // Deposit Form State
   const [depositAmount, setDepositAmount] = useState<string>("");
   const [depositNotes, setDepositNotes] = useState<string>("");
   const [submittingDeposit, setSubmittingDeposit] = useState(false);
-  const [todayExpenseTotal, setTodayExpenseTotal] = useState<number>(0);
-  const [globalDailyLimit, setGlobalDailyLimit] = useState<number | null>(null);
-
+  const [todayExpenseTotal, setTodayExpenseTotal] = useState<number>(cachedTodayExpenseTotal);
+  const [globalDailyLimit, setGlobalDailyLimit] = useState<number | null>(cachedGlobalDailyLimit);
 
   const fetchGoals = async (isBackground = false) => {
     if (!user) return;
-    if (!isBackground) setLoading(true);
+    if (!isBackground && !hasLoadedGoalsOnce) setLoading(true);
     const supabase = createClient();
     
-    // 1. Fetch Goals with savings_logs
-    const { data: goalsData } = await supabase
-      .from('savings_goals')
-      .select('*, savings_logs(id, amount, created_at)')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-
-    if (goalsData) {
-      setGoals(goalsData as SavingsGoal[]);
-    }
-
-    // 2. Fetch User Profile to get Global Daily Expense Limit & Verified WhatsApp Info
     try {
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('daily_expense_limit, whatsapp_number, is_whatsapp_verified')
-        .eq('id', user.id)
-        .maybeSingle();
+      const todayWIB = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Jakarta',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
 
+      // Parallelize all 4 Supabase queries
+      const [goalsRes, profileRes, txsRes, nabungCatRes] = await Promise.all([
+        supabase
+          .from('savings_goals')
+          .select('*, savings_logs(id, amount, created_at)')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('profiles')
+          .select('daily_expense_limit, whatsapp_number, is_whatsapp_verified')
+          .eq('id', user.id)
+          .maybeSingle(),
+        supabase
+          .from('transactions')
+          .select('amount, created_at, type, status, merchant, notes, category_id')
+          .eq('user_id', user.id)
+          .eq('type', 'EXPENSE')
+          .eq('status', 'APPROVED'),
+        supabase
+          .from('categories')
+          .select('id')
+          .eq('name', 'Nabung')
+          .maybeSingle()
+      ]);
+
+      const goalsData = goalsRes.data as SavingsGoal[] | null;
+      if (goalsData) {
+        cachedGoals = goalsData;
+        setGoals(goalsData);
+      }
+
+      const profileData = profileRes.data;
+      let limitValue: number | null = null;
       const pLimit = profileData?.daily_expense_limit ? Number(profileData.daily_expense_limit) : null;
       if (pLimit !== null && pLimit > 0) {
-        setGlobalDailyLimit(pLimit);
+        limitValue = pLimit;
         setMaxDailyExpense((prev) => prev || String(pLimit));
       } else {
         const goalFallback = goalsData?.find((g: any) => Number(g.max_daily_expense) > 0)?.max_daily_expense;
         if (goalFallback) {
-          setGlobalDailyLimit(Number(goalFallback));
+          limitValue = Number(goalFallback);
           setMaxDailyExpense((prev) => prev || String(goalFallback));
         }
       }
+      cachedGlobalDailyLimit = limitValue;
+      setGlobalDailyLimit(limitValue);
 
       const existingGoalPhone = goalsData?.find((g: any) => g.whatsapp_number)?.whatsapp_number || "";
       const verifiedPhone = profileData?.whatsapp_number || (user as any)?.user_metadata?.whatsapp_number || existingGoalPhone || (user as any)?.phone || "";
@@ -208,72 +237,57 @@ export default function NabungPage() {
         (existingGoalPhone && existingGoalPhone.length >= 10)
       );
 
-      setUserProfile({
+      const uProfile = {
         whatsapp_number: verifiedPhone,
         is_whatsapp_verified: isPhoneVerified,
-      });
+      };
+      cachedUserProfile = uProfile;
+      setUserProfile(uProfile);
 
       if (verifiedPhone && isPhoneVerified) {
         setWhatsappNumber(verifiedPhone);
         setIsVerified(true);
       }
+
+      const txsData = txsRes.data;
+      const nabungCategoryId = nabungCatRes.data?.id;
+
+      if (txsData) {
+        const nonSavingsTotal = txsData
+          .filter((tx: any) => {
+            if (!tx.created_at) return false;
+            const txDateWIB = new Intl.DateTimeFormat('en-CA', {
+              timeZone: 'Asia/Jakarta',
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+            }).format(new Date(tx.created_at));
+            if (txDateWIB !== todayWIB) return false;
+
+            // Exclude Nabung category
+            if (nabungCategoryId && tx.category_id === nabungCategoryId) return false;
+
+            // Exclude merchant / notes mentioning savings
+            const merchant = (tx.merchant || '').toLowerCase();
+            const notes = (tx.notes || '').toLowerCase();
+            if (merchant.startsWith('nabung') || notes.includes('setoran tabungan') || notes.includes('setoran via whatsapp')) {
+              return false;
+            }
+
+            return true;
+          })
+          .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
+
+        cachedTodayExpenseTotal = nonSavingsTotal;
+        setTodayExpenseTotal(nonSavingsTotal);
+      }
+
+      hasLoadedGoalsOnce = true;
     } catch (err) {
-      console.warn("Could not fetch profile data:", err);
+      console.warn("Could not fetch profile or goals data:", err);
+    } finally {
+      if (!isBackground) setLoading(false);
     }
-
-    // 3. Fetch today's approved non-savings expenses
-    const todayWIB = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Jakarta',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(new Date());
-
-    const { data: txsData } = await supabase
-      .from('transactions')
-      .select('amount, created_at, type, status, merchant, notes, category_id')
-      .eq('user_id', user.id)
-      .eq('type', 'EXPENSE')
-      .eq('status', 'APPROVED');
-
-    const { data: nabungCategory } = await supabase
-      .from('categories')
-      .select('id')
-      .eq('name', 'Nabung')
-      .maybeSingle();
-
-    const nabungCategoryId = nabungCategory?.id;
-
-    if (txsData) {
-      const nonSavingsTotal = txsData
-        .filter((tx: any) => {
-          if (!tx.created_at) return false;
-          const txDateWIB = new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'Asia/Jakarta',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-          }).format(new Date(tx.created_at));
-          if (txDateWIB !== todayWIB) return false;
-
-          // Exclude Nabung category
-          if (nabungCategoryId && tx.category_id === nabungCategoryId) return false;
-
-          // Exclude merchant / notes mentioning savings
-          const merchant = (tx.merchant || '').toLowerCase();
-          const notes = (tx.notes || '').toLowerCase();
-          if (merchant.startsWith('nabung') || notes.includes('setoran tabungan') || notes.includes('setoran via whatsapp')) {
-            return false;
-          }
-
-          return true;
-        })
-        .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
-
-      setTodayExpenseTotal(nonSavingsTotal);
-    }
-
-    if (!isBackground) setLoading(false);
   };
 
 
@@ -498,13 +512,17 @@ export default function NabungPage() {
       }
 
       if (whatsappNumber.trim().length > 0 && isVerified) {
-        setUserProfile({
+        const uProfile = {
           whatsapp_number: whatsappNumber.trim(),
           is_whatsapp_verified: true,
-        });
+        };
+        cachedUserProfile = uProfile;
+        setUserProfile(uProfile);
       }
 
-      setGoals([data as SavingsGoal, ...goals]);
+      const nextGoals = [data as SavingsGoal, ...goals];
+      cachedGoals = nextGoals;
+      setGoals(nextGoals);
       setCreateModalOpen(false);
       resetCreateForm();
       toast.success("Target impian berhasil dibuat!");
@@ -753,7 +771,9 @@ export default function NabungPage() {
       .single();
 
     if (updatedGoal) {
-      setGoals(goals.map(g => g.id === updatedGoal.id ? (updatedGoal as SavingsGoal) : g));
+      const nextGoals = goals.map(g => g.id === updatedGoal.id ? (updatedGoal as SavingsGoal) : g);
+      cachedGoals = nextGoals;
+      setGoals(nextGoals);
       setDepositModalOpen(false);
       setSelectedGoal(null);
       toast.success("Setoran berhasil dicatat!");
@@ -776,7 +796,9 @@ export default function NabungPage() {
       toast.error(`Gagal menghapus target: ${error.message}`);
       return;
     }
-    setGoals(goals.filter(g => g.id !== deleteGoalId));
+    const nextGoals = goals.filter(g => g.id !== deleteGoalId);
+    cachedGoals = nextGoals;
+    setGoals(nextGoals);
     setDeleteGoalId(null);
     toast.success("Target nabung berhasil dihapus.");
   };
@@ -858,13 +880,21 @@ export default function NabungPage() {
               <Wallet className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl sm:text-3xl font-bold tracking-tight text-[#a3e635] relative z-10">
-            {formatRupiah(totalSaved)}
-          </div>
-          <p className="text-xs text-[#A8C9B9]/70 mt-2 flex items-center gap-1 relative z-10 font-medium">
-            <TrendingUp className="w-3.5 h-3.5 text-lime-400" />
-            <span>Terkumpul dari {goals.length} target impian</span>
-          </p>
+          {loading ? (
+            <div className="h-8 w-44 bg-emerald-950/60 rounded-lg animate-pulse my-1 relative z-10 border border-emerald-800/40" />
+          ) : (
+            <div className="text-2xl sm:text-3xl font-bold tracking-tight text-[#a3e635] relative z-10">
+              {formatRupiah(totalSaved)}
+            </div>
+          )}
+          {loading ? (
+            <div className="h-4 w-36 bg-emerald-950/40 rounded animate-pulse mt-2 relative z-10" />
+          ) : (
+            <p className="text-xs text-[#A8C9B9]/70 mt-2 flex items-center gap-1 relative z-10 font-medium">
+              <TrendingUp className="w-3.5 h-3.5 text-lime-400" />
+              <span>Terkumpul dari {goals.length} target impian</span>
+            </p>
+          )}
         </div>
 
         {/* Card 2: Target Aktif */}
@@ -876,13 +906,17 @@ export default function NabungPage() {
               <Target className="w-4 h-4" />
             </div>
           </div>
-          <div className="flex items-baseline gap-2 relative z-10">
-            <span className="text-2xl sm:text-3xl font-bold text-lime-400">{activeGoalsCount}</span>
-            <span className="text-xs text-[#A8C9B9] font-medium">Aktif</span>
-            <span className="text-[#A8C9B9]/40 mx-1">/</span>
-            <span className="text-xl font-bold text-emerald-200">{completedGoalsCount}</span>
-            <span className="text-xs text-[#A8C9B9]/70 font-medium">Selesai</span>
-          </div>
+          {loading ? (
+            <div className="h-8 w-28 bg-emerald-950/60 rounded-lg animate-pulse my-1 relative z-10 border border-emerald-800/40" />
+          ) : (
+            <div className="flex items-baseline gap-2 relative z-10">
+              <span className="text-2xl sm:text-3xl font-bold text-lime-400">{activeGoalsCount}</span>
+              <span className="text-xs text-[#A8C9B9] font-medium">Aktif</span>
+              <span className="text-[#A8C9B9]/40 mx-1">/</span>
+              <span className="text-xl font-bold text-emerald-200">{completedGoalsCount}</span>
+              <span className="text-xs text-[#A8C9B9]/70 font-medium">Selesai</span>
+            </div>
+          )}
           <p className="text-xs text-[#A8C9B9]/70 mt-2 relative z-10 font-medium">
             Fokus capai impian Anda tepat waktu
           </p>
@@ -897,10 +931,14 @@ export default function NabungPage() {
               <Flame className="w-4 h-4 text-amber-400 fill-amber-400" />
             </div>
           </div>
-          <div className="text-2xl sm:text-3xl font-bold tracking-tight text-amber-300 flex items-center gap-2 relative z-10">
-            <span>{globalStreak}</span>
-            <span className="text-sm font-semibold text-amber-400/90">Hari Berturut-turut</span>
-          </div>
+          {loading ? (
+            <div className="h-8 w-36 bg-amber-950/60 rounded-lg animate-pulse my-1 relative z-10 border border-amber-800/40" />
+          ) : (
+            <div className="text-2xl sm:text-3xl font-bold tracking-tight text-amber-300 flex items-center gap-2 relative z-10">
+              <span>{globalStreak}</span>
+              <span className="text-sm font-semibold text-amber-400/90">Hari Berturut-turut</span>
+            </div>
+          )}
           <p className="text-xs text-[#A8C9B9]/70 mt-2 relative z-10 font-medium">
             Disiplin setoran harian memicu kebiasaan positif
           </p>
@@ -919,10 +957,52 @@ export default function NabungPage() {
           </span>
         </div>
 
-        {loading ? (
-          <div className="p-12 text-center text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-sm">
-            <RefreshCw className="w-6 h-6 animate-spin mx-auto text-emerald-600 mb-2" />
-            <p className="text-sm">Memuat data target tabungan...</p>
+        {loading && goals.length === 0 ? (
+          /* SKELETON GOALS GRID */
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className="bg-gradient-to-br from-[#122e23] to-[#0a1e16] text-white border border-emerald-800/40 shadow-lg rounded-2xl p-6 flex flex-col justify-between relative overflow-hidden animate-pulse"
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-3 mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-lg bg-emerald-950/80 border border-emerald-700/40 shrink-0" />
+                      <div className="space-y-1.5">
+                        <div className="h-4 w-32 bg-emerald-950/80 rounded" />
+                        <div className="h-3 w-20 bg-emerald-950/60 rounded" />
+                      </div>
+                    </div>
+                    <div className="h-6 w-16 bg-emerald-950/80 rounded-full" />
+                  </div>
+
+                  <div className="my-4 space-y-2">
+                    <div className="flex justify-between">
+                      <div className="h-3 w-24 bg-emerald-950/70 rounded" />
+                      <div className="h-3 w-8 bg-emerald-950/70 rounded" />
+                    </div>
+                    <div className="w-full h-3 bg-emerald-950/80 rounded-full overflow-hidden p-0.5 border border-emerald-800/60">
+                      <div className="h-full bg-emerald-700/40 rounded-full w-1/3" />
+                    </div>
+                    <div className="flex justify-between">
+                      <div className="h-3 w-20 bg-emerald-950/60 rounded" />
+                      <div className="h-3 w-28 bg-emerald-950/60 rounded" />
+                    </div>
+                  </div>
+
+                  <div className="bg-emerald-950/60 border border-emerald-800/40 rounded-xl p-3 my-4 space-y-2">
+                    <div className="h-3 w-full bg-emerald-900/30 rounded" />
+                    <div className="h-3 w-3/4 bg-emerald-900/30 rounded" />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 pt-2 border-t border-emerald-900/60">
+                  <div className="flex-1 h-9 rounded-xl bg-emerald-950/80 border border-emerald-800/40" />
+                  <div className="w-9 h-9 rounded-xl bg-emerald-950/80 border border-emerald-800/40" />
+                </div>
+              </div>
+            ))}
           </div>
         ) : goals.length === 0 ? (
           /* EMPTY STATE */

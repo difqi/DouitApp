@@ -41,6 +41,13 @@ const formatMoney = (value: number | string) =>
     maximumFractionDigits: 0,
   }).format(Number(value));
 
+// Module-level in-memory cache for instant cross-tab navigation
+let cachedLaporanAccounts: any[] = [];
+let cachedLaporanCategories: any[] = [];
+let cachedLaporanMerchantRules: any[] = [];
+let cachedLaporanTransactions: any[] = [];
+let hasLoadedLaporanOnce = false;
+
 export default function LaporanPage() {
   const [activeTab, setActiveTab] = useState("Bulanan");
   const [breakdownMode, setBreakdownMode] = useState("Kategori");
@@ -57,10 +64,11 @@ export default function LaporanPage() {
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
   const exportDropdownRef = useRef<HTMLDivElement>(null);
 
-  const [transactions, setTransactions] = useState<any[]>([]);
-  const [accounts, setAccounts] = useState<any[]>([]);
-  const [categories, setCategories] = useState<any[]>([]);
-  const [merchantRules, setMerchantRules] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<any[]>(cachedLaporanTransactions);
+  const [accounts, setAccounts] = useState<any[]>(cachedLaporanAccounts);
+  const [categories, setCategories] = useState<any[]>(cachedLaporanCategories);
+  const [merchantRules, setMerchantRules] = useState<any[]>(cachedLaporanMerchantRules);
+  const [isLoading, setIsLoading] = useState<boolean>(!hasLoadedLaporanOnce);
   const [editingType, setEditingType] = useState<"category" | "merchant">("category");
   const [isSavingBudget, setIsSavingBudget] = useState(false);
   const [hoveredSlice, setHoveredSlice] = useState<string | null>(null);
@@ -73,29 +81,45 @@ export default function LaporanPage() {
   useEffect(() => {
     if (!user) return;
     const fetchData = async () => {
+      if (!hasLoadedLaporanOnce) {
+        setIsLoading(true);
+      }
       const supabase = createClient();
       
-      const { data: accData } = await supabase.from('payment_accounts').select('*').eq('user_id', user.id);
-      if (accData) setAccounts(accData);
-      
-      const { data: catData } = await supabase.from('categories').select('id, name, type, is_system, budget_limit, user_id, category_budgets(amount)').or(`user_id.eq.${user.id},is_system.eq.true,user_id.is.null`);
-      if (catData) {
-        setCategories(catData.map((c: any) => ({
-          ...c,
-          budget_limit: c.category_budgets && c.category_budgets.length > 0 ? c.category_budgets[0].amount : (c.budget_limit || 0)
-        })));
+      try {
+        const [accRes, catRes, mrRes, txRes] = await Promise.all([
+          supabase.from('payment_accounts').select('*').eq('user_id', user.id),
+          supabase.from('categories').select('id, name, type, is_system, budget_limit, user_id, category_budgets(amount)').or(`user_id.eq.${user.id},is_system.eq.true,user_id.is.null`),
+          supabase.from('user_merchant_rules').select('*').eq('user_id', user.id),
+          supabase.from('transactions').select(`*, categories(name)`).eq('user_id', user.id).eq('status', 'APPROVED')
+        ]);
+
+        if (accRes.data) {
+          cachedLaporanAccounts = accRes.data;
+          setAccounts(accRes.data);
+        }
+        if (catRes.data) {
+          const formattedCats = catRes.data.map((c: any) => ({
+            ...c,
+            budget_limit: c.category_budgets && c.category_budgets.length > 0 ? c.category_budgets[0].amount : (c.budget_limit || 0)
+          }));
+          cachedLaporanCategories = formattedCats;
+          setCategories(formattedCats);
+        }
+        if (mrRes.data) {
+          cachedLaporanMerchantRules = mrRes.data;
+          setMerchantRules(mrRes.data);
+        }
+        if (txRes.data) {
+          cachedLaporanTransactions = txRes.data;
+          setTransactions(txRes.data);
+        }
+        hasLoadedLaporanOnce = true;
+      } catch (err) {
+        console.error("Error loading laporan data:", err);
+      } finally {
+        setIsLoading(false);
       }
-      
-      const { data: mrData } = await supabase.from('user_merchant_rules').select('*').eq('user_id', user.id);
-      if (mrData) setMerchantRules(mrData);
-      
-      const { data: txData } = await supabase
-        .from('transactions')
-        .select(`*, categories(name)`)
-        .eq('user_id', user.id)
-        .eq('status', 'APPROVED');
-        
-      if (txData) setTransactions(txData);
     };
     fetchData();
   }, [user]);
@@ -507,10 +531,12 @@ export default function LaporanPage() {
         // Re-fetch to ensure sync and close modal
         const { data: catData } = await supabase.from('categories').select('id, name, type, is_system, budget_limit, user_id, category_budgets(amount)').or(`user_id.eq.${activeUserId},is_system.eq.true,user_id.is.null`);
         if (catData) {
-          setCategories(catData.map((c: any) => ({
+          const formatted = catData.map((c: any) => ({
             ...c,
             budget_limit: c.category_budgets && c.category_budgets.length > 0 ? c.category_budgets[0].amount : (c.budget_limit || 0)
-          })));
+          }));
+          cachedLaporanCategories = formatted;
+          setCategories(formatted);
         }
         toast.success("Anggaran kategori berhasil disimpan!");
         setEditBudgetModalOpen(false);
@@ -525,11 +551,14 @@ export default function LaporanPage() {
         
         setMerchantRules(rules => {
           const exists = rules.find(r => r.merchant_pattern.toLowerCase() === editingCatName.toLowerCase());
+          let updated;
           if (exists) {
-            return rules.map(r => r.id === exists.id ? { ...r, budget_limit: newBudget } : r);
+            updated = rules.map(r => r.id === exists.id ? { ...r, budget_limit: newBudget } : r);
           } else {
-            return [...rules, { merchant_pattern: editingCatName, budget_limit: newBudget }];
+            updated = [...rules, { merchant_pattern: editingCatName, budget_limit: newBudget }];
           }
+          cachedLaporanMerchantRules = updated;
+          return updated;
         });
         toast.success("Anggaran merchant berhasil disimpan!");
         setEditBudgetModalOpen(false);
@@ -956,30 +985,44 @@ export default function LaporanPage() {
             <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
               <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
               <span className="text-sm font-semibold text-[#A8C9B9] relative z-10">Total Pemasukan</span>
-              <div className="mt-2 text-2xl font-bold tracking-tight text-lime-400 relative z-10">{formatMoney(totalIncome)}</div>
+              {isLoading ? (
+                <div className="h-8 w-36 bg-emerald-950/60 rounded-lg animate-pulse mt-2 relative z-10 border border-emerald-800/40" />
+              ) : (
+                <div className="mt-2 text-2xl font-bold tracking-tight text-lime-400 relative z-10">{formatMoney(totalIncome)}</div>
+              )}
             </div>
             <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
               <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
               <span className="text-sm font-semibold text-[#A8C9B9] relative z-10">Total Pengeluaran</span>
-              <div className="mt-2 text-2xl font-bold tracking-tight text-white relative z-10">{formatMoney(totalExpense)}</div>
+              {isLoading ? (
+                <div className="h-8 w-36 bg-emerald-950/60 rounded-lg animate-pulse mt-2 relative z-10 border border-emerald-800/40" />
+              ) : (
+                <div className="mt-2 text-2xl font-bold tracking-tight text-white relative z-10">{formatMoney(totalExpense)}</div>
+              )}
             </div>
             <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
               <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
               <span className="text-sm font-semibold text-[#A8C9B9] relative z-10">Sisa Uang (Surplus)</span>
-              <div className={`mt-2 text-2xl font-bold tracking-tight ${netSurplus < 0 ? 'text-rose-400' : 'text-lime-400'} relative z-10`}>
-                {netSurplus > 0 ? '+' : ''}{formatMoney(netSurplus)}
-              </div>
+              {isLoading ? (
+                <div className="h-8 w-36 bg-emerald-950/60 rounded-lg animate-pulse mt-2 relative z-10 border border-emerald-800/40" />
+              ) : (
+                <div className={`mt-2 text-2xl font-bold tracking-tight ${netSurplus < 0 ? 'text-rose-400' : 'text-lime-400'} relative z-10`}>
+                  {netSurplus > 0 ? '+' : ''}{formatMoney(netSurplus)}
+                </div>
+              )}
             </div>
             <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-center items-start">
               <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
               <div className="flex items-center justify-between w-full mb-2 relative z-10">
                 <span className="text-sm font-semibold text-[#A8C9B9]">Status Alokasi</span>
-                {totalBudgetedCount > 0 && (
+                {!isLoading && totalBudgetedCount > 0 && (
                   <span className="text-[11px] text-[#A8C9B9]/70 font-normal">Dari {totalBudgetedCount} anggaran diatur</span>
                 )}
               </div>
               <div className="w-full relative z-10">
-                {totalBudgetedCount === 0 ? (
+                {isLoading ? (
+                  <div className="h-6 w-28 bg-emerald-950/60 rounded-full animate-pulse mt-1 border border-emerald-800/40" />
+                ) : totalBudgetedCount === 0 ? (
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-800 text-gray-400 border border-gray-700">Belum diatur</span>
                 ) : overbudgetCount > 0 ? (
                   <div className="flex flex-row gap-2">
@@ -1029,7 +1072,27 @@ export default function LaporanPage() {
                 </div>
               </div>
               
-              {chartSum === 0 ? (
+              {isLoading ? (
+                <div className="flex flex-col md:flex-row gap-8 items-center md:items-start w-full py-4 animate-pulse">
+                  <div className="w-full md:w-[35%] flex flex-col items-center gap-6">
+                    <div className="w-48 h-48 rounded-full border-[14px] border-slate-200 bg-slate-100/50 flex items-center justify-center">
+                      <div className="w-24 h-24 rounded-full bg-white shadow-inner" />
+                    </div>
+                    <div className="h-16 w-full bg-emerald-950/20 rounded-xl border border-emerald-900/10" />
+                  </div>
+                  <div className="w-full md:w-[65%] space-y-4">
+                    {[1, 2, 3, 4, 5].map((i) => (
+                      <div key={i} className="space-y-2">
+                        <div className="flex justify-between">
+                          <div className="h-4 w-28 bg-slate-200 rounded" />
+                          <div className="h-4 w-20 bg-slate-200 rounded" />
+                        </div>
+                        <div className="w-full h-2 bg-slate-200/60 rounded-full" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : chartSum === 0 ? (
                 <div className="py-12 text-center text-gray-400 text-sm">Tidak ada transaksi di periode ini untuk mode yang dipilih.</div>
               ) : primaryMode === 'Net' ? (
                 <div className="overflow-x-auto w-full">
@@ -1065,7 +1128,7 @@ export default function LaporanPage() {
                                    ? "inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold cursor-pointer transition-all shadow-sm hover:scale-[1.02]"
                                    : "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-transparent hover:border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:bg-emerald-500/20 text-xs font-medium text-gray-400 italic cursor-pointer transition-all duration-200"}`}
                                  title="Edit Alokasi Anggaran"
-                               >
+                                >
                                  <span className={item.budget > 0 ? "text-white dark:text-slate-100" : ""}>
                                    {item.budget > 0 ? formatMoney(item.budget) : "Belum diatur"}
                                  </span>
@@ -1196,28 +1259,40 @@ export default function LaporanPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {accounts.map(acc => {
-                    const accIn = filteredTx.filter(t => t.type === 'INCOME' && isAccountMatch(acc.name, t.sumber_dana)).reduce((sum, t) => sum + Number(t.amount), 0);
-                    const accOut = filteredTx.filter(t => t.type === 'EXPENSE' && isAccountMatch(acc.name, t.sumber_dana)).reduce((sum, t) => sum + Number(t.amount), 0);
-                    const initBal = Number(acc.initial_balance) || 0;
-                    const finalBal = initBal + accIn - accOut;
-                    
-                    return (
-                      <tr key={acc.id} className="hover:bg-gray-50/50 transition-colors">
-                        <td className="px-5 py-4">
-                          <div className="flex items-center gap-2">
-                            <BankLogo bankName={acc.name} className="h-7 px-2 min-w-[42px] max-w-[64px] flex items-center justify-center rounded-lg shrink-0 overflow-hidden shadow-sm" />
-                            <span className="font-medium text-gray-900">{acc.name} {acc.is_primary && <span className="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded ml-1 text-gray-500 uppercase">Utama</span>}</span>
-                          </div>
-                        </td>
-                        <td className="px-5 py-4 text-right text-gray-600">{formatMoney(initBal)}</td>
-                        <td className="px-5 py-4 text-right text-emerald-600 font-medium">+{formatMoney(accIn)}</td>
-                        <td className="px-5 py-4 text-right text-rose-600 font-medium">-{formatMoney(accOut)}</td>
-                        <td className="px-5 py-4 text-right font-bold text-gray-900">{formatMoney(finalBal)}</td>
+                  {isLoading ? (
+                    [1, 2, 3].map(i => (
+                      <tr key={i} className="animate-pulse">
+                        <td className="px-5 py-4"><div className="h-5 w-32 bg-slate-200 rounded" /></td>
+                        <td className="px-5 py-4 text-right"><div className="h-5 w-24 bg-slate-200 rounded ml-auto" /></td>
+                        <td className="px-5 py-4 text-right"><div className="h-5 w-20 bg-slate-200 rounded ml-auto" /></td>
+                        <td className="px-5 py-4 text-right"><div className="h-5 w-20 bg-slate-200 rounded ml-auto" /></td>
+                        <td className="px-5 py-4 text-right"><div className="h-5 w-24 bg-slate-200 rounded ml-auto" /></td>
                       </tr>
-                    );
-                  })}
-                  {accounts.length === 0 && (
+                    ))
+                  ) : (
+                    accounts.map(acc => {
+                      const accIn = filteredTx.filter(t => t.type === 'INCOME' && isAccountMatch(acc.name, t.sumber_dana)).reduce((sum, t) => sum + Number(t.amount), 0);
+                      const accOut = filteredTx.filter(t => t.type === 'EXPENSE' && isAccountMatch(acc.name, t.sumber_dana)).reduce((sum, t) => sum + Number(t.amount), 0);
+                      const initBal = Number(acc.initial_balance) || 0;
+                      const finalBal = initBal + accIn - accOut;
+                      
+                      return (
+                        <tr key={acc.id} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="px-5 py-4">
+                            <div className="flex items-center gap-2">
+                              <BankLogo bankName={acc.name} className="h-7 px-2 min-w-[42px] max-w-[64px] flex items-center justify-center rounded-lg shrink-0 overflow-hidden shadow-sm" />
+                              <span className="font-medium text-gray-900">{acc.name} {acc.is_primary && <span className="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded ml-1 text-gray-500 uppercase">Utama</span>}</span>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4 text-right text-gray-600">{formatMoney(initBal)}</td>
+                          <td className="px-5 py-4 text-right text-emerald-600 font-medium">+{formatMoney(accIn)}</td>
+                          <td className="px-5 py-4 text-right text-rose-600 font-medium">-{formatMoney(accOut)}</td>
+                          <td className="px-5 py-4 text-right font-bold text-gray-900">{formatMoney(finalBal)}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                  {!isLoading && accounts.length === 0 && (
                     <tr>
                       <td colSpan={5} className="px-5 py-8 text-center text-gray-400">Belum ada data rekening.</td>
                     </tr>
@@ -1239,21 +1314,27 @@ export default function LaporanPage() {
             <div className="h-64 flex items-end justify-between gap-2 border-b border-gray-200 pb-2 px-2">
               {["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"].map((month, i) => {
                 const stat = annualStats[i];
-                const inHeight = (stat.income / annualChartMax) * 100; 
-                const outHeight = (stat.expense / annualChartMax) * 100;
+                const inHeight = annualChartMax > 0 ? (stat.income / annualChartMax) * 100 : 0; 
+                const outHeight = annualChartMax > 0 ? (stat.expense / annualChartMax) * 100 : 0;
                 return (
                   <div key={month} className="flex flex-col items-center gap-1 group flex-1">
                     <div className="w-full max-w-[24px] flex gap-0.5 items-end h-48 relative">
-                      <div className="w-1/2 bg-emerald-400 rounded-t-sm transition-all hover:bg-emerald-500 relative" style={{ height: `${inHeight}%` }}>
-                        <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 text-[10px] bg-gray-800 text-white px-2 py-1 rounded pointer-events-none whitespace-nowrap z-10 transition-opacity">
-                          Masuk: {formatMoney(stat.income)}
-                        </div>
-                      </div>
-                      <div className="w-1/2 bg-rose-400 rounded-t-sm transition-all hover:bg-rose-500 relative" style={{ height: `${outHeight}%` }}>
-                        <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 text-[10px] bg-gray-800 text-white px-2 py-1 rounded pointer-events-none whitespace-nowrap z-10 transition-opacity">
-                          Keluar: {formatMoney(stat.expense)}
-                        </div>
-                      </div>
+                      {isLoading ? (
+                        <div className="w-full bg-slate-200/70 rounded-t-sm animate-pulse" style={{ height: `${20 + ((i * 17) % 60)}%` }} />
+                      ) : (
+                        <>
+                          <div className="w-1/2 bg-emerald-400 rounded-t-sm transition-all hover:bg-emerald-500 relative" style={{ height: `${inHeight}%` }}>
+                            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 text-[10px] bg-gray-800 text-white px-2 py-1 rounded pointer-events-none whitespace-nowrap z-10 transition-opacity">
+                              Masuk: {formatMoney(stat.income)}
+                            </div>
+                          </div>
+                          <div className="w-1/2 bg-rose-400 rounded-t-sm transition-all hover:bg-rose-500 relative" style={{ height: `${outHeight}%` }}>
+                            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 text-[10px] bg-gray-800 text-white px-2 py-1 rounded pointer-events-none whitespace-nowrap z-10 transition-opacity">
+                              Keluar: {formatMoney(stat.expense)}
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                     <span className="text-xs text-gray-500 font-medium">{month}</span>
                   </div>
@@ -1272,17 +1353,28 @@ export default function LaporanPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map((month, i) => {
-                    const stat = annualStats[i];
-                    return (
-                      <tr key={month} className="hover:bg-gray-50/50">
-                        <td className="px-4 py-3 font-medium text-gray-900">{month}</td>
-                        <td className="px-4 py-3 text-right">{formatMoney(stat.income)}</td>
-                        <td className="px-4 py-3 text-right">{formatMoney(stat.expense)}</td>
-                        <td className={`px-4 py-3 text-right font-semibold ${stat.net < 0 ? 'text-rose-600' : 'text-gray-900'}`}>{formatMoney(stat.net)}</td>
+                  {isLoading ? (
+                    [0, 1, 2, 3, 4, 5].map((i) => (
+                      <tr key={i} className="animate-pulse">
+                        <td className="px-4 py-3"><div className="h-4 w-20 bg-slate-200 rounded" /></td>
+                        <td className="px-4 py-3 text-right"><div className="h-4 w-24 bg-slate-200 rounded ml-auto" /></td>
+                        <td className="px-4 py-3 text-right"><div className="h-4 w-24 bg-slate-200 rounded ml-auto" /></td>
+                        <td className="px-4 py-3 text-right"><div className="h-4 w-24 bg-slate-200 rounded ml-auto" /></td>
                       </tr>
-                    );
-                  })}
+                    ))
+                  ) : (
+                    ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map((month, i) => {
+                      const stat = annualStats[i];
+                      return (
+                        <tr key={month} className="hover:bg-gray-50/50">
+                          <td className="px-4 py-3 font-medium text-gray-900">{month}</td>
+                          <td className="px-4 py-3 text-right">{formatMoney(stat.income)}</td>
+                          <td className="px-4 py-3 text-right">{formatMoney(stat.expense)}</td>
+                          <td className={`px-4 py-3 text-right font-semibold ${stat.net < 0 ? 'text-rose-600' : 'text-gray-900'}`}>{formatMoney(stat.net)}</td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1311,28 +1403,40 @@ export default function LaporanPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {heatmapData.length === 0 ? (
+                    {isLoading ? (
+                      [1, 2, 3, 4].map(i => (
+                        <tr key={i} className="animate-pulse">
+                          <td className="p-2 border-b"><div className="h-4 w-24 bg-slate-200 rounded" /></td>
+                          {Array(12).fill(0).map((_, idx) => (
+                            <td key={idx} className="p-2 border-b text-center"><div className="h-3 w-6 bg-slate-100 rounded mx-auto" /></td>
+                          ))}
+                          <td className="p-2 border-b text-right"><div className="h-4 w-16 bg-slate-200 rounded ml-auto" /></td>
+                        </tr>
+                      ))
+                    ) : heatmapData.length === 0 ? (
                       <tr><td colSpan={14} className="py-8 text-center text-gray-400">Belum ada pengeluaran di tahun ini.</td></tr>
-                    ) : heatmapData.map((row) => (
-                      <tr key={row.name}>
-                        <td className="p-2 border-b font-medium text-gray-800 sticky left-0 bg-white z-10 border-r border-gray-100">{row.name}</td>
-                        {row.months.map((val, i) => {
-                          const ratio = maxHeatmapValue > 0 ? val / maxHeatmapValue : 0;
-                          let bgClass = 'bg-transparent text-gray-400';
-                          if (ratio > 0.6) bgClass = 'bg-rose-200 font-semibold text-rose-900';
-                          else if (ratio > 0.3) bgClass = 'bg-rose-100 font-medium text-rose-800';
-                          else if (ratio > 0) bgClass = 'bg-rose-50 text-slate-700';
+                    ) : (
+                      heatmapData.map((row) => (
+                        <tr key={row.name}>
+                          <td className="p-2 border-b font-medium text-gray-800 sticky left-0 bg-white z-10 border-r border-gray-100">{row.name}</td>
+                          {row.months.map((val, i) => {
+                            const ratio = maxHeatmapValue > 0 ? val / maxHeatmapValue : 0;
+                            let bgClass = 'bg-transparent text-gray-400';
+                            if (ratio > 0.6) bgClass = 'bg-rose-200 font-semibold text-rose-900';
+                            else if (ratio > 0.3) bgClass = 'bg-rose-100 font-medium text-rose-800';
+                            else if (ratio > 0) bgClass = 'bg-rose-50 text-slate-700';
 
-                          return (
-                            <td key={i} className={`p-2 border-b text-center border-l border-white ${bgClass}`}>
-                              <span className="text-[10px]">{val > 0 ? formatCompact(val) : '-'}</span>
-                            </td>
-                          )
-                        })}
-                        <td className="p-2 border-b font-bold text-gray-900 text-right bg-gray-50 border-l border-gray-100">{formatMoney(row.total)}</td>
-                      </tr>
-                    ))}
-                    {heatmapData.length > 0 && (
+                            return (
+                              <td key={i} className={`p-2 border-b text-center border-l border-white ${bgClass}`}>
+                                <span className="text-[10px]">{val > 0 ? formatCompact(val) : '-'}</span>
+                              </td>
+                            )
+                          })}
+                          <td className="p-2 border-b font-bold text-gray-900 text-right bg-gray-50 border-l border-gray-100">{formatMoney(row.total)}</td>
+                        </tr>
+                      ))
+                    )}
+                    {!isLoading && heatmapData.length > 0 && (
                       <tr className="bg-gray-100">
                         <td className="p-2 font-bold text-gray-900 sticky left-0 bg-gray-100 z-10 border-r border-gray-200 border-t border-gray-300">Total Bulanan</td>
                         {heatmapMonthlyTotals.map((val, i) => (
@@ -1351,7 +1455,16 @@ export default function LaporanPage() {
             <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl shadow-sm p-6 lg:w-1/4 flex flex-col items-center justify-center">
               <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
               <h4 className="text-sm font-semibold text-[#A8C9B9] mb-6 text-center w-full relative z-10">Persentase Pengeluaran</h4>
-              {heatmapData.length === 0 ? (
+              {isLoading ? (
+                <div className="w-full flex flex-col items-center animate-pulse relative z-10">
+                  <div className="w-48 h-48 rounded-full border-[14px] border-emerald-950/60 bg-emerald-950/40 mb-6" />
+                  <div className="w-full space-y-2">
+                    {[1, 2, 3].map(i => (
+                      <div key={i} className="h-4 w-full bg-emerald-950/50 rounded" />
+                    ))}
+                  </div>
+                </div>
+              ) : heatmapData.length === 0 ? (
                 <div className="text-[#A8C9B9] text-sm relative z-10">Tidak ada data</div>
               ) : (
                 <div className="relative z-10 w-full flex flex-col items-center">
@@ -1400,22 +1513,34 @@ export default function LaporanPage() {
             <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
               <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
               <span className="text-sm font-semibold text-[#A8C9B9] relative z-10">Akumulasi Tabungan Lifetime</span>
-              <div className={`mt-2 text-2xl font-bold tracking-tight ${lifetimeNet >= 0 ? 'text-lime-400' : 'text-rose-400'} relative z-10`}>
-                {lifetimeNet >= 0 ? '+' : ''}{formatMoney(lifetimeNet)}
-              </div>
+              {isLoading ? (
+                <div className="h-8 w-36 bg-emerald-950/60 rounded-lg animate-pulse mt-2 relative z-10 border border-emerald-800/40" />
+              ) : (
+                <div className={`mt-2 text-2xl font-bold tracking-tight ${lifetimeNet >= 0 ? 'text-lime-400' : 'text-rose-400'} relative z-10`}>
+                  {lifetimeNet >= 0 ? '+' : ''}{formatMoney(lifetimeNet)}
+                </div>
+              )}
             </div>
             <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
               <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
               <span className="text-sm font-semibold text-[#A8C9B9] relative z-10">Rata-Rata Pengeluaran Tahunan</span>
-              <div className="mt-2 text-2xl font-bold tracking-tight text-white relative z-10">{formatMoney(avgAnnualExpense)}</div>
+              {isLoading ? (
+                <div className="h-8 w-36 bg-emerald-950/60 rounded-lg animate-pulse mt-2 relative z-10 border border-emerald-800/40" />
+              ) : (
+                <div className="mt-2 text-2xl font-bold tracking-tight text-white relative z-10">{formatMoney(avgAnnualExpense)}</div>
+              )}
             </div>
             <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
               <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
               <span className="text-sm font-semibold text-[#A8C9B9] relative z-10">Tahun Terhemat</span>
-              <div className="mt-2 text-2xl font-bold tracking-tight text-white relative z-10">
-                {maxMargin !== -Infinity ? `${bestYear} ` : '-'}
-                {maxMargin !== -Infinity && <span className="text-sm font-medium text-lime-400">({(maxMargin * 100).toFixed(1)}%)</span>}
-              </div>
+              {isLoading ? (
+                <div className="h-8 w-36 bg-emerald-950/60 rounded-lg animate-pulse mt-2 relative z-10 border border-emerald-800/40" />
+              ) : (
+                <div className="mt-2 text-2xl font-bold tracking-tight text-white relative z-10">
+                  {maxMargin !== -Infinity ? `${bestYear} ` : '-'}
+                  {maxMargin !== -Infinity && <span className="text-sm font-medium text-lime-400">({(maxMargin * 100).toFixed(1)}%)</span>}
+                </div>
+              )}
             </div>
           </div>
 
@@ -1423,98 +1548,106 @@ export default function LaporanPage() {
             <h3 className="font-semibold text-gray-900 mb-6">{macroChartTitle}</h3>
             
             <div className="h-[350px] w-full mt-6">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart
-                  data={macroChartData}
-                  margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-                >
-                  <defs>
-                    <linearGradient id="colorPemasukan" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorPengeluaran" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis 
-                    dataKey="name" 
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: '#64748b', fontSize: 12 }}
-                    dy={10}
-                  />
-                  <YAxis 
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: '#64748b', fontSize: 12 }}
-                    tickFormatter={(value) => {
-                      if (Math.abs(value) >= 1000000) return (value / 1000000).toFixed(0) + 'M';
-                      if (Math.abs(value) >= 1000) return (value / 1000).toFixed(0) + 'k';
-                      return value.toString();
-                    }}
-                    width={60}
-                  />
-                  <RechartsTooltip 
-                    content={({ active, payload, label }: any) => {
-                      if (active && payload && payload.length) {
-                        return (
-                          <div className="bg-white p-3 border border-gray-100 shadow-xl rounded-xl flex flex-col gap-2 min-w-[200px]">
-                            <p className="font-semibold text-gray-900 border-b border-gray-100 pb-2 mb-1">{label}</p>
-                            {payload.map((entry: any, index: number) => (
-                              <div key={index} className="flex justify-between items-center text-sm gap-4">
-                                <span className="flex items-center gap-1.5 font-medium text-gray-600">
-                                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: entry.color }}></span>
-                                  {entry.name}
-                                </span>
-                                <span className={`font-semibold ${entry.name === 'Net' ? (entry.value >= 0 ? 'text-emerald-600' : 'text-rose-600') : 'text-gray-900'}`}>
-                                  {formatMoney(entry.value)}
-                                </span>
-                              </div>
-                            ))}
-                            {payload[0]?.payload?.margin !== undefined && (
-                              <div className="flex justify-between items-center text-xs mt-1 pt-2 border-t border-gray-100">
-                                <span className="text-gray-500 font-medium">Savings Margin</span>
-                                <span className="font-bold text-emerald-600">{payload[0].payload.margin.toFixed(1)}%</span>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      }
-                      return null;
-                    }} 
-                  />
-                  
-                  <Area 
-                    type="monotone" 
-                    dataKey="Pemasukan" 
-                    stroke="#10b981" 
-                    strokeWidth={2}
-                    fillOpacity={1} 
-                    fill="url(#colorPemasukan)" 
-                    activeDot={{ r: 6, strokeWidth: 0, fill: '#10b981' }}
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey="Pengeluaran" 
-                    stroke="#f43f5e" 
-                    strokeWidth={2}
-                    fillOpacity={1} 
-                    fill="url(#colorPengeluaran)" 
-                    activeDot={{ r: 6, strokeWidth: 0, fill: '#f43f5e' }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="Net"
-                    stroke="#0ea5e9"
-                    strokeWidth={3}
-                    dot={{ r: 4, fill: '#0ea5e9', strokeWidth: 2, stroke: '#fff' }}
-                    activeDot={{ r: 6, strokeWidth: 0, fill: '#0ea5e9' }}
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
+              {isLoading ? (
+                <div className="w-full h-full flex items-end justify-between gap-3 px-6 pb-6 pt-12 animate-pulse bg-slate-50/50 rounded-xl">
+                  {[40, 65, 55, 80, 70, 90, 85].map((h, i) => (
+                    <div key={i} className="flex-1 bg-slate-200/80 rounded-t-md" style={{ height: `${h}%` }} />
+                  ))}
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart
+                    data={macroChartData}
+                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                  >
+                    <defs>
+                      <linearGradient id="colorPemasukan" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="colorPengeluaran" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis 
+                      dataKey="name" 
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: '#64748b', fontSize: 12 }}
+                      dy={10}
+                    />
+                    <YAxis 
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: '#64748b', fontSize: 12 }}
+                      tickFormatter={(value) => {
+                        if (Math.abs(value) >= 1000000) return (value / 1000000).toFixed(0) + 'M';
+                        if (Math.abs(value) >= 1000) return (value / 1000).toFixed(0) + 'k';
+                        return value.toString();
+                      }}
+                      width={60}
+                    />
+                    <RechartsTooltip 
+                      content={({ active, payload, label }: any) => {
+                        if (active && payload && payload.length) {
+                          return (
+                            <div className="bg-white p-3 border border-gray-100 shadow-xl rounded-xl flex flex-col gap-2 min-w-[200px]">
+                              <p className="font-semibold text-gray-900 border-b border-gray-100 pb-2 mb-1">{label}</p>
+                              {payload.map((entry: any, index: number) => (
+                                <div key={index} className="flex justify-between items-center text-sm gap-4">
+                                  <span className="flex items-center gap-1.5 font-medium text-gray-600">
+                                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: entry.color }}></span>
+                                    {entry.name}
+                                  </span>
+                                  <span className={`font-semibold ${entry.name === 'Net' ? (entry.value >= 0 ? 'text-emerald-600' : 'text-rose-600') : 'text-gray-900'}`}>
+                                    {formatMoney(entry.value)}
+                                  </span>
+                                </div>
+                              ))}
+                              {payload[0]?.payload?.margin !== undefined && (
+                                <div className="flex justify-between items-center text-xs mt-1 pt-2 border-t border-gray-100">
+                                  <span className="text-gray-500 font-medium">Savings Margin</span>
+                                  <span className="font-bold text-emerald-600">{payload[0].payload.margin.toFixed(1)}%</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+                        return null;
+                      }} 
+                    />
+                    
+                    <Area 
+                      type="monotone" 
+                      dataKey="Pemasukan" 
+                      stroke="#10b981" 
+                      strokeWidth={2}
+                      fillOpacity={1} 
+                      fill="url(#colorPemasukan)" 
+                      activeDot={{ r: 6, strokeWidth: 0, fill: '#10b981' }}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="Pengeluaran" 
+                      stroke="#f43f5e" 
+                      strokeWidth={2}
+                      fillOpacity={1} 
+                      fill="url(#colorPengeluaran)" 
+                      activeDot={{ r: 6, strokeWidth: 0, fill: '#f43f5e' }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="Net"
+                      stroke="#0ea5e9"
+                      strokeWidth={3}
+                      dot={{ r: 4, fill: '#0ea5e9', strokeWidth: 2, stroke: '#fff' }}
+                      activeDot={{ r: 6, strokeWidth: 0, fill: '#0ea5e9' }}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              )}
             </div>
             
             <div className="flex gap-6 justify-center mt-6 text-sm">
@@ -1549,19 +1682,31 @@ export default function LaporanPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {activeYears.map((year) => {
-                    const stat = multiYearStats[year];
-                    const margin = stat.income > 0 ? ((stat.income - stat.expense) / stat.income) * 100 : 0;
-                    return (
-                      <tr key={year} className="hover:bg-gray-50/50">
-                        <td className="px-5 py-4 font-bold text-gray-900">{year}</td>
-                        <td className="px-5 py-4 text-right">{formatMoney(stat.income)}</td>
-                        <td className="px-5 py-4 text-right">{formatMoney(stat.expense)}</td>
-                        <td className={`px-5 py-4 text-right font-semibold ${stat.net >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{stat.net >= 0 ? '+' : ''}{formatMoney(stat.net)}</td>
-                        <td className="px-5 py-4 text-right text-gray-600">{stat.income > 0 ? margin.toFixed(1) + '%' : '-'}</td>
+                  {isLoading ? (
+                    [1, 2, 3].map((i) => (
+                      <tr key={i} className="animate-pulse">
+                        <td className="px-5 py-4"><div className="h-5 w-16 bg-slate-200 rounded" /></td>
+                        <td className="px-5 py-4 text-right"><div className="h-5 w-28 bg-slate-200 rounded ml-auto" /></td>
+                        <td className="px-5 py-4 text-right"><div className="h-5 w-28 bg-slate-200 rounded ml-auto" /></td>
+                        <td className="px-5 py-4 text-right"><div className="h-5 w-28 bg-slate-200 rounded ml-auto" /></td>
+                        <td className="px-5 py-4 text-right"><div className="h-5 w-16 bg-slate-200 rounded ml-auto" /></td>
                       </tr>
-                    )
-                  })}
+                    ))
+                  ) : (
+                    activeYears.map((year) => {
+                      const stat = multiYearStats[year];
+                      const margin = stat.income > 0 ? ((stat.income - stat.expense) / stat.income) * 100 : 0;
+                      return (
+                        <tr key={year} className="hover:bg-gray-50/50">
+                          <td className="px-5 py-4 font-bold text-gray-900">{year}</td>
+                          <td className="px-5 py-4 text-right">{formatMoney(stat.income)}</td>
+                          <td className="px-5 py-4 text-right">{formatMoney(stat.expense)}</td>
+                          <td className={`px-5 py-4 text-right font-semibold ${stat.net >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{stat.net >= 0 ? '+' : ''}{formatMoney(stat.net)}</td>
+                          <td className="px-5 py-4 text-right text-gray-600">{stat.income > 0 ? margin.toFixed(1) + '%' : '-'}</td>
+                        </tr>
+                      )
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1596,7 +1741,27 @@ export default function LaporanPage() {
               </div>
             </div>
             
-            {myBreakdownTotal === 0 ? (
+            {isLoading ? (
+              <div className="flex flex-col md:flex-row gap-8 items-center md:items-start w-full py-4 animate-pulse">
+                <div className="w-full md:w-[35%] flex flex-col items-center gap-6">
+                  <div className="w-48 h-48 rounded-full border-[14px] border-slate-200 bg-slate-100/50 flex items-center justify-center">
+                    <div className="w-24 h-24 rounded-full bg-white shadow-inner" />
+                  </div>
+                  <div className="h-16 w-full bg-emerald-950/20 rounded-xl border border-emerald-900/10" />
+                </div>
+                <div className="w-full md:w-[65%] space-y-4">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="space-y-2">
+                      <div className="flex justify-between">
+                        <div className="h-4 w-28 bg-slate-200 rounded" />
+                        <div className="h-4 w-20 bg-slate-200 rounded" />
+                      </div>
+                      <div className="w-full h-2 bg-slate-200/60 rounded-full" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : myBreakdownTotal === 0 ? (
               <div className="py-12 text-center text-gray-400 text-sm">Tidak ada transaksi pengeluaran di tahun {safeMultiYearSelected}.</div>
             ) : (
               <div className="flex flex-col md:flex-row gap-8 items-start w-full">
