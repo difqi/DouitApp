@@ -85,7 +85,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
               <span className="text-xl font-bold tracking-tight text-white leading-none">Douit</span>
             </Link>
-            <NotificationBell />
+            <div className="sidebar-notification">
+              <NotificationBell />
+            </div>
           </div>
           <button className="mobile-close" onClick={() => setMenuOpen(false)} aria-label="Tutup menu"><X size={20} /></button>
         </div>
@@ -96,31 +98,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <nav className="main-nav" aria-label="Navigasi utama">
           <span className="nav-label">Keuanganmu</span>
           {nav.map(({ id, label, href, icon: Icon, isNew }) => (
-            <Link key={id} href={href} title={sidebarCollapsed ? label : undefined} className={`nav-item ${active === id ? "active" : ""}`} onClick={() => setMenuOpen(false)}>
-              <Icon size={18} />
+            <Link
+              key={id}
+              href={href}
+              title={sidebarCollapsed ? label : undefined}
+              className={`nav-item ${active === id ? "active" : ""}`}
+              aria-current={active === id ? "page" : undefined}
+              onClick={() => setMenuOpen(false)}
+            >
+              <span className="nav-icon"><Icon size={18} /></span>
               <span>{label}</span>
               {isNew && !sidebarCollapsed && (
-                <span className="ml-auto bg-emerald-500/20 text-emerald-400 text-[10px] font-medium px-1.5 py-0.5 rounded border border-emerald-500/30">
-                  Baru
-                </span>
+                <span className="nav-badge">Baru</span>
               )}
             </Link>
           ))}
 
           <span className="nav-label ai-label">Asisten</span>
-          <Link href="/chat" title={sidebarCollapsed ? "Douit AI" : undefined} className={`nav-item ai-nav ${active === "chat" ? "active" : ""}`} onClick={() => setMenuOpen(false)}>
-            <Bot size={18} /><span>Douit AI</span><Sparkles size={13} className="nav-sparkle" />
+          <Link href="/chat" title={sidebarCollapsed ? "Douit AI" : undefined} className={`nav-item ai-nav ${active === "chat" ? "active" : ""}`} aria-current={active === "chat" ? "page" : undefined} onClick={() => setMenuOpen(false)}>
+            <span className="nav-icon"><Bot size={18} /></span><span>Douit AI</span><Sparkles size={13} className="nav-sparkle" />
           </Link>
         </nav>
         <div className="sidebar-tip">
-          <span><Sparkles size={15} /></span>
-          <b>Kelola uang lebih mudah</b>
-          <p>Catat transaksi atau cari insight lewat percakapan.</p>
-          <Link href="/chat">Tanya Douit AI</Link>
+          <span className="sidebar-tip-icon"><Sparkles size={15} /></span>
+          <div>
+            <b>Butuh insight cepat?</b>
+            <p>Tanya soal transaksi dan kebiasaan belanjamu.</p>
+            <Link href="/chat" onClick={() => setMenuOpen(false)}>Tanya Douit AI</Link>
+          </div>
         </div>
         <div className="sidebar-bottom">
-          <Link href="/settings" title={sidebarCollapsed ? "Pengaturan" : undefined} className={`nav-item ${active === "settings" ? "active" : ""}`} onClick={() => setMenuOpen(false)}>
-            <Settings size={17} /><span>Pengaturan</span>
+          <Link href="/settings" title={sidebarCollapsed ? "Pengaturan" : undefined} className={`nav-item ${active === "settings" ? "active" : ""}`} aria-current={active === "settings" ? "page" : undefined} onClick={() => setMenuOpen(false)}>
+            <span className="nav-icon"><Settings size={17} /></span><span>Pengaturan</span>
           </Link>
           <div className="profile-container" style={{ position: 'relative', width: '100%' }}>
             <button className="profile-row cursor-pointer hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors rounded-lg p-2" title="Kelola profil" onClick={() => setProfileMenuOpen(!profileMenuOpen)} style={{ width: '100%', border: 'none' }}>
@@ -179,7 +188,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </button>
       {menuOpen && <button className="sidebar-scrim" aria-label="Tutup menu" onClick={() => setMenuOpen(false)} />}
       <main className="main-area">
-        <button className="mobile-menu-button" aria-label="Buka menu" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>
+        <header className="mobile-shell-bar">
+          <button className="mobile-menu-button" aria-label="Buka menu" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>
+          <Link href="/" className="mobile-brand" aria-label="Ke halaman ringkasan">
+            <DouitLogo className="h-5 w-5" />
+            <span>Douit</span>
+          </Link>
+        </header>
         <div className={`page-content ${active === "chat" ? "chat-page-content" : ""}`}>{children}</div>
       </main>
     </div>
