@@ -199,7 +199,7 @@ export default function NotifikasiPage() {
         <div>
           <div className="eyebrow"><BellRing size={14} /> Pusat Notifikasi</div>
           <h1>Notifikasi</h1>
-          <p>Kelola semua pemberitahuan dan peringatan sistem Douit Anda.</p>
+          <p>Lihat update transaksi, anggaran, rekening, dan target tabunganmu.</p>
         </div>
       </div>
 
@@ -216,7 +216,7 @@ export default function NotifikasiPage() {
               onClick={() => setFilter("UNREAD")} 
               style={{ padding: '6px 12px', fontSize: '13px', fontWeight: 600, borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all 0.2s', background: filter === "UNREAD" ? '#fff' : 'transparent', color: filter === "UNREAD" ? '#0f172a' : '#64748b', boxShadow: filter === "UNREAD" ? '0 1px 2px rgba(0,0,0,0.05)' : 'none' }}
             >
-              Belum Dibaca
+              Belum dibaca
             </button>
             <button 
               onClick={() => setFilter("WARNING")} 
@@ -229,7 +229,7 @@ export default function NotifikasiPage() {
           <div style={{ display: 'flex', gap: '12px' }}>
             {notifications.some(n => !n.is_read) && (
               <button onClick={markAllAsRead} className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium text-xs rounded-lg px-3 py-1.5 flex items-center gap-1.5 cursor-pointer">
-                <Check size={14} /> Tandai Semua Dibaca
+                <Check size={14} /> Tandai semua dibaca
               </button>
             )}
             <button onClick={deleteAll} className="bg-rose-50 border border-rose-200/80 text-rose-600 hover:bg-rose-100 font-medium text-xs rounded-lg px-3 py-1.5 flex items-center gap-1.5 cursor-pointer">
@@ -247,8 +247,8 @@ export default function NotifikasiPage() {
                 <Bell size={24} />
               </div>
               <div>
-                <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#0f172a', margin: '0 0 4px 0' }}>Belum Ada Notifikasi</h3>
-                <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Semua pemberitahuan dan peringatan sistem akan muncul di sini.</p>
+                <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#0f172a', margin: '0 0 4px 0' }}>Belum ada notifikasi</h3>
+                <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Notifikasi penting tentang aktivitas keuanganmu akan muncul di sini.</p>
               </div>
             </div>
           ) : (
@@ -357,7 +357,7 @@ export default function NotifikasiPage() {
         onClose={() => setConfirmDeleteAllOpen(false)}
         onConfirm={handleConfirmDeleteAll}
         title="Hapus Semua Notifikasi"
-        description="Apakah Anda yakin ingin menghapus seluruh riwayat notifikasi? Tindakan ini tidak dapat dibatalkan."
+        description="Hapus seluruh riwayat notifikasi? Tindakan ini tidak dapat dibatalkan."
         confirmLabel="Hapus Semua"
         variant="danger"
         isLoading={isDeletingAll}

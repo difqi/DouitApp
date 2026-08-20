@@ -151,11 +151,11 @@ export default function DashboardPage() {
               <CircleAlert size={20} />
             </div>
             <div>
-              <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#92400e', margin: 0 }}>Tindakan Diperlukan</h3>
-              <p style={{ fontSize: '13px', color: '#b45309', margin: 0 }}>AI mendeteksi {pendingTransactions.length} transaksi yang perlu persetujuan Anda.</p>
+              <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#92400e', margin: 0 }}>Perlu ditinjau</h3>
+              <p style={{ fontSize: '13px', color: '#b45309', margin: 0 }}>AI menemukan {pendingTransactions.length} transaksi yang menunggu persetujuanmu.</p>
             </div>
           </div>
-          <Link href="/transactions" className="button secondary" style={{ background: 'white', borderColor: '#fcd34d', color: '#d97706' }}>Lihat antrean <ArrowRight size={15} /></Link>
+          <Link href="/transactions" className="button secondary" style={{ background: 'white', borderColor: '#fcd34d', color: '#d97706' }}>Tinjau transaksi <ArrowRight size={15} /></Link>
         </section>
       )}
 

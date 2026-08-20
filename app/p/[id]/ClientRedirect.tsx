@@ -37,7 +37,7 @@ export default function ClientRedirect({ targetUrl, goalTitle, goalName }: Clien
             </p>
           )}
           <p className="text-xs text-slate-500">
-            Anda sedang dialihkan langsung ke toko resmi di marketplace.
+            Kamu sedang dialihkan langsung ke toko resmi di marketplace.
           </p>
         </div>
 

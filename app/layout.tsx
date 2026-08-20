@@ -20,23 +20,23 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
-  const description = "Kelola arus kas, invoice, dan piutang bisnis bersama asisten keuangan AI.";
+  const description = "Catat transaksi, pahami pengeluaran, dan jaga target tabunganmu bersama asisten keuangan pribadi Douit.";
 
   return {
     metadataBase: new URL(origin),
-    title: "Douit — Asisten Keuangan Pribadi & Bisnis",
+    title: "Douit — Asisten Keuangan Pribadi",
     description,
     icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
     openGraph: {
-      title: "Douit — Keuangan bisnis, lebih jernih.",
+      title: "Douit — Keuanganmu, lebih terarah.",
       description,
       locale: "id_ID",
       type: "website",
-      images: [{ url: `${origin}/og.png`, width: 1662, height: 946, alt: "Douit, asisten keuangan AI untuk bisnis" }],
+      images: [{ url: `${origin}/og.png`, width: 1662, height: 946, alt: "Douit, asisten keuangan pribadi" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "Douit — Keuangan bisnis, lebih jernih.",
+      title: "Douit — Keuanganmu, lebih terarah.",
       description,
       images: [`${origin}/og.png`],
     },

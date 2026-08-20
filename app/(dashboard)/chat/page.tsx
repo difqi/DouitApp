@@ -29,12 +29,12 @@ type Message = { id: string; role: "user" | "assistant"; content: string; messag
 type ActionDraft = { id: string; action_type: string; status: "pending" | "approved" | "rejected" | "failed"; preview: Record<string, unknown>; executed_entity_id?: string | null };
 type ChatSession = { id: string; title: string; created_at: string; is_pinned?: boolean };
 
-const WELCOME_MESSAGE = "Halo! Saya asisten Douit AI yang siap mencatat keuangan Anda secara otomatis. Anda bisa menyebutkan tanggal, jam, nominal, hingga metode pembayaran/rekening. Contoh: 'Hari ini jam 7 malam beli bensin 30k pakai BRI'.";
+const WELCOME_MESSAGE = "Halo! Saya Douit AI, asisten keuangan pribadimu. Ceritakan transaksi dengan tanggal, jam, nominal, dan rekening yang digunakan. Contoh: 'Hari ini jam 7 malam beli bensin 30k pakai BRI'.";
 
 const PROMPT_SUGGESTIONS = [
   "Hari ini jam 7 malam beli bensin 30k pakai BRI",
   "Tadi siang jam 12 makan siang 25k tunai",
-  "Hari ini jam 4 sore ditransfer 500k dari klien ke BCA",
+  "Hari ini jam 4 sore terima bayaran freelance 500k ke BCA",
   "Kemarin jam 20.00 laundry 30k pakai GoPay",
 ];
 
@@ -583,7 +583,7 @@ export default function ChatPage() {
 
         <div className="history-note">
           <ShieldCheck size={16} />
-          <p><b>Ruang kerja aman</b><br />AI hanya menggunakan data {business?.name}.</p>
+          <p><b>Data keuanganmu aman</b><br />AI hanya menggunakan data akun {business?.name}.</p>
         </div>
       </aside>
 
@@ -593,8 +593,8 @@ export default function ChatPage() {
         <header className="chat-header">
           <button className="history-toggle" onClick={() => setHistoryOpen(true)} aria-label="Buka riwayat"><History size={18} /></button>
           <div className="ai-avatar"><Sparkles size={19} /></div>
-          <div><h1>Douit AI</h1><p><i /> Douit Financial Co-Pilot</p></div>
-          <div className="safe-mode"><ShieldCheck size={15} /> Semua aksi butuh persetujuan</div>
+          <div><h1>Douit AI</h1><p><i /> Asisten keuangan pribadimu</p></div>
+          <div className="safe-mode"><ShieldCheck size={15} /> Setiap transaksi butuh persetujuan</div>
         </header>
 
         <div className="messages" aria-live="polite">
@@ -658,7 +658,7 @@ function DraftCard({ draft, onDecision, onEdit, onOpenSaved }: { draft: ActionDr
     setLoading(false);
   };
 
-  if (draft.status === "approved") return <div className="success-card"><span className="success-icon"><CircleCheck size={23} /></span><div><h3>Transaksi berhasil disimpan!</h3><p>Persetujuan tercatat di database.</p></div><button type="button" onClick={onOpenSaved}>Lihat Transaksi <ArrowRight size={14} /></button></div>;
+  if (draft.status === "approved") return <div className="success-card"><span className="success-icon"><CircleCheck size={23} /></span><div><h3>Transaksi berhasil disimpan!</h3><p>Transaksi sudah masuk ke catatan keuanganmu.</p></div><button type="button" onClick={onOpenSaved}>Lihat Transaksi <ArrowRight size={14} /></button></div>;
   if (draft.status === "rejected") return <div className="rejected-card"><Trash2 size={20} /><div><h3>Draft ditolak</h3><p>Tidak ada data yang dibuat atau diubah.</p></div></div>;
 
   const preview = draft.preview ?? {};
@@ -686,7 +686,7 @@ function DraftCard({ draft, onDecision, onEdit, onOpenSaved }: { draft: ActionDr
         </div>
       </div>
 
-      <div className="draft-safety"><ShieldCheck size={15} /><span><b>Menunggu persetujuan Anda</b> — Douit belum menyimpan data.</span></div>
+      <div className="draft-safety"><ShieldCheck size={15} /><span><b>Menunggu persetujuanmu</b> — Douit belum menyimpan transaksi.</span></div>
 
       <div className="draft-actions">
         <button className="button primary" disabled={loading} onClick={() => void handleDecision(draft.id, "approve")}>

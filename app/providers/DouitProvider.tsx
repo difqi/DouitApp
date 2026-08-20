@@ -82,7 +82,7 @@ export function DouitProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (cause) {
       console.error(cause);
-      setError("Tidak dapat memuat sesi Anda");
+      setError("Tidak dapat memuat sesimu");
     } finally {
       setLoading(false);
     }

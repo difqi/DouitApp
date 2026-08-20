@@ -472,7 +472,7 @@ export function TransactionsView() {
       <WorkspaceHeader 
         eyebrow="Arus kas" 
         title="Transaksi" 
-        description="Pantau pemasukan dan pengeluaran Anda dari berbagai sumber." 
+        description="Pantau semua pemasukan dan pengeluaranmu di satu tempat."
         actions={
           <>
             <button className="button secondary" onClick={handleExportCSV}><Download size={16} /> Ekspor CSV</button>
@@ -689,7 +689,7 @@ export function TransactionsView() {
                   />
                 </div>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', gridColumn: 'span 2' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Nama transaksi / Merchant</span>
+                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Nama transaksi / merchant</span>
                   <input name="name" placeholder="Contoh: Beli Makan" required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -762,7 +762,7 @@ export function TransactionsView() {
                 </div>
                 
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Catatan / Keyword (opsional)</span>
+                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Catatan / kata kunci (opsional)</span>
                   <textarea name="notes" defaultValue={editRow.notes || ""} placeholder="Contoh: Bayar Netflix" rows={2} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc', resize: 'none' }} />
                 </label>
 

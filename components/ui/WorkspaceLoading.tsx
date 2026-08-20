@@ -23,10 +23,10 @@ export function WorkspaceLoading() {
         {/* Title & Subtitle */}
         <div className="space-y-2">
           <h2 className="text-xl sm:text-2xl font-bold text-[#0F2A1D] tracking-tight flex items-center gap-2">
-            Menyiapkan ruang kerja...
+            Menyiapkan keuanganmu...
           </h2>
           <p className="text-sm text-slate-500 font-normal leading-relaxed">
-            Memuat data dan sinkronisasi akun Anda dengan aman.
+            Memuat transaksi, rekening, dan target tabunganmu dengan aman.
           </p>
         </div>
 

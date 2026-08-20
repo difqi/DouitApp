@@ -733,7 +733,7 @@ export default function NabungPage() {
   const handleOpenCreateModal = () => {
     if (isGoalLimitReached) {
       toast.warning("Batas Maksimal Tercapai", {
-        description: "Anda hanya dapat memiliki maksimal 3 target tabungan aktif secara bersamaan agar tetap fokus dan konsisten. Selesaikan atau hapus salah satu target untuk membuat yang baru.",
+        description: "Kamu bisa memiliki maksimal 3 target tabungan aktif agar tetap fokus. Selesaikan atau hapus salah satunya untuk membuat target baru.",
         duration: 5000,
       });
       return;
@@ -875,7 +875,7 @@ export default function NabungPage() {
             Target & Tabungan Impian
           </h1>
           <p className="text-slate-600 text-sm mt-1 max-w-2xl">
-            Rencanakan target belanja, pantau progres harian, dan terima motivasi harian via WhatsApp.
+            Rencanakan target tabungan, pantau progres, dan dapatkan pengingat lewat WhatsApp.
           </p>
         </div>
         <div className="flex items-center gap-2.5">
@@ -893,7 +893,7 @@ export default function NabungPage() {
             }`}
           >
             <Plus className={`w-4 h-4 stroke-[2.5] ${isGoalLimitReached ? "text-slate-500" : "text-emerald-400"}`} />
-            <span className={isGoalLimitReached ? "text-slate-600 font-semibold" : "text-white font-semibold"}>Tambah Target Baru</span>
+            <span className={isGoalLimitReached ? "text-slate-600 font-semibold" : "text-white font-semibold"}>Tambah target</span>
           </button>
         </div>
       </div>
@@ -921,7 +921,7 @@ export default function NabungPage() {
           ) : (
             <p className="text-xs text-[#A8C9B9]/70 mt-2 flex items-center gap-1 relative z-10 font-medium">
               <TrendingUp className="w-3.5 h-3.5 text-lime-400" />
-              <span>Terkumpul dari {goals.length} target impian</span>
+              <span>Terkumpul dari {goals.length} target tabungan</span>
             </p>
           )}
         </div>
@@ -947,7 +947,7 @@ export default function NabungPage() {
             </div>
           )}
           <p className="text-xs text-[#A8C9B9]/70 mt-2 relative z-10 font-medium">
-            Fokus capai impian Anda tepat waktu
+            Jaga targetmu tetap sesuai rencana
           </p>
         </div>
 
@@ -1039,9 +1039,9 @@ export default function NabungPage() {
             <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-4">
               <Target className="w-8 h-8 text-emerald-600/60" />
             </div>
-            <h3 className="text-lg font-bold text-slate-900 mb-1">Belum Ada Target Impian</h3>
+            <h3 className="text-lg font-bold text-slate-900 mb-1">Belum ada target tabungan</h3>
             <p className="text-slate-500 text-sm max-w-md mx-auto mb-6">
-              Mulai rencanakan pembelian barang impian atau dana darurat Anda. Douit AI akan memandu setoran harian Anda.
+              Mulai dari barang yang kamu inginkan, dana darurat, atau tujuan finansial lainnya. Douit membantu menjaga progresmu.
             </p>
             <button
               onClick={handleOpenCreateModal}
@@ -1303,7 +1303,7 @@ export default function NabungPage() {
                   <PiggyBank className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900 leading-tight">Tambah Target Impian</h3>
+                  <h3 className="text-lg font-bold text-slate-900 leading-tight">Tambah target tabungan</h3>
                   <p className="text-xs text-slate-500 font-medium mt-0.5">
                     {step === 1 ? 'Langkah 1 dari 2: Detail Target' : 'Langkah 2 dari 2: Metode & Pengaturan'}
                   </p>
@@ -1325,14 +1325,14 @@ export default function NabungPage() {
                 <div className="space-y-4">
                   <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
                     <Target className="w-3.5 h-3.5 text-emerald-600" />
-                    Detail Target Impian
+                    Detail target tabungan
                   </h4>
 
                   {isGoalLimitReached && (
                     <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-800 text-xs animate-in fade-in duration-150">
                       <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
                       <div>
-                        <span className="font-bold">Batas Maksimal 3 Target Aktif Tercapai.</span> Selesaikan atau hapus salah satu target aktif Anda sebelum membuat target baru.
+                        <span className="font-bold">Batas 3 target aktif tercapai.</span> Selesaikan atau hapus salah satu targetmu sebelum membuat yang baru.
                       </div>
                     </div>
                   )}
@@ -1400,7 +1400,7 @@ export default function NabungPage() {
                         <div className="flex items-start gap-1.5 mt-1.5 text-xs text-slate-500">
                           <Info className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
                           <span>
-                            Nilai ini berlaku global. Mengubah komitmen di sini akan otomatis memperbarui batas belanja harian di seluruh target tabungan Anda.
+                            Nilai ini berlaku untuk semua target. Perubahan komitmen akan memperbarui batas belanja harianmu secara otomatis.
                           </span>
                         </div>
 
@@ -1724,7 +1724,7 @@ export default function NabungPage() {
                       <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 animate-in fade-in duration-150">
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-slate-600 font-medium">
-                            Masukkan 4 digit kode yang dikirim ke WhatsApp Anda:
+                            Masukkan 4 digit kode yang dikirim ke WhatsApp-mu:
                           </span>
                           <span className="text-[11px] text-slate-400">
                             Sisa jatah hari ini: {remainingAttempts}/3
@@ -1834,7 +1834,7 @@ export default function NabungPage() {
                           ) : (
                             <>
                               <Sparkles className={`w-4 h-4 stroke-[2.5] ${isSubmitDisabled ? "text-slate-400" : "text-emerald-400"}`} />
-                              <span className={isSubmitDisabled ? "text-slate-400" : "text-white"}>Simpan Target Impian</span>
+                              <span className={isSubmitDisabled ? "text-slate-400" : "text-white"}>Simpan target tabungan</span>
                             </>
                           )}
                         </button>
@@ -1974,7 +1974,7 @@ export default function NabungPage() {
         onClose={() => setDeleteGoalId(null)}
         onConfirm={confirmDeleteGoal}
         title="Hapus Target Nabung"
-        description="Apakah Anda yakin ingin menghapus target nabung ini? Seluruh riwayat setoran untuk target ini akan ikut terhapus."
+        description="Hapus target tabungan ini? Seluruh riwayat setorannya juga akan dihapus."
         confirmLabel="Hapus Target"
         variant="danger"
         isLoading={isDeletingGoal}

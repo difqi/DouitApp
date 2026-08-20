@@ -91,10 +91,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         <div className="business-switcher" title={business.name} style={{ cursor: 'default' }}>
           <span className="business-logo">{initials}</span>
-          <span><b>{business.name}</b><small>Personal account</small></span>
+          <span><b>{business.name}</b><small>Akun pribadi</small></span>
         </div>
         <nav className="main-nav" aria-label="Navigasi utama">
-          <span className="nav-label">Keuangan Anda</span>
+          <span className="nav-label">Keuanganmu</span>
           {nav.map(({ id, label, href, icon: Icon, isNew }) => (
             <Link key={id} href={href} title={sidebarCollapsed ? label : undefined} className={`nav-item ${active === id ? "active" : ""}`} onClick={() => setMenuOpen(false)}>
               <Icon size={18} />
@@ -114,16 +114,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
         <div className="sidebar-tip">
           <span><Sparkles size={15} /></span>
-          <b>Percepat kerja Anda</b>
-          <p>Catat pengeluaran cukup dengan satu kalimat via Chat.</p>
-          <Link href="/chat">Mulai percakapan</Link>
+          <b>Kelola uang lebih mudah</b>
+          <p>Catat transaksi atau cari insight lewat percakapan.</p>
+          <Link href="/chat">Tanya Douit AI</Link>
         </div>
         <div className="sidebar-bottom">
           <Link href="/settings" title={sidebarCollapsed ? "Pengaturan" : undefined} className={`nav-item ${active === "settings" ? "active" : ""}`} onClick={() => setMenuOpen(false)}>
             <Settings size={17} /><span>Pengaturan</span>
           </Link>
           <div className="profile-container" style={{ position: 'relative', width: '100%' }}>
-            <button className="profile-row cursor-pointer hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors rounded-lg p-2" title="Kelola Profil" onClick={() => setProfileMenuOpen(!profileMenuOpen)} style={{ width: '100%', border: 'none' }}>
+            <button className="profile-row cursor-pointer hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors rounded-lg p-2" title="Kelola profil" onClick={() => setProfileMenuOpen(!profileMenuOpen)} style={{ width: '100%', border: 'none' }}>
               <span className="profile-avatar">{memberInitials}</span>
               <span><b>{membership.display_name}</b><small>{membership.role}</small></span>
               <ChevronDown size={14} style={{ transform: profileMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
@@ -153,7 +153,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     className="w-full text-left px-2 py-1.5 text-[13px] text-[#1E293B] bg-transparent hover:bg-[#F2EBDC] border-none rounded-md cursor-pointer flex items-center gap-2 transition-colors"
                   >
                     <Settings className="h-4 w-4 text-[#1E293B]" />
-                    <span className="text-[#1E293B] font-medium">Pengaturan Profil</span>
+                    <span className="text-[#1E293B] font-medium">Profil & pengaturan</span>
                   </button>
                   <button
                     onClick={() => { setProfileMenuOpen(false); handleLogout(); }}

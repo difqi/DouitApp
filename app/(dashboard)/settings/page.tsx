@@ -518,8 +518,8 @@ export default function SettingsPage() {
       <div className="workspace-heading">
         <div>
           <span className="workspace-eyebrow"><Settings size={14} /> Pengaturan</span>
-          <h1>Integrasi Email & Profil</h1>
-          <p>Kelola pengaturan integrasi email otomatis dan profil bisnis Anda.</p>
+          <h1>Pengaturan Douit</h1>
+          <p>Atur pencatatan otomatis, profil, kategori, dan rekeningmu.</p>
         </div>
       </div>
 
@@ -545,7 +545,7 @@ export default function SettingsPage() {
             }}
           >
             <Mail size={18} />
-            Integrasi Email
+            Email Otomatis
           </button>
           <button
             onClick={() => setActiveTab('profile')}
@@ -618,7 +618,7 @@ export default function SettingsPage() {
                   <div style={{ background: '#ecfccb', color: '#65a30d', padding: '8px', borderRadius: '8px' }}>
                     <Mail size={20} />
                   </div>
-                  <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Integrasi Email (Inbound Receipt)</h2>
+                  <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Pencatatan Otomatis dari Email</h2>
                 </div>
 
                 {!isFetchingEmailStatus && (
@@ -626,31 +626,31 @@ export default function SettingsPage() {
                     {emailStatus === 'CONNECTED' && (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border shadow-xs transition-colors bg-emerald-50 text-emerald-700 border-emerald-200/80">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        Terhubung & Terverifikasi
+                        Terhubung dan terverifikasi
                       </span>
                     )}
                     {emailStatus === 'PENDING' && (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border shadow-xs transition-colors bg-amber-50 text-amber-700 border-amber-200/80">
                         <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-                        Menunggu Konfirmasi
+                        Menunggu konfirmasi
                       </span>
                     )}
                     {emailStatus === 'UNLINKED' && (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border shadow-xs transition-colors bg-slate-100/80 text-slate-600 border-slate-200">
                         <CircleDashed className="w-3.5 h-3.5 text-slate-400" />
-                        Belum Ditautkan
+                        Belum ditautkan
                       </span>
                     )}
                   </div>
                 )}
               </div>
               <p style={{ color: '#64748b', fontSize: '14px', lineHeight: 1.5, margin: '8px 0 0 0' }}>
-                Teruskan (Auto-forward) email notifikasi transaksi dari bank Anda (seperti BCA, Mandiri, BRI) ke alamat email di bawah ini. AI kami akan otomatis mencatatnya.
+                Teruskan email notifikasi transaksi dari bankmu, seperti BCA, Mandiri, atau BRI, ke alamat di bawah. Douit akan mencatat transaksinya secara otomatis.
               </p>
             </div>
 
             <div style={{ padding: '24px', background: '#f8fafc' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Email Alias Khusus Anda</label>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Email khususmu</label>
 
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                 <div style={{ flex: 1, position: 'relative' }}>
@@ -677,16 +677,16 @@ export default function SettingsPage() {
               <div style={{ marginTop: '24px', padding: '16px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', display: 'flex', gap: '12px' }}>
                 <ShieldAlert size={20} color="#d97706" style={{ flexShrink: 0 }} />
                 <div>
-                  <h4 style={{ margin: '0 0 4px 0', fontSize: '14px', fontWeight: 600, color: '#92400e' }}>Jaga Kerahasiaan Email Ini</h4>
+                  <h4 style={{ margin: '0 0 4px 0', fontSize: '14px', fontWeight: 600, color: '#92400e' }}>Jaga kerahasiaan email ini</h4>
                   <p style={{ margin: 0, fontSize: '13px', color: '#b45309', lineHeight: 1.5 }}>
-                    Siapapun yang mengirim email ke alamat ini dapat mencatat transaksi di akun Anda. Jika email alias Anda bocor, segera buat ulang alias yang baru.
+                    Siapa pun yang mengirim ke alamat ini dapat mencatat transaksi di akunmu. Jika alamatnya tersebar, segera buat email khusus yang baru.
                   </p>
                   <button
                     onClick={handleRegenerate}
                     disabled={regenerating}
                     style={{ background: 'none', border: 'none', color: '#d97706', fontWeight: 600, fontSize: '13px', padding: 0, marginTop: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
                   >
-                    <RefreshCw size={14} className={regenerating ? "spin" : ""} /> {regenerating ? "Membuat baru..." : "Buat Ulang Alias Baru"}
+                    <RefreshCw size={14} className={regenerating ? "spin" : ""} /> {regenerating ? "Membuat baru..." : "Buat email baru"}
                   </button>
                 </div>
               </div>
@@ -705,7 +705,7 @@ export default function SettingsPage() {
                   <div style={{ background: '#ecfccb', color: '#65a30d', padding: '8px', borderRadius: '8px' }}>
                     <User size={20} />
                   </div>
-                  <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Informasi Profil & Presets</h2>
+                  <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Profil & Preferensi</h2>
                 </div>
               </div>
               <div style={{ padding: '24px', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -720,7 +720,7 @@ export default function SettingsPage() {
                     />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Alamat Email (Read-only)</label>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Email akun</label>
                     <input
                       type="email"
                       value={user?.email || ""}
@@ -730,7 +730,7 @@ export default function SettingsPage() {
                     />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Mata Uang Default</label>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Mata uang utama</label>
                     <CustomSelect
                       value={currency}
                       onChange={setCurrency}
@@ -741,7 +741,7 @@ export default function SettingsPage() {
                     />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Zona Waktu Default</label>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Zona waktu</label>
                     <CustomSelect
                       value={timezone}
                       onChange={setTimezone}
@@ -781,7 +781,7 @@ export default function SettingsPage() {
                   <div style={{ padding: '16px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', display: 'flex', gap: '12px' }}>
                     <ShieldAlert size={20} color="#2563eb" style={{ flexShrink: 0 }} />
                     <p style={{ margin: 0, fontSize: '14px', color: '#1e40af', lineHeight: 1.5 }}>
-                      Akun Anda terhubung dengan Google. Kata sandi dikelola langsung melalui akun Google Anda.
+                      Akunmu terhubung dengan Google. Kata sandi dikelola langsung melalui akun Google-mu.
                     </p>
                   </div>
                 ) : (
@@ -862,7 +862,7 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: '#fff', border: '1px solid #fca5a5', borderRadius: '8px' }}>
                   <div>
                     <h4 style={{ margin: '0 0 4px 0', fontSize: '15px', fontWeight: 600, color: '#991b1b' }}>Reset Data Transaksi</h4>
-                    <p style={{ margin: 0, fontSize: '13px', color: '#b91c1c' }}>Hapus semua riwayat transaksi Anda. Tindakan ini tidak dapat dibatalkan.</p>
+                    <p style={{ margin: 0, fontSize: '13px', color: '#b91c1c' }}>Hapus seluruh riwayat transaksimu. Tindakan ini tidak dapat dibatalkan.</p>
                   </div>
                   <button
                     onClick={handleResetData}
@@ -875,7 +875,7 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: '#fff', border: '1px solid #fca5a5', borderRadius: '8px' }}>
                   <div>
                     <h4 style={{ margin: '0 0 4px 0', fontSize: '15px', fontWeight: 600, color: '#991b1b' }}>Hapus Akun Douit</h4>
-                    <p style={{ margin: 0, fontSize: '13px', color: '#b91c1c' }}>Hapus akun Anda beserta seluruh data secara permanen.</p>
+                    <p style={{ margin: 0, fontSize: '13px', color: '#b91c1c' }}>Hapus akunmu beserta seluruh data secara permanen.</p>
                   </div>
                   <button
                     onClick={handleDeleteAccount}
@@ -986,9 +986,9 @@ export default function SettingsPage() {
                   <div style={{ background: '#ecfccb', color: '#65a30d', padding: '8px', borderRadius: '8px' }}>
                     <Tags size={20} />
                   </div>
-                  <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Aturan Merchant (Auto-Rules)</h2>
+                  <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Aturan Transaksi Otomatis</h2>
                 </div>
-                <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Aturan yang menyimpan otomatisasi penandaan kategori untuk merchant tertentu.</p>
+                <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Terapkan kategori secara otomatis untuk transaksi dari merchant tertentu.</p>
               </div>
               <div style={{ padding: '24px', background: '#f8fafc' }}>
                 {rules.length === 0 ? (
@@ -1026,7 +1026,7 @@ export default function SettingsPage() {
                     </div>
                     <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Kelola Rekening & Saldo Awal</h2>
                   </div>
-                  <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Atur sumber dana dan saldo awal Anda.</p>
+                  <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Atur rekening, dompet, dan saldo awalmu.</p>
                 </div>
                 <button onClick={openAddAccount} className="button primary" style={{ padding: '8px 16px' }}>+ Tambah Rekening</button>
               </div>
@@ -1143,7 +1143,7 @@ export default function SettingsPage() {
           onClose={() => setConfirmDeleteCatId(null)}
           onConfirm={executeDeleteCategory}
           title="Hapus Kategori"
-          description="Apakah Anda yakin ingin menghapus kategori ini? Transaksi yang menggunakan kategori ini akan dialihkan ke 'Lain-lain'."
+          description="Hapus kategori ini? Transaksi yang menggunakannya akan dialihkan ke 'Lain-lain'."
           confirmLabel="Hapus Kategori"
           variant="danger"
         />
@@ -1153,7 +1153,7 @@ export default function SettingsPage() {
           onClose={() => setConfirmDeleteRuleId(null)}
           onConfirm={executeDeleteRule}
           title="Hapus Aturan Merchant"
-          description="Apakah Anda yakin ingin menghapus aturan merchant ini?"
+          description="Hapus aturan merchant ini?"
           confirmLabel="Hapus Aturan"
           variant="danger"
         />
@@ -1163,7 +1163,7 @@ export default function SettingsPage() {
           onClose={() => setConfirmDeleteAccountId(null)}
           onConfirm={executeDeletePaymentAccount}
           title="Hapus Rekening"
-          description="Apakah Anda yakin ingin menghapus rekening ini? Seluruh transaksi yang terkait tidak akan terhapus namun relasi rekening akan dilepas."
+          description="Hapus rekening ini? Transaksi terkait tetap tersimpan, tetapi tidak lagi terhubung ke rekening tersebut."
           confirmLabel="Hapus Rekening"
           variant="danger"
         />
@@ -1173,7 +1173,7 @@ export default function SettingsPage() {
           onClose={() => setConfirmRegenerateOpen(false)}
           onConfirm={executeRegenerate}
           title="Buat Alias Email Baru"
-          description="Apakah Anda yakin ingin membuat alias email baru? Email alias lama Anda tidak akan bisa menerima transaksi lagi."
+          description="Buat email khusus baru? Alamat lama tidak akan dapat menerima transaksi lagi."
           confirmLabel="Buat Alias Baru"
           variant="warning"
           isLoading={regenerating}
@@ -1184,7 +1184,7 @@ export default function SettingsPage() {
           onClose={() => setConfirmResetDataOpen(false)}
           onConfirm={executeResetData}
           title="Reset Seluruh Data Transaksi"
-          description="PERINGATAN: Apakah Anda yakin ingin mereset seluruh data transaksi Anda? Seluruh riwayat transaksi akan dihapus secara permanen dan tindakan ini tidak dapat dibatalkan!"
+          description="Seluruh riwayat transaksimu akan dihapus permanen. Tindakan ini tidak dapat dibatalkan."
           confirmLabel="Reset Semua Data"
           variant="danger"
         />
@@ -1194,7 +1194,7 @@ export default function SettingsPage() {
           onClose={() => setConfirmDeleteAccountOpen(false)}
           onConfirm={executeDeleteAccount}
           title="Hapus Akun Permanen"
-          description="PERINGATAN KRITIS: Apakah Anda yakin ingin menghapus akun Anda secara permanen? Seluruh profil, kategori, dan data finansial akan hilang selamanya."
+          description="Akun, profil, kategori, dan seluruh data keuanganmu akan dihapus permanen. Tindakan ini tidak dapat dibatalkan."
           confirmLabel="Hapus Akun"
           variant="danger"
         />

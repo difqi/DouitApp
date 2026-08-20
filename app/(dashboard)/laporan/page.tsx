@@ -507,7 +507,7 @@ export default function LaporanPage() {
     // Auth Session Validation
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) {
-      toast.error("Sesi Anda telah berakhir. Silakan login kembali untuk menyimpan anggaran.");
+      toast.error("Sesimu telah berakhir. Silakan masuk kembali untuk menyimpan anggaran.");
       setIsSavingBudget(false);
       return;
     }
@@ -858,7 +858,7 @@ export default function LaporanPage() {
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Laporan Keuangan</h1>
-          <p className="text-gray-500 text-sm mt-1">Pantau arus kas dan tren pengeluaran Anda.</p>
+          <p className="text-gray-500 text-sm mt-1">Pahami arus kas dan pola pengeluaranmu.</p>
         </div>
         
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
@@ -1049,11 +1049,11 @@ export default function LaporanPage() {
             <div className="bg-[#FAF9F6] border border-slate-200/80 rounded-2xl shadow-sm p-6 w-full">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
                 <div className="flex flex-col gap-2">
-                  <h3 className="font-semibold text-gray-900">Breakdown Transaksi</h3>
+                  <h3 className="font-semibold text-gray-900">Rincian Transaksi</h3>
                   <div className="bg-gray-100 p-1 rounded-lg inline-flex">
                     <button onClick={() => setPrimaryMode("Pengeluaran")} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${primaryMode === "Pengeluaran" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>Pengeluaran</button>
                     <button onClick={() => setPrimaryMode("Pemasukan")} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${primaryMode === "Pemasukan" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>Pemasukan</button>
-                    <button onClick={() => setPrimaryMode("Net")} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${primaryMode === "Net" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>Rekap Net</button>
+                    <button onClick={() => setPrimaryMode("Net")} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${primaryMode === "Net" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>Saldo Bersih</button>
                   </div>
                 </div>
                 <div className="bg-gray-100 p-1 rounded-lg inline-flex">
@@ -1067,7 +1067,7 @@ export default function LaporanPage() {
                     onClick={() => setBreakdownMode("Merchant")}
                     className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${breakdownMode === "Merchant" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
                   >
-                    Per Merchant & Keyword
+                    Per merchant & kata kunci
                   </button>
                 </div>
               </div>
@@ -1736,7 +1736,7 @@ export default function LaporanPage() {
                   onClick={() => setMultiYearBreakdownMode("Merchant")}
                   className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${multiYearBreakdownMode === "Merchant" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
                 >
-                  Per Merchant & Keyword
+                  Per merchant & kata kunci
                 </button>
               </div>
             </div>

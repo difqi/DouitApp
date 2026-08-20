@@ -31,7 +31,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   if (!goal) {
     return {
       title: 'Target Tabungan Douit AI',
-      description: 'Kelola dan wujudkan tabungan impian Anda bersama Douit AI.',
+      description: 'Wujudkan target tabunganmu bersama Douit AI.',
     };
   }
 
