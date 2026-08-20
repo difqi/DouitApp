@@ -12,6 +12,7 @@ import {
   EyeOff,
   FileCheck2,
   Globe2,
+  Landmark,
   LockKeyhole,
   Mail,
   MessageSquareText,
@@ -89,8 +90,8 @@ export function LoginView() {
         <EntryBrand />
         <div className="entry-form-wrap">
           <span className="entry-kicker">Selamat datang kembali</span>
-          <h1>Masuk ke ruang kerja Anda</h1>
-          <p>Pantau arus kas dan selesaikan penagihan lebih cepat.</p>
+          <h1>Masuk ke Douit</h1>
+          <p>Kelola pengeluaran, tabungan, dan tujuan keuanganmu di satu tempat.</p>
           
           {message && (
             <div style={{ padding: '12px 16px', background: '#ecfdf5', border: '1px solid #10b981', borderRadius: '8px', color: '#047857', fontSize: '13px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -195,7 +196,7 @@ export function LoginView() {
         </div>
         <span className="entry-legal">Dengan masuk, Anda menyetujui Ketentuan Layanan dan Kebijakan Privasi Douit.</span>
       </section>
-      <EntryStory />
+      <LoginShowcase />
     </main>
   );
 }
@@ -567,6 +568,90 @@ export function SignupView() {
 }
 
 export function EntryStory() { return <aside className="entry-story"><div className="entry-story-copy"><span><Sparkles size={15} /> Asisten keuangan untuk bisnis modern</span><h2>Lebih sedikit administrasi.<br />Lebih banyak kendali.</h2><p>Douit menyatukan invoice, arus kas, dan AI dalam satu ruang kerja yang tetap berada di bawah persetujuan Anda.</p></div><div className="entry-preview"><div className="entry-preview-top"><span><BarChart3 size={16} /> Arus kas Juli</span><b>+12,4%</b></div><strong>Rp128,4 jt</strong><div className="entry-bars">{[32,48,42,62,54,78,67,88,72,94].map((n,i)=><i key={i} style={{height:`${n}%`}} />)}</div><div className="entry-ai-card"><span><Sparkles size={16} /></span><p><b>Draft invoice siap diperiksa</b><small>Klien Busa · Rp5.000.000</small></p><button><Check size={14} /> Setujui</button></div></div><div className="entry-proof"><span><ShieldCheck size={17} /> Setiap aksi AI memerlukan persetujuan</span><span><BadgeCheck size={17} /> Data bisnis terisolasi dan aman</span></div></aside>; }
+
+function LoginShowcase() {
+  const insightBars = [32, 46, 39, 58, 51, 76, 65, 88];
+
+  return (
+    <aside className="entry-story login-showcase" aria-label="Fitur pengelolaan keuangan pribadi Douit">
+      <div className="login-showcase-inner">
+        <header className="login-showcase-copy">
+          <span><Sparkles size={15} /> Asisten keuangan pribadimu</span>
+          <h2>Lebih paham uangmu.<br /><em>Lebih dekat ke tujuanmu.</em></h2>
+          <p>Douit membantu mencatat transaksi, memahami pengeluaran, dan menjaga target tabunganmu tetap berjalan.</p>
+        </header>
+
+        <div className="login-product-stage" aria-label="Ringkasan fitur Douit">
+          <article className="login-insight-card">
+            <header>
+              <span><BarChart3 size={14} /> Bulan ini</span>
+              <i>Insight</i>
+            </header>
+            <small>Pengeluaran</small>
+            <strong>Rp2.480.000</strong>
+            <div className="login-insight-bars" aria-hidden="true">
+              {insightBars.map((height, index) => (
+                <i key={index}><b style={{ height: `${height}%` }} /></i>
+              ))}
+            </div>
+            <p><Sparkles size={11} /> Makan kategori terbesar</p>
+          </article>
+
+          <article className="login-transaction-card">
+            <div className="login-transaction-heading">
+              <span className="login-mail-icon"><Mail size={17} /></span>
+              <div>
+                <small>Email transaksi</small>
+                <strong>Otomatis tercatat</strong>
+              </div>
+              <span className="login-approved-pill"><CheckCircle2 size={12} /> Disetujui</span>
+            </div>
+
+            <div className="login-transaction-detail">
+              <span className="login-bank-icon"><Landmark size={17} /></span>
+              <div>
+                <strong>Bank BRI</strong>
+                <small>via Email Bank</small>
+              </div>
+              <strong>−Rp48.000</strong>
+            </div>
+
+            <footer>
+              <span>Makanan</span>
+              <small>Hari ini · 10.42 WIB</small>
+            </footer>
+          </article>
+
+          <article className="login-saving-card">
+            <header>
+              <span><Sparkles size={14} /> Saving Assistant</span>
+              <i>On track</i>
+            </header>
+            <div className="login-saving-title">
+              <div>
+                <small>Target tabungan</small>
+                <strong>Laptop baru</strong>
+              </div>
+              <b>52%</b>
+            </div>
+            <div className="login-saving-amounts">
+              <span><b>Rp4,2 jt</b> terkumpul</span>
+              <span>dari Rp8 jt</span>
+            </div>
+            <div className="login-saving-progress"><i /></div>
+            <p><CheckCircle2 size={12} /> Cukup sisihkan Rp32rb/hari</p>
+          </article>
+        </div>
+
+        <div className="login-feature-signals">
+          <span><Mail size={15} /> Otomatis dari email</span>
+          <span><BarChart3 size={15} /> Insight keuangan</span>
+          <span><WalletCards size={15} /> Saving Assistant</span>
+        </div>
+      </div>
+    </aside>
+  );
+}
 
 export function OnboardingView() {
   const router = useRouter();
