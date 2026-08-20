@@ -160,7 +160,7 @@ export function LoginView() {
               </div>
             </label>
             <button className="entry-primary" disabled={loading || sessionLoading}>
-              {loading ? "Membuka ruang kerja..." : sessionLoading ? "Memeriksa sesi..." : <>Masuk <ArrowRight size={16} /></>}
+              {loading ? "Sedang masuk..." : sessionLoading ? "Memeriksa sesi..." : <>Masuk <ArrowRight size={16} /></>}
             </button>
           </form>
 
@@ -436,9 +436,9 @@ export function SignupView() {
       <section className="entry-form-side">
         <EntryBrand />
         <div className="entry-form-wrap signup">
-          <span className="entry-kicker">14 hari gratis · Tanpa kartu kredit</span>
-          <h1>{verify ? "Verifikasi email Anda" : "Bangun arus kas yang lebih rapi"}</h1>
-          <p>{verify ? `Masukkan kode 6 digit yang dikirim ke ${email}.` : "Buat akun untuk mulai menyiapkan profil bisnis Anda."}</p>
+          <span className="entry-kicker">Mulai perjalanan finansialmu</span>
+          <h1>{verify ? "Verifikasi email Anda" : "Mulai kelola uangmu"}</h1>
+          <p>{verify ? `Masukkan kode 6 digit yang dikirim ke ${email}.` : "Catat transaksi, pahami pengeluaran, dan jaga target tabunganmu bersama Douit."}</p>
 
           {errorMessage && (
             <div className="flex items-center gap-2.5 p-3.5 mb-4 rounded-xl bg-rose-50 border border-rose-200/70 text-rose-700 text-sm animate-in fade-in slide-in-from-top-1 duration-200">
@@ -490,7 +490,7 @@ export function SignupView() {
                   </div>
                 </label>
                 <label>
-                  <span>Email kerja</span>
+                  <span>Email</span>
                   <div>
                     <Mail size={16} />
                     <input
@@ -567,7 +567,7 @@ export function SignupView() {
   );
 }
 
-export function EntryStory() { return <aside className="entry-story"><div className="entry-story-copy"><span><Sparkles size={15} /> Asisten keuangan untuk bisnis modern</span><h2>Lebih sedikit administrasi.<br />Lebih banyak kendali.</h2><p>Douit menyatukan invoice, arus kas, dan AI dalam satu ruang kerja yang tetap berada di bawah persetujuan Anda.</p></div><div className="entry-preview"><div className="entry-preview-top"><span><BarChart3 size={16} /> Arus kas Juli</span><b>+12,4%</b></div><strong>Rp128,4 jt</strong><div className="entry-bars">{[32,48,42,62,54,78,67,88,72,94].map((n,i)=><i key={i} style={{height:`${n}%`}} />)}</div><div className="entry-ai-card"><span><Sparkles size={16} /></span><p><b>Draft invoice siap diperiksa</b><small>Klien Busa · Rp5.000.000</small></p><button><Check size={14} /> Setujui</button></div></div><div className="entry-proof"><span><ShieldCheck size={17} /> Setiap aksi AI memerlukan persetujuan</span><span><BadgeCheck size={17} /> Data bisnis terisolasi dan aman</span></div></aside>; }
+export function EntryStory() { return <LoginShowcase />; }
 
 function LoginShowcase() {
   const insightBars = [32, 46, 39, 58, 51, 76, 65, 88];
@@ -582,7 +582,7 @@ function LoginShowcase() {
         </header>
 
         <div className="login-product-stage" aria-label="Ringkasan fitur Douit">
-          <article className="login-insight-card">
+          <article className="login-insight-card" tabIndex={0} aria-label="Insight pengeluaran bulan ini">
             <header>
               <span><BarChart3 size={14} /> Bulan ini</span>
               <i>Insight</i>
@@ -597,7 +597,7 @@ function LoginShowcase() {
             <p><Sparkles size={11} /> Makan kategori terbesar</p>
           </article>
 
-          <article className="login-transaction-card">
+          <article className="login-transaction-card" tabIndex={0} aria-label="Transaksi Bank BRI yang otomatis tercatat dari email">
             <div className="login-transaction-heading">
               <span className="login-mail-icon"><Mail size={17} /></span>
               <div>
@@ -622,7 +622,7 @@ function LoginShowcase() {
             </footer>
           </article>
 
-          <article className="login-saving-card">
+          <article className="login-saving-card" tabIndex={0} aria-label="Saving Assistant untuk target tabungan Laptop baru">
             <header>
               <span><Sparkles size={14} /> Saving Assistant</span>
               <i>On track</i>
