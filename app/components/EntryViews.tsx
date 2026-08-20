@@ -94,15 +94,15 @@ export function LoginView() {
           <p>Kelola pengeluaran, tabungan, dan tujuan keuanganmu di satu tempat.</p>
           
           {message && (
-            <div style={{ padding: '12px 16px', background: '#ecfdf5', border: '1px solid #10b981', borderRadius: '8px', color: '#047857', fontSize: '13px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div className="entry-status entry-status--success" role="status">
               <CheckCircle2 size={16} /> {message}
             </div>
           )}
 
           {errorMessage && (
-            <div className="flex items-center gap-2.5 p-3.5 mb-4 rounded-xl bg-rose-50 border border-rose-200/70 text-rose-700 text-sm animate-in fade-in slide-in-from-top-1 duration-200">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600"/>
-              <span className="font-medium">{errorMessage}</span>
+            <div className="entry-status entry-status--error" role="alert">
+              <AlertCircle size={16} />
+              <span>{errorMessage}</span>
             </div>
           )}
 
@@ -147,7 +147,7 @@ export function LoginView() {
                     e.preventDefault();
                     setShowPassword((prev) => !prev);
                   }}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-1 transition-colors flex items-center justify-center"
+                  className="entry-password-toggle"
                   tabIndex={-1}
                   aria-label={showPassword ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"}
                 >
@@ -179,7 +179,7 @@ export function LoginView() {
                 }
               });
             }}
-            className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl border border-gray-300 bg-white text-gray-700 font-medium text-sm cursor-pointer transition-all duration-200 ease-in-out hover:bg-gray-50 hover:border-gray-400 hover:shadow-sm active:scale-[0.99] active:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-gray-300"
+            className="entry-google-button"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -194,7 +194,7 @@ export function LoginView() {
             Belum punya akun? <Link href="/signup">Mulai gratis</Link>
           </p>
         </div>
-        <span className="entry-legal">Dengan masuk, Anda menyetujui Ketentuan Layanan dan Kebijakan Privasi Douit.</span>
+        <span className="entry-legal">Dengan masuk, kamu menyetujui Ketentuan Layanan dan Kebijakan Privasi Douit.</span>
       </section>
       <LoginShowcase />
     </main>
@@ -437,13 +437,13 @@ export function SignupView() {
         <EntryBrand />
         <div className="entry-form-wrap signup">
           <span className="entry-kicker">Mulai perjalanan finansialmu</span>
-          <h1>{verify ? "Verifikasi email Anda" : "Mulai kelola uangmu"}</h1>
+          <h1>{verify ? "Verifikasi emailmu" : "Mulai kelola uangmu"}</h1>
           <p>{verify ? `Masukkan kode 6 digit yang dikirim ke ${email}.` : "Catat transaksi, pahami pengeluaran, dan jaga target tabunganmu bersama Douit."}</p>
 
           {errorMessage && (
-            <div className="flex items-center gap-2.5 p-3.5 mb-4 rounded-xl bg-rose-50 border border-rose-200/70 text-rose-700 text-sm animate-in fade-in slide-in-from-top-1 duration-200">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600"/>
-              <span className="font-medium">{errorMessage}</span>
+            <div className="entry-status entry-status--error" role="alert">
+              <AlertCircle size={16} />
+              <span>{errorMessage}</span>
             </div>
           )}
 
@@ -543,7 +543,7 @@ export function SignupView() {
                     }
                   });
                 }}
-                className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl border border-gray-300 bg-white text-gray-700 font-medium text-sm cursor-pointer transition-all duration-200 ease-in-out hover:bg-gray-50 hover:border-gray-400 hover:shadow-sm active:scale-[0.99] active:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-gray-300"
+                className="entry-google-button"
               >
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -560,7 +560,7 @@ export function SignupView() {
             Sudah punya akun? <Link href="/login">Masuk</Link>
           </p>
         </div>
-        <span className="entry-legal">Dengan membuat akun, Anda menyetujui Ketentuan Layanan dan Kebijakan Privasi Douit.</span>
+        <span className="entry-legal">Dengan membuat akun, kamu menyetujui Ketentuan Layanan dan Kebijakan Privasi Douit.</span>
       </section>
       <EntryStory />
     </main>

@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, ArrowRight, Mail } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle2, Mail } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { toast } from "sonner";
@@ -36,22 +36,21 @@ export default function ForgotPasswordPage() {
       <section className="entry-form-side">
         <EntryBrand />
         <div className="entry-form-wrap">
-          <span className="entry-kicker">PEMULIHAN AKUN</span>
-          <h1>Lupa Kata Sandi?</h1>
-          <p>
-            Masukkan email yang terdaftar pada akun Douit Anda. Kami akan mengirimkan tautan untuk mengatur ulang kata sandi.
-          </p>
+          <span className="entry-kicker">Pulihkan aksesmu</span>
+          <h1>Lupa kata sandi?</h1>
+          <p>Masukkan email akun Douit-mu. Kami akan mengirim tautan aman untuk membuat kata sandi baru.</p>
 
           {errorMessage && (
-            <div className="flex items-center gap-2.5 p-3.5 mb-4 rounded-xl bg-rose-50 border border-rose-200/70 text-rose-700 text-sm animate-in fade-in slide-in-from-top-1 duration-200">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-              <span className="font-medium">{errorMessage}</span>
+            <div className="entry-status entry-status--error" role="alert">
+              <AlertCircle size={16} />
+              <span>{errorMessage}</span>
             </div>
           )}
 
           {submitted ? (
-            <div style={{ padding: '16px', background: '#ecfdf5', border: '1px solid #10b981', borderRadius: '8px', color: '#047857', fontSize: '14px', lineHeight: 1.5, marginTop: '24px', marginBottom: '24px' }}>
-              Tautan reset kata sandi telah dikirim ke <strong>{email}</strong>. Silakan periksa kotak masuk atau folder spam Anda.
+            <div className="entry-status entry-status--success entry-status--prominent" role="status">
+              <CheckCircle2 size={18} />
+              <span>Tautan sudah dikirim ke <strong>{email}</strong>. Periksa kotak masuk atau folder spam-mu.</span>
             </div>
           ) : (
             <form onSubmit={submit} className="entry-form">
@@ -82,6 +81,7 @@ export default function ForgotPasswordPage() {
             Kembali ke <Link href="/login">Masuk</Link>
           </p>
         </div>
+        <span className="entry-legal">Tautan pemulihan hanya dikirim ke email yang terhubung dengan akun Douit.</span>
       </section>
       <EntryStory />
     </main>

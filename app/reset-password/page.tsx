@@ -50,14 +50,14 @@ export default function ResetPasswordPage() {
       <section className="entry-form-side">
         <EntryBrand />
         <div className="entry-form-wrap">
-          <span className="entry-kicker">KEAMANAN AKUN</span>
-          <h1>Buat Kata Sandi Baru</h1>
-          <p>Buat kata sandi baru yang kuat untuk mengamankan akun Anda.</p>
+          <span className="entry-kicker">Amankan akunmu</span>
+          <h1>Buat kata sandi baru</h1>
+          <p>Pilih kata sandi baru agar akun dan data keuanganmu tetap terlindungi.</p>
 
           {errorMessage && (
-            <div className="flex items-center gap-2.5 p-3.5 mb-4 rounded-xl bg-rose-50 border border-rose-200/70 text-rose-700 text-sm animate-in fade-in slide-in-from-top-1 duration-200">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-              <span className="font-medium">{errorMessage}</span>
+            <div className="entry-status entry-status--error" role="alert">
+              <AlertCircle size={16} />
+              <span>{errorMessage}</span>
             </div>
           )}
 
@@ -85,7 +85,7 @@ export default function ResetPasswordPage() {
                     e.preventDefault();
                     setShowPassword((prev) => !prev);
                   }}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-1 transition-colors flex items-center justify-center"
+                  className="entry-password-toggle"
                   tabIndex={-1}
                   aria-label={showPassword ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"}
                 >
@@ -115,7 +115,7 @@ export default function ResetPasswordPage() {
                     e.preventDefault();
                     setShowConfirmation((prev) => !prev);
                   }}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-1 transition-colors flex items-center justify-center"
+                  className="entry-password-toggle"
                   tabIndex={-1}
                   aria-label={showConfirmation ? "Sembunyikan kata sandi" : "Tampilkan kata sandi"}
                 >
@@ -128,6 +128,7 @@ export default function ResetPasswordPage() {
             </button>
           </form>
         </div>
+        <span className="entry-legal">Kata sandi baru akan melindungi akses ke seluruh data keuanganmu di Douit.</span>
       </section>
       <EntryStory />
     </main>
