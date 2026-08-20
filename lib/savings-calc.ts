@@ -5,6 +5,10 @@ export interface SavingsGoal {
   currentAmount: number;
   dailyTarget: number;
   startDate: string; // YYYY-MM-DD
+  targetDate?: string; // YYYY-MM-DD
+  totalDelayDays?: number;
+  mode?: "RELAXED" | "DISCIPLINED";
+  isSkippedToday?: boolean;
   paymentAccount?: string;
   productUrl?: string;
   isCompleted?: boolean;
@@ -23,6 +27,18 @@ export interface GoalMetrics {
   formattedEstimatedTarget: string;
 }
 
+function getTodayMidnightWIB(): Date {
+  const now = new Date();
+  const wibDateStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(now);
+  const [y, m, d] = wibDateStr.split('-').map(Number);
+  return new Date(y, m - 1, d, 0, 0, 0, 0);
+}
+
 function parseToMidnightLocalDate(dateInput: string | Date): Date {
   if (dateInput instanceof Date) {
     const d = new Date(dateInput);
@@ -30,9 +46,7 @@ function parseToMidnightLocalDate(dateInput: string | Date): Date {
     return d;
   }
   if (!dateInput) {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
+    return getTodayMidnightWIB();
   }
   if (typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
     const [y, m, d] = dateInput.split('-').map(Number);
@@ -44,14 +58,13 @@ function parseToMidnightLocalDate(dateInput: string | Date): Date {
 }
 
 export function calculateGoalMetrics(goal: SavingsGoal): GoalMetrics {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = getTodayMidnightWIB();
 
   const dailyTarget = Math.max(1, goal.dailyTarget);
   const remainingAmount = Math.max(0, goal.targetAmount - goal.currentAmount);
   const remainingDays = Math.ceil(remainingAmount / dailyTarget);
 
-  // 1. Dynamic Estimated Completion Date
+  // 1. Dynamic Estimated Completion Date: exactly today + remainingDays
   const estimatedDate = new Date(today);
   estimatedDate.setDate(today.getDate() + remainingDays);
 
@@ -89,7 +102,7 @@ export function calculateGoalMetrics(goal: SavingsGoal): GoalMetrics {
   // 3. "Days Funded vs Timeline Index" Schedule Drift Algorithm
   const startDate = parseToMidnightLocalDate(goal.startDate || today);
   const oneDayMs = 24 * 60 * 60 * 1000;
-  const dayIndex = Math.max(1, Math.floor((today.getTime() - startDate.getTime()) / oneDayMs) + 1);
+  const daysElapsed = Math.max(1, Math.floor((today.getTime() - startDate.getTime()) / oneDayMs) + 1);
 
   // Check if a deposit occurred today
   const todayTimestamp = today.getTime();
@@ -100,8 +113,11 @@ export function calculateGoalMetrics(goal: SavingsGoal): GoalMetrics {
 
   const daysFunded = goal.currentAmount / dailyTarget;
   
-  // Benchmark Timeline: Evaluate dayIndex if deposited today; evaluate (dayIndex - 1) if not deposited yet today.
-  const benchmarkIndex = hasDepositedToday ? dayIndex : Math.max(0, dayIndex - 1);
+  // Benchmark Timeline:
+  // If user deposited today OR user confirmed skip today: evaluate full daysElapsed.
+  // If user has not deposited today and hasn't skipped yet (action pending): evaluate (daysElapsed - 1).
+  const isActionResolvedToday = hasDepositedToday || Boolean(goal.isSkippedToday);
+  const benchmarkIndex = isActionResolvedToday ? daysElapsed : Math.max(0, daysElapsed - 1);
   const netDifferenceDays = benchmarkIndex - daysFunded; // Positive = Lag/Mundur, Negative = Ahead/Cepat
 
   let driftDays = 0;

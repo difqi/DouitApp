@@ -29,8 +29,20 @@ import { toast } from "sonner";
 import { useDouit } from "../providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
+import { DouitLogo } from "./icons/DouitLogo";
 
-export function EntryBrand() { return <Link className="entry-brand" href="/"><span><WalletCards size={19} /></span>Douit</Link>; }
+export function EntryBrand() {
+  return (
+    <Link href="/" className="inline-flex items-center gap-3 mb-8 no-underline group">
+      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#0F2A1D] to-[#163827] border border-emerald-800/40 flex items-center justify-center shadow-sm p-2 transition-transform duration-200 group-hover:scale-105">
+        <DouitLogo className="w-full h-full text-[#D6ECD9]" />
+      </div>
+      <span className="text-xl font-bold tracking-tight text-slate-900 leading-none">
+        Douit
+      </span>
+    </Link>
+  );
+}
 
 export function LoginView() {
   const [loading, setLoading] = useState(false);

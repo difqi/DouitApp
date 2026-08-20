@@ -44,23 +44,24 @@ export async function checkAndSendOverBudgetAlert(userId: string, customSupabase
     // 2. Fetch total expenses recorded today for user
     const { data: todayTxs, error: txErr } = await supabase
       .from('transactions')
-      .select('amount, created_at, status, type, category_id, merchant, notes')
+      .select('amount, transaction_date, created_at, status, type, category_id, merchant, notes')
       .eq('user_id', userId)
       .eq('type', 'EXPENSE')
       .eq('status', 'APPROVED');
 
     if (txErr || !todayTxs) return;
 
-    // Filter transactions created today in WIB and strictly exclude savings
+    // Filter transactions created/occurring today in WIB and strictly exclude savings
     const todayTotalExpenses = todayTxs
       .filter((tx: any) => {
-        if (!tx.created_at) return false;
+        const rawDate = tx.transaction_date || tx.created_at;
+        if (!rawDate) return false;
         const txDateWIB = new Intl.DateTimeFormat('en-CA', {
           timeZone: 'Asia/Jakarta',
           year: 'numeric',
           month: '2-digit',
           day: '2-digit',
-        }).format(new Date(tx.created_at));
+        }).format(new Date(rawDate));
         if (txDateWIB !== todayWIB) return false;
 
         // Exclude Nabung category

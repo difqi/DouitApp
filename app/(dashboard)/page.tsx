@@ -26,6 +26,7 @@ import { MiniSparkline } from "../components/MiniSparkline";
 
 import { createClient } from "@/lib/supabase/client";
 import { isAccountMatch } from "../../utils/bankAliases";
+import { shouldDisplayTransactionTime } from "../components/WorkspaceViews";
 const money = (value: number | string) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value));
 const shortMoney = (value: number) => new Intl.NumberFormat("id-ID", { notation: "compact", style: "currency", currency: "IDR", maximumFractionDigits: 1 }).format(value);
 const formatDate = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
@@ -74,7 +75,7 @@ export default function DashboardPage() {
       const { data, error } = await supabase
         .from('transactions')
         .select(`
-          id, amount, type, merchant, status, source, confidence_score, transaction_date, sumber_dana,
+          id, amount, type, merchant, status, source, confidence_score, transaction_date, sumber_dana, notes,
           categories (name)
         `)
         .eq('user_id', user.id)
@@ -84,6 +85,7 @@ export default function DashboardPage() {
         const mapped = data.map(d => ({
           ...d,
           date: d.transaction_date,
+          notes: d.notes,
           category: (d.categories as any)?.name || 'Lain-lain',
           sumber_dana: d.sumber_dana || 'Tunai'
         })) as any as Transaction[];
@@ -304,7 +306,7 @@ export default function DashboardPage() {
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex flex-col">
                         <span className="font-medium text-gray-900">{formatDate(tx.date)}</span>
-                        {(!tx.date.includes('T00:00:00')) && (
+                        {shouldDisplayTransactionTime(tx) && (
                           <span className="text-xs text-gray-500 mt-0.5">{formatTime(tx.date)}</span>
                         )}
                       </div>

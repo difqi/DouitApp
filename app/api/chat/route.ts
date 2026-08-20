@@ -6,6 +6,47 @@ import { executeWithGenAIFailover } from "@/lib/gemini";
 
 const OFF_TOPIC_REPLY = "Maaf, Douit AI saat ini hanya dapat membantu mencatat dan mengelola keuangan Anda (pemasukan, pengeluaran, dan sumber rekening). Silakan masukkan catatan transaksi Anda, contoh: 'Hari ini jam 7 malam beli bensin 30k pakai BRI'.";
 
+export function formatTransactionReplyMessage(tx: {
+  amount: number;
+  merchant: string;
+  type: string;
+  sumber_dana?: string | null;
+  admin_fee?: number | null;
+}): string {
+  const typeLabel = tx.type === 'INCOME' ? 'pemasukan' : 'pengeluaran';
+  const formattedAmount = new Intl.NumberFormat('id-ID').format(tx.amount);
+  const paymentMethod = tx.sumber_dana ? tx.sumber_dana.trim() : 'Tunai';
+
+  let paymentPhrase = 'secara tunai';
+  const lowerMethod = paymentMethod.toLowerCase();
+
+  if (lowerMethod === 'tunai' || lowerMethod === 'cash') {
+    paymentPhrase = 'secara tunai';
+  } else if (
+    lowerMethod.startsWith('bank') ||
+    lowerMethod.startsWith('bca') ||
+    lowerMethod.startsWith('bri') ||
+    lowerMethod.startsWith('bni') ||
+    lowerMethod.startsWith('mandiri') ||
+    lowerMethod.startsWith('bsi') ||
+    lowerMethod.startsWith('cimb') ||
+    lowerMethod.startsWith('permata')
+  ) {
+    paymentPhrase = `via ${paymentMethod}`;
+  } else if (['gopay', 'ovo', 'dana', 'shopeepay'].includes(lowerMethod)) {
+    paymentPhrase = `pakai ${paymentMethod}`;
+  } else {
+    paymentPhrase = `lewat ${paymentMethod}`;
+  }
+
+  let reply = `Oke, ${typeLabel} ${tx.merchant} ${formattedAmount} ${paymentPhrase} sudah dicatat.`;
+  if (tx.admin_fee && tx.admin_fee > 0) {
+    const formattedFee = new Intl.NumberFormat('id-ID').format(tx.admin_fee);
+    reply += ` (Biaya admin: ${formattedFee})`;
+  }
+  return reply;
+}
+
 const responseSchema: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -15,7 +56,7 @@ const responseSchema: Schema = {
     },
     reply_message: {
       type: Type.STRING,
-      description: "Balasan percakapan untuk user dalam bahasa Indonesia. Jika pesan pengguna DI LUAR topik pencatatan/pengelolaan keuangan, isi persis dengan teks penolakan standar."
+      description: "Balasan percakapan untuk user dalam bahasa Indonesia. Untuk transaksi keuangan, WAJIB gunakan gaya percakapan natural dan angka bertitik pemisah ribuan (contoh: 'Oke, pengeluaran makan siang 10.000 secara tunai sudah dicatat.'). Jika pesan pengguna DI LUAR topik pencatatan/pengelolaan keuangan, isi persis dengan teks penolakan standar."
     },
     transaction_details: {
       type: Type.OBJECT,
@@ -62,23 +103,25 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (currentSessionId) {
-      const { error: userMsgErr } = await supabase.from('chat_messages').insert({
+    // Parallelize pre-AI queries: user message insert, categories fetch, merchant rules fetch, chat history fetch
+    const [, { data: categories }, { data: rules }, msgsResult] = await Promise.all([
+      currentSessionId ? supabase.from('chat_messages').insert({
         session_id: currentSessionId,
         role: 'user',
         content: message
-      });
-      if (userMsgErr) {
-        console.error("[Chat API] Error inserting user message:", userMsgErr);
-      }
-    }
+      }) : Promise.resolve(null),
+      supabase.from('categories').select('id, name').or(`user_id.eq.${user.id},is_system.eq.true`),
+      supabase.from('merchant_rules').select('merchant_name, keyword, category_id, sumber_dana').eq('user_id', user.id),
+      currentSessionId ? supabase.from('chat_messages')
+        .select('role, content')
+        .eq('session_id', currentSessionId)
+        .order('created_at', { ascending: false })
+        .limit(10) : Promise.resolve({ data: null })
+    ]);
 
-    // Fetch dynamic categories
-    const { data: categories } = await supabase.from('categories').select('id, name').or(`user_id.eq.${user.id},is_system.eq.true`);
     const categoryNames = categories ? categories.map(c => c.name).join(", ") : "Lain-lain";
 
     // Adaptive Match on Raw Input
-    const { data: rules } = await supabase.from('merchant_rules').select('merchant_name, keyword, category_id, sumber_dana').eq('user_id', user.id);
     let matchedRule: any = null;
     if (rules && rules.length > 0) {
       matchedRule = rules.find(rule => {
@@ -89,17 +132,12 @@ export async function POST(req: NextRequest) {
     }
 
     let chatContents: any = message;
-    if (currentSessionId) {
-      const { data: msgs } = await supabase.from('chat_messages')
-        .select('role, content')
-        .eq('session_id', currentSessionId)
-        .order('created_at', { ascending: true });
-      if (msgs && msgs.length > 0) {
-        chatContents = msgs.map(m => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: m.content }]
-        }));
-      }
+    if (currentSessionId && msgsResult?.data && msgsResult.data.length > 0) {
+      const chronologicalMsgs = [...msgsResult.data].reverse();
+      chatContents = chronologicalMsgs.map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }]
+      }));
     }
 
     const now = new Date();
@@ -113,13 +151,21 @@ Jika pengguna bertanya, meminta saran, atau membahas topik apapun DI LUAR pencat
 "${OFF_TOPIC_REPLY}"
 Pada kondisi di luar topik keuangan ini, Anda WAJIB mengatur 'is_transaction' = false dan 'transaction_details' = null.
 
+ATURAN FORMAT BALASAN TRANSAKSI (reply_message):
+Jika is_transaction = true, 'reply_message' WAJIB menggunakan bahasa Indonesia yang natural, ramah, dan angka nominal berformat pemisah ribuan titik (contoh: 10.000, 50.000, 1.500.000) serta menyebutkan jenis transaksi (pengeluaran/pemasukan), merchant/keperluan, dan metode pembayaran.
+Contoh baku:
+- User: "makan siang 10k" -> reply_message: "Oke, pengeluaran makan siang 10.000 secara tunai sudah dicatat."
+- User: "beli bensin 30k pakai BRI" -> reply_message: "Oke, pengeluaran beli bensin 30.000 via Bank BRI sudah dicatat."
+- User: "terima transfer gaji 5jt ke BCA" -> reply_message: "Oke, pemasukan transfer gaji 5.000.000 via Bank BCA sudah dicatat."
+JANGAN PERNAH gunakan format template kaku tanpa titik seperti "Transaksi 'x' sejumlah 10000 telah dicatat."
+
 Kategori HARUS dipilih dari daftar berikut: [${categoryNames}]. Jika user menyebutkan catatan/keterangan, masukkan ke 'notes'.
 
 ${currentDateContext}.
 PENTING TENTANG WAKTU TRANSAKSI:
 1. Jika user MENYEBUTKAN jam spesifik (contoh: "jam 2 siang", "14:30", "jam 8 malam", "jam 19.00", "jam 7 malam"), konversi dengan akurat ke format 24-jam (misal "14:00", "20:00", "19:00") dan isi ke 'transaction_time'.
-2. Jika user TIDAK menyebutkan jam spesifik (contoh: "kemarin beli pulsa 10k", "15 juli laundry", "beli bakso"), set 'transaction_time' menjadi null. JANGAN MENGISI "00:00", "07:00", atau waktu saat ini.
-3. Ekstrak keterangan tanggal (misal "kemarin", "hari ini", "tadi siang") dan hitung tanggalnya relatif terhadap Current Date Context lalu isi ke 'transaction_date' dalam format YYYY-MM-DD. Jika tidak disebutkan tanggal, kembalikan null atau biarkan kosong.
+2. Jika user TIDAK menyebutkan jam spesifik (contoh: "kemarin beli pulsa 10k", "15 juli laundry", "beli bakso", "tanggal 18 agustus bayar parkir 2k"), set 'transaction_time' menjadi null. JANGAN MENGISI "00:00", "07:00", "12:00", atau waktu saat ini.
+3. Ekstrak keterangan tanggal (misal "kemarin", "hari ini", "tadi siang", "18 agustus") dan hitung tanggalnya relatif terhadap Current Date Context lalu isi ke 'transaction_date' dalam format YYYY-MM-DD. Jika tidak disebutkan tanggal, kembalikan null atau biarkan kosong.
 4. Ekstrak metode pembayaran (contoh "pake BCA", "via gopay", "mandiri", "cash", "tunai", "BRI") ke 'sumber_dana'. Jika tidak disebutkan, default ke "Tunai".
 5. Jika ada keterangan biaya admin atau fee, ekstrak angkanya ke dalam 'admin_fee' dan keluarkan dari 'amount'. 'amount' hanya berisi nominal transfer/transaksi utama.
 
@@ -127,12 +173,13 @@ Kembalikan data dalam format JSON sesuai skema.`;
 
     const response = await executeWithGenAIFailover(async (aiInstance) => {
       return await aiInstance.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.5-flash",
         contents: chatContents,
         config: {
           responseMimeType: "application/json",
           responseSchema: responseSchema,
-          systemInstruction: systemInstruction
+          systemInstruction: systemInstruction,
+          temperature: 0.2
         }
       });
     });
@@ -183,6 +230,21 @@ Kembalikan data dalam format JSON sesuai skema.`;
         categoryId = matchedCategory ? matchedCategory.id : (categories?.find(c => c.name === 'Lain-lain')?.id || null);
       }
       
+      const nowForDate = new Date();
+      const todayWIB = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(nowForDate);
+      const targetDate = tx.transaction_date || todayWIB;
+      let finalNotes = tx.notes || null;
+      let transactionDateString = '';
+
+      if (tx.transaction_time) {
+        // Explicit time was provided: construct local ISO string with offset (+07:00 WIB)
+        transactionDateString = `${targetDate}T${tx.transaction_time}:00+07:00`;
+      } else {
+        // No specific time provided: construct UTC midnight and tag notes with [NO_TIME]
+        transactionDateString = `${targetDate}T00:00:00.000Z`;
+        finalNotes = finalNotes ? `${finalNotes} [NO_TIME]` : '[NO_TIME]';
+      }
+
       const transactionPayload: any = {
         amount: tx.amount,
         type: tx.type,
@@ -193,33 +255,22 @@ Kembalikan data dalam format JSON sesuai skema.`;
         status: 'APPROVED',
         source: 'MANUAL_CHAT',
         confidence_score: status === 'APPROVED' ? 1.0 : 0.95,
-        notes: tx.notes || null,
-        admin_fee: tx.admin_fee && tx.admin_fee > 0 ? tx.admin_fee : null
+        notes: finalNotes,
+        admin_fee: tx.admin_fee && tx.admin_fee > 0 ? tx.admin_fee : null,
+        transaction_date: transactionDateString
       };
-
-      if (tx.transaction_date) {
-        if (tx.transaction_time) {
-          // If time is provided, construct local ISO string with offset (assuming +07:00 WIB)
-          transactionPayload.transaction_date = `${tx.transaction_date}T${tx.transaction_time}:00+07:00`;
-        } else {
-          // If NO time is provided, use YYYY-MM-DDT00:00:00.000Z to distinctly represent no-time when formatted
-          transactionPayload.transaction_date = `${tx.transaction_date}T00:00:00.000Z`;
-        }
-      } else {
-        if (tx.transaction_time) {
-          const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
-          transactionPayload.transaction_date = `${today}T${tx.transaction_time}:00+07:00`;
-        } else {
-          // Just use current time but reset to UTC midnight to denote no-time if we want?
-          // Actually, if no date and no time, the user is saying "beli bakso 10k". 
-          // Defaulting to today's date with NO time is better:
-          const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
-          transactionPayload.transaction_date = `${today}T00:00:00.000Z`;
-        }
-      }
 
       draftId = `draft-${Date.now()}`;
       preview = transactionPayload;
+
+      // Standardize and guarantee 100% consistent natural phrasing across all accounts & sessions
+      parsed.reply_message = formatTransactionReplyMessage({
+        amount: transactionPayload.amount,
+        merchant: transactionPayload.merchant,
+        type: transactionPayload.type,
+        sumber_dana: transactionPayload.sumber_dana,
+        admin_fee: transactionPayload.admin_fee
+      });
     }
 
     if (currentSessionId) {

@@ -320,6 +320,9 @@ Format: Nabung ${displayKeyword} ${amount} pakai [nama_rekening]`
         currentAmount: newCurrentAmount,
         dailyTarget: Number(goal.daily_target || 0),
         startDate: goal.start_date || todayWIB,
+        targetDate: goal.target_date || undefined,
+        totalDelayDays: Number(goal.total_delay_days) || 0,
+        mode: goal.mode || 'RELAXED',
         paymentAccount: recordedSumberDana || goal.storage_detail || goal.account_name,
         productUrl: goal.product_url,
         status: isCompleted ? 'completed' : 'active',
@@ -517,25 +520,38 @@ ${footerText}`;
         return NextResponse.json({ status: true }, { status: 200 });
       }
 
-      // Execution: extend target_date by +1 day for each goal being skipped (Mode Santai / RELAXED)
+      // Execution: extend target_date by +1 day and increment total_delay_days for each goal being skipped (Mode Santai / RELAXED)
       for (const goal of goalsToProcess) {
-        if (goal.target_date) {
-          const targetDateObj = new Date(goal.target_date);
-          targetDateObj.setDate(targetDateObj.getDate() + 1);
-          const newTargetDate = targetDateObj.toISOString().split('T')[0];
+        const currentDelays = Number(goal.total_delay_days) || 0;
+        const newDelays = currentDelays + 1;
 
-          await supabaseAdmin
-            .from('savings_goals')
-            .update({
-              target_date: newTargetDate,
-              total_delay_days: (Number(goal.total_delay_days) || 0) + 1,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', goal.id);
+        let newTargetDate = goal.target_date;
+        if (goal.target_date && /^\d{4}-\d{2}-\d{2}$/.test(goal.target_date)) {
+          const [y, m, d] = goal.target_date.split('-').map(Number);
+          const targetDateObj = new Date(y, m - 1, d);
+          targetDateObj.setDate(targetDateObj.getDate() + 1);
+          newTargetDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(targetDateObj);
+        } else {
+          // If target_date was null or missing, compute from today + remainingDays + 1
+          const dailyTarget = Math.max(1, Number(goal.daily_target) || 1);
+          const remainingAmount = Math.max(0, Number(goal.target_amount || 0) - Number(goal.current_amount || 0));
+          const remainingDays = Math.ceil(remainingAmount / dailyTarget);
+          const targetDateObj = new Date();
+          targetDateObj.setDate(targetDateObj.getDate() + remainingDays + 1);
+          newTargetDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(targetDateObj);
         }
+
+        await supabaseAdmin
+          .from('savings_goals')
+          .update({
+            target_date: newTargetDate,
+            total_delay_days: newDelays,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', goal.id);
       }
 
-      // Record skip in notifications table for 1x daily limit deduplication
+      // Record skip in notifications table for 1x daily limit deduplication & cron reminder suppression
       await supabaseAdmin.from('notifications').insert({
         user_id: userId,
         title: goalsToProcess.length === 1
@@ -545,6 +561,7 @@ ${footerText}`;
         type: 'INFO',
         metadata: {
           action_type: 'SKIP_SAVINGS',
+          goal_id: goalsToProcess.length === 1 ? goalsToProcess[0].id : undefined,
           goal_ids: goalsToProcess.map((g: any) => g.id),
           date: todayWIB,
         },

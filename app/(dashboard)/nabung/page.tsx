@@ -168,6 +168,7 @@ export default function NabungPage() {
   const [submittingDeposit, setSubmittingDeposit] = useState(false);
   const [todayExpenseTotal, setTodayExpenseTotal] = useState<number>(cachedTodayExpenseTotal);
   const [globalDailyLimit, setGlobalDailyLimit] = useState<number | null>(cachedGlobalDailyLimit);
+  const [todaySkippedGoalIds, setTodaySkippedGoalIds] = useState<Set<string>>(new Set());
 
   const fetchGoals = async (isBackground = false) => {
     if (!user) return;
@@ -182,8 +183,8 @@ export default function NabungPage() {
         day: '2-digit',
       }).format(new Date());
 
-      // Parallelize all 4 Supabase queries
-      const [goalsRes, profileRes, txsRes, nabungCatRes] = await Promise.all([
+      // Parallelize Supabase queries
+      const [goalsRes, profileRes, txsRes, nabungCatRes, notifsRes] = await Promise.all([
         supabase
           .from('savings_goals')
           .select('*, savings_logs(id, amount, created_at)')
@@ -196,7 +197,7 @@ export default function NabungPage() {
           .maybeSingle(),
         supabase
           .from('transactions')
-          .select('amount, created_at, type, status, merchant, notes, category_id')
+          .select('amount, transaction_date, created_at, type, status, merchant, notes, category_id')
           .eq('user_id', user.id)
           .eq('type', 'EXPENSE')
           .eq('status', 'APPROVED'),
@@ -204,7 +205,12 @@ export default function NabungPage() {
           .from('categories')
           .select('id')
           .eq('name', 'Nabung')
-          .maybeSingle()
+          .maybeSingle(),
+        supabase
+          .from('notifications')
+          .select('id, created_at, metadata')
+          .eq('user_id', user.id)
+          .eq('type', 'INFO')
       ]);
 
       const goalsData = goalsRes.data as SavingsGoal[] | null;
@@ -255,13 +261,14 @@ export default function NabungPage() {
       if (txsData) {
         const nonSavingsTotal = txsData
           .filter((tx: any) => {
-            if (!tx.created_at) return false;
+            const rawDate = tx.transaction_date || tx.created_at;
+            if (!rawDate) return false;
             const txDateWIB = new Intl.DateTimeFormat('en-CA', {
               timeZone: 'Asia/Jakarta',
               year: 'numeric',
               month: '2-digit',
               day: '2-digit',
-            }).format(new Date(tx.created_at));
+            }).format(new Date(rawDate));
             if (txDateWIB !== todayWIB) return false;
 
             // Exclude Nabung category
@@ -281,6 +288,24 @@ export default function NabungPage() {
         cachedTodayExpenseTotal = nonSavingsTotal;
         setTodayExpenseTotal(nonSavingsTotal);
       }
+
+      const skippedGoalIds = new Set<string>();
+      (notifsRes.data || []).forEach((n: any) => {
+        if (!n.created_at) return;
+        const nDateWIB = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Jakarta',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(new Date(n.created_at));
+        if (nDateWIB === todayWIB && n.metadata?.action_type === 'SKIP_SAVINGS') {
+          if (n.metadata?.goal_id) skippedGoalIds.add(n.metadata.goal_id);
+          if (Array.isArray(n.metadata?.goal_ids)) {
+            n.metadata.goal_ids.forEach((id: string) => skippedGoalIds.add(id));
+          }
+        }
+      });
+      setTodaySkippedGoalIds(skippedGoalIds);
 
       hasLoadedGoalsOnce = true;
     } catch (err) {
@@ -401,6 +426,10 @@ export default function NabungPage() {
     currentAmount: Number(g.current_amount || 0),
     dailyTarget: Number(g.daily_target || 0),
     startDate: g.start_date || g.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+    targetDate: g.target_date || undefined,
+    totalDelayDays: Number(g.total_delay_days) || 0,
+    mode: g.mode || 'RELAXED',
+    isSkippedToday: todaySkippedGoalIds.has(g.id),
     paymentAccount: g.storage_detail || g.account_name || undefined,
     productUrl: g.product_url || undefined,
     status: g.status === 'COMPLETED' ? 'completed' : 'active',
@@ -412,7 +441,7 @@ export default function NabungPage() {
 
   const activeCalcGoals = useMemo(() => {
     return goals.filter(g => g.status === 'ACTIVE').map(toCalcGoal);
-  }, [goals]);
+  }, [goals, todaySkippedGoalIds]);
 
   const globalStreak = useMemo(() => {
     return calculateGlobalDisciplineStreak(activeCalcGoals);

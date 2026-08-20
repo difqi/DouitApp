@@ -64,12 +64,36 @@ export async function GET(req: Request) {
         continue;
       }
 
-      // 3. Deduplication safeguard: Check if reminder for this slot was already dispatched today
+      // 3. Deduplication safeguard & Skip Suppression
       const { data: existingNotifications } = await supabase
         .from('notifications')
         .select('id, created_at, metadata')
         .eq('user_id', goal.user_id)
         .eq('type', 'INFO');
+
+      // Requirement A: Skip Suppression - check if user already confirmed "Skip" for this goal today
+      const alreadySkippedToday = existingNotifications?.some((n: any) => {
+        if (!n.created_at) return false;
+        const nDateWIB = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Jakarta',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(new Date(n.created_at));
+
+        if (nDateWIB !== todayWIB) return false;
+        if (n.metadata?.action_type !== 'SKIP_SAVINGS') return false;
+
+        // Check if skip covers this specific goal or all goals
+        if (n.metadata?.goal_id === goal.id) return true;
+        if (Array.isArray(n.metadata?.goal_ids) && n.metadata.goal_ids.includes(goal.id)) return true;
+        return false;
+      });
+
+      if (alreadySkippedToday) {
+        // User already confirmed skip for this goal today; suppress subsequent reminders
+        continue;
+      }
 
       const alreadySentSlotToday = existingNotifications?.some((n: any) => {
         if (!n.created_at) return false;
@@ -95,7 +119,7 @@ export async function GET(req: Request) {
     // 4. Calculate today's non-savings expenses vs safe limit
     const { data: userTxs } = await supabase
       .from('transactions')
-      .select('amount, created_at, type, status, merchant, notes, category_id')
+      .select('amount, transaction_date, created_at, type, status, merchant, notes, category_id')
       .eq('user_id', goal.user_id)
       .eq('type', 'EXPENSE')
       .eq('status', 'APPROVED');
@@ -110,13 +134,14 @@ export async function GET(req: Request) {
 
     const todayExpense = (userTxs || [])
       .filter((tx: any) => {
-        if (!tx.created_at) return false;
+        const rawDate = tx.transaction_date || tx.created_at;
+        if (!rawDate) return false;
         const txDateWIB = new Intl.DateTimeFormat('en-CA', {
           timeZone: 'Asia/Jakarta',
           year: 'numeric',
           month: '2-digit',
           day: '2-digit',
-        }).format(new Date(tx.created_at));
+        }).format(new Date(rawDate));
         if (txDateWIB !== todayWIB) return false;
 
         if (nabungCategoryId && tx.category_id === nabungCategoryId) return false;
@@ -153,6 +178,15 @@ export async function GET(req: Request) {
     const safeDailyLimit = Math.max(0, baseBudget - activeGoalsCommitment);
     const safeRemaining = Math.max(0, safeDailyLimit - todayExpense);
 
+    // Dynamic contextual warning note if expenses exceed safe daily limit (Requirement B)
+    let overBudgetNote = "";
+    if (safeDailyLimit > 0 && todayExpense > safeDailyLimit) {
+      const overAmount = todayExpense - safeDailyLimit;
+      overBudgetNote = `\n\n⚠️ *Perhatian Pengeluaran:*
+Pengeluaran hari ini telah melampaui batas aman sebesar *Rp ${overAmount.toLocaleString("id-ID")}*. Jika kondisi keuangan sedang padat, Anda disarankan untuk istirahat menabung hari ini.
+_Ketik *"Skip"* atau *"Skip ${goal.title}"* jika ingin melewati setoran hari ini._`;
+    }
+
     // 5. Build Goal Object & Calculate Metrics
     const goalAccount = goal.storage_detail || goal.account_name || (goal.storage_type === 'BANK_TRANSFER' ? 'Bank' : goal.storage_type === 'GOPAY_MERCHANT' ? 'QRIS' : 'Tunai');
 
@@ -163,6 +197,9 @@ export async function GET(req: Request) {
       currentAmount: Number(goal.current_amount || 0),
       dailyTarget: Number(goal.daily_target || 0),
       startDate: goal.start_date || todayWIB,
+      targetDate: goal.target_date || undefined,
+      totalDelayDays: Number(goal.total_delay_days) || 0,
+      mode: goal.mode || 'RELAXED',
       paymentAccount: goalAccount,
       productUrl: goal.product_url,
       status: goal.status === 'COMPLETED' ? 'completed' : 'active',
@@ -203,7 +240,7 @@ export async function GET(req: Request) {
       destinationAccount = "rekening *QRIS/GoPay*";
     }
 
-    // Gambar 1 Clean Message Layout
+    // Gambar 1 Clean Message Layout with contextual Over-Budget Note
     const reminderMessage = `*Pengingat Menabung Douit AI* 🎯
 
 Target: *${goal.title}*
@@ -212,7 +249,7 @@ Progress: ${progressBar} 🎯 *${progressPercent}%*
 Streak: 🔥 *${metrics.currentStreak} Hari Aktif*
 📅 Estimasi Target: *${dateIndo}* (Sisa ${metrics.remainingDays} hari)
 ⏳ Status Jadwal: ${metrics.scheduleStatusText}
-📊 Status Dompet: Pengeluaran hari ini Rp ${todayExpense.toLocaleString("id-ID")} / Rp ${safeDailyLimit.toLocaleString("id-ID")} (Sisa aman: Rp ${safeRemaining.toLocaleString("id-ID")})
+📊 Status Dompet: Pengeluaran hari ini Rp ${todayExpense.toLocaleString("id-ID")} / Rp ${safeDailyLimit.toLocaleString("id-ID")} (Sisa aman: Rp ${safeRemaining.toLocaleString("id-ID")})${overBudgetNote}
 
 Yuk sisihkan *Rp ${goalForCalc.dailyTarget.toLocaleString("id-ID")}* hari ini ke ${destinationAccount}!
 

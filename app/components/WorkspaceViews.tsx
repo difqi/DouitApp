@@ -34,6 +34,13 @@ const formatMoney = (value: number | string) => new Intl.NumberFormat("id-ID", {
 const formatDate = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 const formatTime = (value: string) => new Date(value).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }).replace('.', ':') + " WIB";
 
+export const shouldDisplayTransactionTime = (row: { source?: string; notes?: string | null; date?: string }) => {
+  if (!row?.date) return false;
+  if (row.source === 'MANUAL_FORM') return false;
+  if (row.notes && row.notes.includes('[NO_TIME]')) return false;
+  return true;
+};
+
 const getBankBadgeStyle = (bankName: string) => {
   const name = (bankName || 'Tunai').toLowerCase();
   
@@ -273,6 +280,11 @@ export function TransactionsView() {
       if (rule.sumber_dana) sumberDana = rule.sumber_dana;
     }
     
+    const rawDate = String(data.get("date") || "");
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const targetDate = rawDate || todayStr;
+    const manualNotes = notes ? `${notes} [NO_TIME]` : '[NO_TIME]';
+    
     const newTx = {
       user_id: user.id,
       amount: Number(data.get("amount")),
@@ -280,11 +292,11 @@ export function TransactionsView() {
       merchant: merchantName,
       category_id: categoryId,
       sumber_dana: sumberDana,
-      notes: notes,
+      notes: manualNotes,
       status: "APPROVED",
       source: "MANUAL_FORM",
       confidence_score: 1.0,
-      transaction_date: String(data.get("date")) || new Date().toISOString()
+      transaction_date: `${targetDate}T00:00:00.000Z`
     };
     
     await supabase.from('transactions').insert(newTx);
@@ -582,7 +594,7 @@ export function TransactionsView() {
                   <td className="px-4 py-3 whitespace-nowrap">
                     <div className="flex flex-col">
                       <span className="font-medium text-gray-900">{formatDate(row.date)}</span>
-                      {(!row.date.includes('T00:00:00')) && (
+                      {shouldDisplayTransactionTime(row) && (
                         <span className="text-xs text-gray-500 mt-0.5">{formatTime(row.date)}</span>
                       )}
                     </div>
@@ -594,7 +606,14 @@ export function TransactionsView() {
                       </i>
                       <div>
                         <span className="font-semibold text-gray-900 block">{row.merchant}</span>
-                        {row.notes && <span className="text-xs text-gray-500 block max-w-[200px] truncate" title={row.notes.replace(/\[UNMATCHED_BANK:[^\]]+\]/g, '').trim()}>{row.notes.replace(/\[UNMATCHED_BANK:[^\]]+\]/g, '').trim()}</span>}
+                        {row.notes && (
+                          <span
+                            className="text-xs text-gray-500 block max-w-[200px] truncate"
+                            title={row.notes.replace(/\[NO_TIME\]/g, '').replace(/\[UNMATCHED_BANK:[^\]]+\]/g, '').trim()}
+                          >
+                            {row.notes.replace(/\[NO_TIME\]/g, '').replace(/\[UNMATCHED_BANK:[^\]]+\]/g, '').trim()}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </td>
