@@ -4,6 +4,9 @@ interface MiniSparklineProps {
   data?: number[];
   color?: "emerald" | "rose";
   strokeColor?: string;
+  strokeWidth?: number;
+  areaOpacity?: number;
+  verticalPadding?: number;
   height?: number;
   className?: string;
 }
@@ -42,6 +45,9 @@ export function MiniSparkline({
   data = [15, 25, 20, 35, 28, 42, 38, 50],
   color = "emerald",
   strokeColor,
+  strokeWidth = 2.2,
+  areaOpacity = 0.22,
+  verticalPadding = 6,
   height = 48,
   className = "w-full h-12",
 }: MiniSparklineProps) {
@@ -49,16 +55,17 @@ export function MiniSparkline({
   const gradientId = `sparkline-grad-${color}-${uniqueId}`;
 
   const width = 160;
-  const paddingY = 6;
+  const paddingY = Math.min(verticalPadding, Math.max((height - 1) / 2, 0));
   const effectiveHeight = height - paddingY * 2;
 
   const min = Math.min(...data);
   const max = Math.max(...data);
-  const range = max - min === 0 ? 1 : max - min;
+  const hasRange = max !== min;
+  const range = hasRange ? max - min : 1;
 
   const points = data.map((val, idx) => {
     const x = (idx / (data.length - 1)) * width;
-    const normalizedY = (val - min) / range;
+    const normalizedY = hasRange ? (val - min) / range : 0.5;
     // Invert Y so highest value is near top
     const y = paddingY + (1 - normalizedY) * effectiveHeight;
     return { x, y };
@@ -70,7 +77,7 @@ export function MiniSparkline({
   const areaPath = `${linePath} L ${lastPoint.x.toFixed(1)} ${height} L ${firstPoint.x.toFixed(1)} ${height} Z`;
 
   const primaryStroke = strokeColor || (color === "emerald" ? "#10B981" : "#F43F5E");
-  const stopColor = color === "emerald" ? "#10B981" : "#F43F5E";
+  const stopColor = strokeColor || (color === "emerald" ? "#10B981" : "#F43F5E");
 
   return (
     <div className={`relative overflow-hidden ${className}`}>
@@ -81,8 +88,8 @@ export function MiniSparkline({
       >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={stopColor} stopOpacity="0.22" />
-            <stop offset="85%" stopColor={stopColor} stopOpacity="0.02" />
+            <stop offset="0%" stopColor={stopColor} stopOpacity={areaOpacity} />
+            <stop offset="85%" stopColor={stopColor} stopOpacity={Math.min(areaOpacity * 0.1, 0.02)} />
             <stop offset="100%" stopColor={stopColor} stopOpacity="0.0" />
           </linearGradient>
         </defs>
@@ -95,7 +102,7 @@ export function MiniSparkline({
           d={linePath}
           fill="none"
           stroke={primaryStroke}
-          strokeWidth="2.2"
+          strokeWidth={strokeWidth}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
