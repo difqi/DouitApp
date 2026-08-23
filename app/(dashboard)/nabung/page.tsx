@@ -80,6 +80,8 @@ export default function NabungPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [step, setStep] = useState<1 | 2>(1);
   const [depositModalOpen, setDepositModalOpen] = useState(false);
+  const [expandedGoalId, setExpandedGoalId] = useState<string | null>(null);
+  const [safeLimitDetailsOpen, setSafeLimitDetailsOpen] = useState(false);
   const [selectedGoal, setSelectedGoal] = useState<SavingsGoal | null>(null);
 
   // Create Form State
@@ -677,6 +679,7 @@ export default function NabungPage() {
     setReminderCount(1);
     setReminderTimes(['08:00']);
     setCreateGoalError(null);
+    setSafeLimitDetailsOpen(false);
     setStep(1);
 
     const savedPhone =
@@ -863,11 +866,11 @@ export default function NabungPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#faf9f5] text-slate-900 p-4 sm:p-6 lg:p-8">
+    <div className="min-h-screen overflow-x-hidden bg-[#faf9f5] p-4 text-slate-900 sm:p-6 lg:p-8">
       {/* HEADER SECTION */}
-      <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-6 border-b border-slate-200">
+      <div className="mx-auto flex max-w-7xl flex-col gap-4 border-b border-slate-200/80 pb-5 md:flex-row md:items-end md:justify-between">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100/80 text-emerald-800 text-xs font-semibold mb-2">
+          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-200/70 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
             <PiggyBank className="w-4 h-4 text-emerald-600" />
             <span>Smart Savings Assistant</span>
           </div>
@@ -878,7 +881,7 @@ export default function NabungPage() {
             Rencanakan target tabungan, pantau progres, dan dapatkan pengingat lewat WhatsApp.
           </p>
         </div>
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           {isGoalLimitReached && (
             <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-700 border border-amber-500/20">
               Batas Maksimal (3/3)
@@ -886,11 +889,12 @@ export default function NabungPage() {
           )}
           <button
             onClick={handleOpenCreateModal}
-            className={`inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all shadow-sm cursor-pointer ${
+            className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 ${
               isGoalLimitReached
-                ? "bg-slate-200 text-slate-500 hover:bg-slate-300 border border-slate-300"
-                : "bg-gradient-to-r from-[#0F2A1D] to-[#163827] hover:from-[#133525] hover:to-[#1a4430] text-white border border-emerald-700/50 shadow-sm active:scale-[0.98]"
+                ? "cursor-not-allowed border border-slate-300 bg-slate-200 text-slate-500"
+                : "cursor-pointer border border-emerald-700/50 bg-[#173b2b] text-white hover:bg-[#1d4935] active:scale-[0.98]"
             }`}
+            aria-disabled={isGoalLimitReached}
           >
             <Plus className={`w-4 h-4 stroke-[2.5] ${isGoalLimitReached ? "text-slate-500" : "text-emerald-400"}`} />
             <span className={isGoalLimitReached ? "text-slate-600 font-semibold" : "text-white font-semibold"}>Tambah target</span>
@@ -898,28 +902,60 @@ export default function NabungPage() {
         </div>
       </div>
 
-      {/* TOP STATS OVERVIEW BENTO GRID */}
-      <div className="max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-4 my-6">
+      {/* TOP STATS OVERVIEW: compact on mobile, separate cards on desktop */}
+      <div className="mx-auto my-5 grid min-h-24 max-w-7xl grid-cols-3 divide-x divide-emerald-800/60 overflow-hidden rounded-2xl border border-[#254936] bg-[#17382a] px-1 py-3.5 text-white shadow-sm md:hidden">
+        <div className="flex min-w-0 flex-col items-center justify-center px-1.5 text-center">
+          <Wallet className="mb-1.5 h-4 w-4 shrink-0 text-emerald-300" />
+          {loading ? (
+            <div className="mx-auto h-5 w-16 animate-pulse rounded bg-emerald-950/60" />
+          ) : (
+            <strong className="block min-h-4 [overflow-wrap:anywhere] text-[13px] font-bold leading-tight text-[#c8f36b] tabular-nums">
+              {formatRupiah(totalSaved)}
+            </strong>
+          )}
+          <span className="mt-1 block text-[10px] font-medium leading-none text-emerald-100/65">Total dana</span>
+        </div>
+        <div className="flex min-w-0 flex-col items-center justify-center px-1.5 text-center">
+          <Target className="mb-1.5 h-4 w-4 shrink-0 text-emerald-300" />
+          {loading ? (
+            <div className="mx-auto h-5 w-12 animate-pulse rounded bg-emerald-950/60" />
+          ) : (
+            <strong className="block min-h-4 text-[13px] font-bold leading-tight text-white tabular-nums">{activeGoalsCount} aktif</strong>
+          )}
+          <span className="mt-1 block text-[10px] font-medium leading-none text-emerald-100/65">Target</span>
+        </div>
+        <div className="flex min-w-0 flex-col items-center justify-center px-1.5 text-center">
+          <Flame className="mb-1.5 h-4 w-4 shrink-0 fill-[#c8f36b] text-[#c8f36b]" />
+          {loading ? (
+            <div className="mx-auto h-5 w-12 animate-pulse rounded bg-emerald-950/60" />
+          ) : (
+            <strong className="block min-h-4 text-[13px] font-bold leading-tight text-white tabular-nums">{globalStreak} hari</strong>
+          )}
+          <span className="mt-1 block text-[10px] font-medium leading-none text-emerald-100/65">Streak</span>
+        </div>
+      </div>
+
+      <div className="mx-auto my-5 hidden max-w-7xl grid-cols-3 gap-3 md:grid">
         {/* Card 1: Total Dana Terkumpul */}
-        <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
-          <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-          <div className="flex items-center justify-between text-[#A8C9B9] mb-3 relative z-10">
-            <span className="text-xs font-semibold uppercase tracking-wider">Total Dana Terkumpul</span>
-            <div className="w-9 h-9 rounded-xl bg-emerald-950/60 border border-emerald-800/60 text-[#A8C9B9] flex items-center justify-center">
+        <div className="relative flex min-h-32 flex-col justify-between overflow-hidden rounded-2xl border border-[#254936] bg-[#17382a] p-4 text-white shadow-sm sm:p-5">
+          <div className="pointer-events-none absolute -bottom-12 -right-8 h-32 w-32 rounded-full bg-lime-300/10 blur-2xl" />
+          <div className="relative z-10 mb-2 flex items-center justify-between text-[#bad2c6]">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">Total Dana Terkumpul</span>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-700/50 bg-emerald-950/40 text-emerald-200">
               <Wallet className="w-4 h-4" />
             </div>
           </div>
           {loading ? (
             <div className="h-8 w-44 bg-emerald-950/60 rounded-lg animate-pulse my-1 relative z-10 border border-emerald-800/40" />
           ) : (
-            <div className="text-2xl sm:text-3xl font-bold tracking-tight text-[#a3e635] relative z-10">
+            <div className="relative z-10 text-2xl font-bold tracking-tight text-[#c8f36b] sm:text-[1.7rem]">
               {formatRupiah(totalSaved)}
             </div>
           )}
           {loading ? (
             <div className="h-4 w-36 bg-emerald-950/40 rounded animate-pulse mt-2 relative z-10" />
           ) : (
-            <p className="text-xs text-[#A8C9B9]/70 mt-2 flex items-center gap-1 relative z-10 font-medium">
+            <p className="relative z-10 mt-1.5 flex items-center gap-1 text-xs font-medium text-[#bad2c6]/75">
               <TrendingUp className="w-3.5 h-3.5 text-lime-400" />
               <span>Terkumpul dari {goals.length} target tabungan</span>
             </p>
@@ -927,56 +963,54 @@ export default function NabungPage() {
         </div>
 
         {/* Card 2: Target Aktif */}
-        <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
-          <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-          <div className="flex items-center justify-between text-[#A8C9B9] mb-3 relative z-10">
-            <span className="text-xs font-semibold uppercase tracking-wider">Status Target</span>
-            <div className="w-9 h-9 rounded-xl bg-emerald-950/60 border border-emerald-800/60 text-[#A8C9B9] flex items-center justify-center">
+        <div className="flex min-h-32 flex-col justify-between rounded-2xl border border-[#dfe7dc] bg-[#f3f7ef] p-4 shadow-[0_8px_24px_rgba(31,55,43,0.04)] sm:p-5">
+          <div className="mb-2 flex items-center justify-between text-slate-500">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">Status Target</span>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-200 bg-white/80 text-emerald-700">
               <Target className="w-4 h-4" />
             </div>
           </div>
           {loading ? (
-            <div className="h-8 w-28 bg-emerald-950/60 rounded-lg animate-pulse my-1 relative z-10 border border-emerald-800/40" />
+            <div className="my-1 h-8 w-28 animate-pulse rounded-lg border border-slate-200 bg-slate-200/80" />
           ) : (
-            <div className="flex items-baseline gap-2 relative z-10">
-              <span className="text-2xl sm:text-3xl font-bold text-lime-400">{activeGoalsCount}</span>
-              <span className="text-xs text-[#A8C9B9] font-medium">Aktif</span>
-              <span className="text-[#A8C9B9]/40 mx-1">/</span>
-              <span className="text-xl font-bold text-emerald-200">{completedGoalsCount}</span>
-              <span className="text-xs text-[#A8C9B9]/70 font-medium">Selesai</span>
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold text-emerald-900 sm:text-[1.7rem]">{activeGoalsCount}</span>
+              <span className="text-xs font-medium text-emerald-800">Aktif</span>
+              <span className="mx-1 text-slate-300">/</span>
+              <span className="text-xl font-bold text-emerald-700">{completedGoalsCount}</span>
+              <span className="text-xs font-medium text-slate-500">Selesai</span>
             </div>
           )}
-          <p className="text-xs text-[#A8C9B9]/70 mt-2 relative z-10 font-medium">
+          <p className="mt-1.5 text-xs font-medium text-slate-500">
             Jaga targetmu tetap sesuai rencana
           </p>
         </div>
 
         {/* Card 3: Streak Menabung */}
-        <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
-          <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-          <div className="flex items-center justify-between text-[#A8C9B9] mb-3 relative z-10">
-            <span className="text-xs font-semibold uppercase tracking-wider">Streak Menabung</span>
-            <div className="w-9 h-9 rounded-xl bg-amber-950/60 border border-amber-800/60 text-amber-400 flex items-center justify-center">
-              <Flame className="w-4 h-4 text-amber-400 fill-amber-400" />
+        <div className="flex min-h-32 flex-col justify-between rounded-2xl border border-[#e7e1d5] bg-[#f8f4ea] p-4 shadow-[0_8px_24px_rgba(31,55,43,0.04)] sm:p-5">
+          <div className="mb-2 flex items-center justify-between text-slate-500">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">Streak Menabung</span>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#d8e7b5] bg-[#eff6dc] text-emerald-800">
+              <Flame className="h-4 w-4 fill-[#c8f36b] text-emerald-800" />
             </div>
           </div>
           {loading ? (
-            <div className="h-8 w-36 bg-amber-950/60 rounded-lg animate-pulse my-1 relative z-10 border border-amber-800/40" />
+            <div className="my-1 h-8 w-36 animate-pulse rounded-lg border border-slate-200 bg-slate-200/80" />
           ) : (
-            <div className="text-2xl sm:text-3xl font-bold tracking-tight text-amber-300 flex items-center gap-2 relative z-10">
+            <div className="flex items-baseline gap-2 text-2xl font-bold tracking-tight text-emerald-900 sm:text-[1.7rem]">
               <span>{globalStreak}</span>
-              <span className="text-sm font-semibold text-amber-400/90">Hari Berturut-turut</span>
+              <span className="text-xs font-semibold text-emerald-700">Hari Berturut-turut</span>
             </div>
           )}
-          <p className="text-xs text-[#A8C9B9]/70 mt-2 relative z-10 font-medium">
+          <p className="mt-1.5 text-xs font-medium text-slate-500">
             Disiplin setoran harian memicu kebiasaan positif
           </p>
         </div>
       </div>
 
       {/* ACTIVE GOALS GRID SECTION */}
-      <div className="max-w-7xl mx-auto mt-8">
-        <div className="flex items-center justify-between mb-4">
+      <div className="mx-auto mt-7 max-w-7xl">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-emerald-600" />
             Daftar Target Tabungan
@@ -988,11 +1022,11 @@ export default function NabungPage() {
 
         {loading && goals.length === 0 ? (
           /* SKELETON GOALS GRID */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 lg:grid-cols-3">
             {[1, 2, 3].map((i) => (
               <div
                 key={i}
-                className="bg-gradient-to-br from-[#122e23] to-[#0a1e16] text-white border border-emerald-800/40 shadow-lg rounded-2xl p-6 flex flex-col justify-between relative overflow-hidden animate-pulse"
+                className="relative flex h-full flex-col justify-between overflow-hidden rounded-2xl border border-emerald-800/40 bg-gradient-to-br from-[#153528] to-[#0d241a] p-5 text-white shadow-lg animate-pulse"
               >
                 <div>
                   <div className="flex items-start justify-between gap-3 mb-4">
@@ -1053,47 +1087,64 @@ export default function NabungPage() {
           </div>
         ) : (
           /* GOALS CARDS GRID */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className={`grid grid-cols-1 items-stretch gap-4 ${
+            goals.length === 1
+              ? 'mx-auto max-w-xl'
+              : goals.length === 2
+                ? 'mx-auto max-w-5xl md:grid-cols-2'
+                : 'md:grid-cols-2 lg:grid-cols-3'
+          }`}>
             {goals.map((goal) => {
               const calcGoal = toCalcGoal(goal);
               const metrics = calculateGoalMetrics(calcGoal);
               const pct = Math.min(100, Math.round(((goal.current_amount || 0) / (goal.target_amount || 1)) * 100));
               const isCompleted = goal.status === 'COMPLETED' || pct >= 100;
+              const isExpanded = expandedGoalId === goal.id;
+              const isDelayed = metrics.driftDays > 0;
+              const scheduleLabel =
+                metrics.driftDays > 0
+                  ? `Lebih lambat ${metrics.driftDays} hari`
+                  : metrics.driftDays < 0
+                    ? `Lebih cepat ${Math.abs(metrics.driftDays)} hari`
+                    : 'Sesuai rencana';
+              const fractionalScheduleDetail = metrics.fractionalDrift > 0
+                ? `${metrics.scheduleStatusText.includes('Surplus') ? 'Surplus' : isDelayed ? 'Beban tambahan' : 'Selisih'} ${metrics.fractionalDrift} hari`
+                : null;
 
               return (
                 <div
                   key={goal.id}
-                  className="bg-gradient-to-br from-[#122e23] to-[#0a1e16] text-white border border-emerald-800/40 shadow-lg rounded-2xl p-6 flex flex-col justify-between relative overflow-hidden group hover:border-emerald-700/60 transition-all"
+                  className="group relative flex h-full min-w-0 flex-col justify-between overflow-hidden rounded-2xl border border-emerald-800/50 bg-gradient-to-br from-[#153528] to-[#0d241a] p-4 text-white shadow-[0_14px_34px_rgba(13,36,26,0.12)] transition-all hover:-translate-y-0.5 hover:border-emerald-600/70 hover:shadow-[0_18px_42px_rgba(13,36,26,0.16)] sm:p-5"
                 >
                   {/* Glowing background accent */}
-                  <div className="absolute -top-12 -right-12 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all pointer-events-none" />
+                  <div className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-lime-300/[0.08] blur-2xl transition-all group-hover:bg-lime-300/[0.12]" />
 
                   <div>
                     {/* CARD HEADER */}
-                    <div className="flex items-start justify-between gap-3 mb-4">
-                      <div className="flex items-center gap-3">
+                    <div className="mb-4 flex min-w-0 items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
                         {goal.image_url && !imgErrors[goal.id] ? (
                           <img
                             src={goal.image_url}
                             alt={goal.title}
                             referrerPolicy="no-referrer"
-                            className="w-12 h-12 rounded-lg object-cover border border-emerald-700/50 shadow-sm shrink-0"
+                            className="h-12 w-12 shrink-0 rounded-xl border border-emerald-700/50 object-cover shadow-sm"
                             onError={(e) => {
                               e.currentTarget.style.display = 'none';
                               setImgErrors(prev => ({ ...prev, [goal.id]: true }));
                             }}
                           />
                         ) : (
-                          <div className="w-12 h-12 rounded-lg bg-emerald-900/60 border border-emerald-700/50 flex items-center justify-center text-emerald-400 shrink-0">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-emerald-700/50 bg-emerald-900/60 text-emerald-400">
                             <ShoppingBag className="w-6 h-6 text-emerald-400" />
                           </div>
                         )}
-                        <div>
-                          <h3 className="font-bold text-base text-white leading-tight line-clamp-1">
+                        <div className="min-w-0">
+                          <h3 className="line-clamp-2 text-base font-bold leading-tight text-white" title={goal.title}>
                             {goal.title}
                           </h3>
-                          <p className="text-emerald-400/80 text-xs mt-0.5">
-                            Target: {formatRupiah(goal.target_amount)}
+                          <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-300/65">
+                            Target tabungan
                           </p>
                         </div>
                       </div>
@@ -1112,66 +1163,117 @@ export default function NabungPage() {
                       </div>
                     </div>
 
+                    <div className="mb-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-300/60">Target nominal</p>
+                      <strong className="mt-0.5 block text-xl font-bold tracking-tight text-white">
+                        {formatRupiah(goal.target_amount)}
+                      </strong>
+                    </div>
+
                     {/* PROGRESS BAR */}
-                    <div className="my-4">
-                      <div className="flex justify-between items-center text-xs mb-1.5 font-medium">
-                        <span className="text-emerald-300/90">Progres Terkumpul</span>
-                        <span className="text-[#a3e635] font-bold">{pct}%</span>
+                    <div className="mb-4">
+                      <div className="mb-2 flex items-end justify-between gap-3">
+                        <span className="text-xs font-medium text-emerald-200/80">Progres terkumpul</span>
+                        <span className="text-xl font-bold leading-none text-[#c8f36b]">{pct}%</span>
                       </div>
-                      <div className="w-full h-3 bg-emerald-950/80 rounded-full overflow-hidden p-0.5 border border-emerald-800/60">
+                      <div
+                        className="h-3.5 w-full overflow-hidden rounded-full border border-emerald-700/50 bg-emerald-950/80 p-0.5"
+                        role="progressbar"
+                        aria-label={`Progres ${goal.title}`}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={pct}
+                        aria-valuetext={`${formatRupiah(goal.current_amount || 0)} dari ${formatRupiah(goal.target_amount)}`}
+                      >
                         <div
-                          className="h-full bg-gradient-to-r from-emerald-500 to-[#a3e635] rounded-full transition-all duration-500"
+                          className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-[#c8f36b] shadow-[0_0_12px_rgba(200,243,107,0.24)] transition-all duration-500"
                           style={{ width: `${pct}%` }}
                         />
                       </div>
-                      <div className="flex justify-between items-center text-xs mt-2 text-slate-300">
-                        <span className="font-semibold text-white">{formatRupiah(goal.current_amount || 0)}</span>
-                        <span className="text-emerald-400/70">{metrics.remainingDays} hari tersisa (Sisa {formatRupiah(metrics.remainingAmount)})</span>
+                      <div className="mt-3 grid min-w-0 grid-cols-2 divide-x divide-emerald-800/60 text-xs md:grid-cols-3">
+                        <div className="min-w-0 pr-2">
+                          <span className="block text-[10px] text-emerald-200/55">Terkumpul</span>
+                          <strong className="mt-0.5 block [overflow-wrap:anywhere] font-semibold leading-tight text-white">{formatRupiah(goal.current_amount || 0)}</strong>
+                        </div>
+                        <div className="min-w-0 px-2">
+                          <span className="block text-[10px] text-emerald-200/55">Target</span>
+                          <strong className="mt-0.5 block [overflow-wrap:anywhere] font-semibold leading-tight text-emerald-100">{formatRupiah(goal.target_amount)}</strong>
+                        </div>
+                        <div className="hidden min-w-0 pl-2 md:block">
+                          <span className="block text-[10px] text-emerald-200/55">Sisa</span>
+                          <strong className="mt-0.5 block [overflow-wrap:anywhere] font-semibold leading-tight text-emerald-100">{formatRupiah(metrics.remainingAmount)}</strong>
+                          <span className="mt-0.5 block text-[9px] text-emerald-300/55">{metrics.remainingDays} hari tersisa</span>
+                        </div>
                       </div>
                     </div>
 
-                    {/* DAILY TARGET & REMINDER PILL */}
-                    <div className="bg-emerald-950/60 border border-emerald-800/40 rounded-xl p-3 my-4 flex flex-col gap-2.5 text-xs">
+                    {/* DAILY TARGET & SUPPORTING DETAILS */}
+                    <div className="mb-2 mt-3 flex flex-col text-xs">
                       {/* Target Harian Row */}
-                      <div className="flex items-center justify-between">
-                        <span className="text-emerald-300/80 flex items-center gap-1">
+                      <div className="flex items-center justify-between gap-3 rounded-xl border border-lime-300/20 bg-lime-300/10 p-3">
+                        <span className="flex items-center gap-1.5 font-medium text-emerald-100">
                           <Coins className="w-3.5 h-3.5 text-[#a3e635]" />
                           Target Harian:
                         </span>
-                        <span className="font-bold text-[#a3e635]">
+                        <span className="text-right font-bold text-[#c8f36b]">
                           {formatRupiah(goal.daily_target)} / hari
                         </span>
                       </div>
 
                       {/* Status Jadwal Row */}
-                      <div className="flex items-center justify-between text-slate-300 border-t border-emerald-900/60 pt-2">
-                        <span className="text-emerald-400/70 flex items-center gap-1">
-                          <Clock className="w-3.5 h-3.5 text-amber-400" />
+                      <div className="mt-2 flex items-start justify-between gap-3 px-0.5 py-2.5 text-slate-300">
+                        <span className="flex shrink-0 items-center gap-1 text-emerald-300/65">
+                          <Clock className={`h-3.5 w-3.5 ${isDelayed ? 'text-amber-400' : 'text-emerald-400'}`} />
                           Status Jadwal:
                         </span>
-                        <span className="text-right text-xs font-semibold text-amber-300">
-                          {metrics.scheduleStatusText}
+                        <span className={`flex min-w-0 flex-col items-end text-right text-xs font-semibold ${isDelayed ? 'text-amber-300' : 'text-emerald-200'}`}>
+                          <span>{scheduleLabel}</span>
+                          {fractionalScheduleDetail && <span className="mt-0.5 text-[9px] font-medium opacity-70">{fractionalScheduleDetail}</span>}
                         </span>
                       </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setExpandedGoalId((current) => current === goal.id ? null : goal.id)}
+                      className="mt-1 flex min-h-11 w-full items-center justify-between rounded-xl border border-emerald-700/50 bg-emerald-950/45 px-3 py-2 text-left text-xs font-bold text-emerald-100 shadow-sm transition-[background-color,border-color,color] hover:border-emerald-600/70 hover:bg-emerald-900/55 hover:text-[#c8f36b] active:bg-emerald-900/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#c8f36b] md:hidden"
+                      aria-expanded={isExpanded}
+                      aria-controls={`goal-details-${goal.id}`}
+                    >
+                      <span>{isExpanded ? 'Tutup detail' : 'Lihat detail'}</span>
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-900/70 text-emerald-200" aria-hidden="true">
+                        <ChevronRight className={`h-4 w-4 transition-transform duration-200 motion-reduce:transition-none ${isExpanded ? 'rotate-90' : ''}`} />
+                      </span>
+                    </button>
+
+                    <div
+                      id={`goal-details-${goal.id}`}
+                      className={`${isExpanded ? 'block animate-in fade-in slide-in-from-top-1 duration-200 motion-reduce:animate-none' : 'hidden'} md:block md:animate-none`}
+                    >
+                      <div className="grid grid-cols-2 gap-2 border-b border-emerald-900/60 py-3 text-xs md:hidden">
+                        <span className="text-emerald-300/60">Sisa nominal <strong className="mt-0.5 block text-emerald-100">{formatRupiah(metrics.remainingAmount)}</strong></span>
+                        <span className="text-right text-emerald-300/60">Sisa waktu <strong className="mt-0.5 block text-emerald-100">{metrics.remainingDays} hari</strong></span>
+                      </div>
+                      <div className="flex flex-col text-xs">
 
                       {/* Estimasi Target Row */}
-                      <div className="flex items-center justify-between text-slate-300 border-t border-emerald-900/60 pt-2">
-                        <span className="text-emerald-400/70 flex items-center gap-1">
+                      <div className="flex items-start justify-between gap-3 border-b border-emerald-900/60 py-2.5 text-slate-300">
+                        <span className="flex shrink-0 items-center gap-1 text-emerald-300/65">
                           <Calendar className="w-3.5 h-3.5 text-emerald-400" />
                           Estimasi Target:
                         </span>
-                        <span className="text-right text-xs text-slate-200">
+                        <span className="min-w-0 text-right text-xs text-slate-200">
                           {metrics.formattedEstimatedTarget}
                         </span>
                       </div>
 
                       {/* Pengingat WA Row */}
-                      <div className="flex items-center justify-between text-slate-300 border-t border-emerald-900/60 pt-2">
-                        <span className="text-emerald-400/70 flex items-center gap-1">
-                          <Bell className="w-3.5 h-3.5 text-amber-400" />
+                      <div className="flex items-start justify-between gap-3 border-b border-emerald-900/60 py-2.5 text-slate-300">
+                        <span className="flex shrink-0 items-center gap-1 text-emerald-300/65">
+                          <Bell className="h-3.5 w-3.5 text-emerald-400" />
                           Pengingat WA:
                         </span>
-                        <span>
+                        <span className="min-w-0 text-right text-slate-200">
                           {goal.reminder_times && goal.reminder_times.length > 0
                             ? `${goal.reminder_times.join(', ')} WIB (${goal.reminder_times.length}x/hari)`
                             : `${goal.reminder_time ? goal.reminder_time.slice(0, 5) : '08:00'} WIB`} ({goal.mode === 'RELAXED' ? 'Santai' : 'Disiplin'})
@@ -1203,13 +1305,13 @@ export default function NabungPage() {
                             : 'text-emerald-300';
 
                         return (
-                          <div className="border-t border-emerald-900/60 pt-2 flex flex-col gap-1.5">
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="text-emerald-400/70 flex items-center gap-1">
+                          <div className="flex flex-col gap-1.5 pt-2.5">
+                            <div className="flex items-start justify-between gap-3 text-xs">
+                              <span className="flex shrink-0 items-center gap-1 text-emerald-300/65">
                                 <Wallet className="w-3.5 h-3.5 text-emerald-400" />
                                 Pengeluaran Hari Ini:
                               </span>
-                              <span className={textColorClass}>
+                              <span className={`min-w-0 text-right tabular-nums ${textColorClass}`}>
                                 {formatRupiah(todayExpenseTotal)}
                                 {cardSafeLimit > 0 ? ` / ${formatRupiah(cardSafeLimit)}` : ''}
                                 {cardSafeLimit > 0 ? ` (${expensePct}%)` : ''}
@@ -1217,7 +1319,15 @@ export default function NabungPage() {
                             </div>
 
                             {cardSafeLimit > 0 && (
-                              <div className="w-full h-1.5 bg-emerald-950/80 rounded-full overflow-hidden border border-emerald-800/50">
+                              <div
+                                className="h-1.5 w-full overflow-hidden rounded-full border border-emerald-800/50 bg-emerald-950/80"
+                                role="progressbar"
+                                aria-label="Pengeluaran hari ini terhadap batas aman"
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={Math.min(100, expensePct)}
+                                aria-valuetext={`${formatRupiah(todayExpenseTotal)} dari batas aman ${formatRupiah(cardSafeLimit)}`}
+                              >
                                 <div
                                   className={`h-full ${barColorClass} transition-all duration-300 rounded-full`}
                                   style={{ width: `${Math.min(100, expensePct)}%` }}
@@ -1232,10 +1342,11 @@ export default function NabungPage() {
 
 
                     {/* Footer Info Row */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 w-full mt-3 mb-4">
+                    <div className="mb-3 mt-3 grid w-full grid-cols-[minmax(0,1fr)_auto] items-end gap-2.5">
                       {/* Account Badge with Truncation */}
-                      <div className="flex-1 min-w-0 max-w-[70%]">
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-950/60 text-emerald-400 border border-emerald-800/50 truncate w-full">
+                      <div className="min-w-0">
+                        <span className="mb-1 block text-[9px] font-semibold uppercase tracking-[0.1em] text-emerald-300/45">Sumber dana</span>
+                        <span className="inline-flex w-full min-w-0 items-center gap-1.5 text-[11px] font-medium leading-snug text-emerald-200/70">
                           {goal.storage_type === 'BANK_TRANSFER' ? (
                             <Building2 className="w-3.5 h-3.5 flex-shrink-0" />
                           ) : goal.storage_type === 'TUNAI' ? (
@@ -1243,37 +1354,39 @@ export default function NabungPage() {
                           ) : (
                             <Smartphone className="w-3.5 h-3.5 flex-shrink-0" />
                           )}
-                          <span className="truncate">
+                          <span className="min-w-0 [overflow-wrap:anywhere]">
                             {goal.account_name || goal.storage_detail || (goal.storage_type === 'BANK_TRANSFER' ? 'Rekening Bank' : goal.storage_type === 'TUNAI' ? 'Celengan Fisik' : 'Rekening QRIS')}
                           </span>
                         </span>
                       </div>
 
                       {/* Streak Badge (Guaranteed Space with Original Lucide Flame SVG) */}
-                      <div className="flex-shrink-0 flex items-center gap-1.5 text-xs font-semibold text-amber-400 bg-amber-950/40 border border-amber-800/40 px-3 py-1.5 rounded-full">
-                        <Flame className="w-4 h-4 text-amber-400 fill-amber-400 flex-shrink-0"/>
+                      <div className="flex flex-shrink-0 items-center gap-1.5 rounded-full border border-emerald-800/50 bg-emerald-950/35 px-2.5 py-1.5 text-[11px] font-medium text-emerald-200/75">
+                        <Flame className="h-3.5 w-3.5 flex-shrink-0 text-emerald-300/75"/>
                         <span className="whitespace-nowrap">{metrics.currentStreak} Hari Aktif</span>
                       </div>
+                    </div>
                     </div>
                   </div>
 
                   {/* ACTION BUTTONS */}
-                  <div className="flex items-center gap-2 pt-2 border-t border-emerald-900/60">
+                  <div className={`${isExpanded ? 'flex' : 'hidden'} items-center gap-2 border-t border-emerald-900/60 pt-3 md:flex`}>
                     <button
                       onClick={() => handleOpenDepositModal(goal)}
                       disabled={isCompleted}
-                      className={`flex-1 py-2.5 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${isCompleted
-                          ? 'bg-emerald-900/40 text-emerald-500 cursor-not-allowed'
-                          : 'bg-[#a3e635] text-[#051910] hover:bg-[#8fd428] shadow-sm active:scale-95'
+                      className={`flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8f36b] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0d241a] ${isCompleted
+                          ? 'cursor-not-allowed bg-[#d9e7b9] text-[#355143]'
+                          : 'cursor-pointer bg-[#c8f36b] text-[#051910] shadow-sm hover:bg-[#b7e758] active:scale-[0.98]'
                         }`}
                     >
-                      <Coins className="w-4 h-4 text-[#051910] stroke-[2.5]" />
-                      <span className="text-[#051910] font-extrabold">Catat Setoran</span>
+                      <Coins className={`h-4 w-4 stroke-[2.5] ${isCompleted ? 'text-[#355143]' : 'text-[#051910]'}`} />
+                      <span className={`font-extrabold ${isCompleted ? 'text-[#355143]' : 'text-[#051910]'}`}>Catat Setoran</span>
                     </button>
                     <button
                       onClick={() => handleDeleteGoal(goal.id)}
-                      className="p-2.5 rounded-xl bg-emerald-950/80 text-emerald-400 hover:text-rose-400 hover:bg-rose-950/40 border border-emerald-800/60 transition-colors cursor-pointer"
+                      className="flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-xl border border-emerald-800/60 bg-emerald-950/70 p-2.5 text-emerald-300 transition-colors hover:border-rose-800/60 hover:bg-rose-950/40 hover:text-rose-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0d241a]"
                       title="Hapus Target"
+                      aria-label={`Hapus target ${goal.title}`}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -1287,29 +1400,36 @@ export default function NabungPage() {
 
       {/* CREATE TARGET MODAL */}
       {createModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-          <div className="relative w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-slate-100 p-5 sm:p-6 text-slate-900 overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-slate-950/60 p-0 backdrop-blur-xs sm:items-center sm:p-4">
+          <div
+            className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-white text-slate-900 shadow-2xl sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-slate-100 sm:p-6"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-goal-title"
+          >
             <button
               onClick={() => setCreateModalOpen(false)}
-              className="absolute top-4 right-4 p-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              className="absolute right-3 top-3 z-20 flex h-11 w-11 cursor-pointer items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 sm:right-4 sm:top-4"
+              aria-label="Tutup tambah target"
             >
               <X className="w-5 h-5" />
             </button>
 
             {/* MODAL HEADER WITH STEP INDICATOR */}
-            <div className="flex items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
+            <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 bg-white px-4 py-3 pr-14 sm:mb-4 sm:px-0 sm:pb-3 sm:pt-0">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                <div className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 sm:flex">
                   <PiggyBank className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900 leading-tight">Tambah target tabungan</h3>
+                  <h3 id="create-goal-title" className="text-lg font-bold text-slate-900 leading-tight">Tambah target tabungan</h3>
                   <p className="text-xs text-slate-500 font-medium mt-0.5">
-                    {step === 1 ? 'Langkah 1 dari 2: Detail Target' : 'Langkah 2 dari 2: Metode & Pengaturan'}
+                    <span className="sm:hidden">{`Langkah ${step} dari 2`}</span>
+                    <span className="hidden sm:inline">{step === 1 ? 'Langkah 1 dari 2: Detail Target' : 'Langkah 2 dari 2: Metode & Pengaturan'}</span>
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5 pr-8">
+              <div className="hidden items-center gap-1.5 pr-8 sm:flex">
                 <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${step === 1 ? 'bg-[#0e281e] text-emerald-300 border border-emerald-700/50' : 'bg-slate-100 text-slate-400'}`}>
                   1. Detail
                 </span>
@@ -1319,10 +1439,11 @@ export default function NabungPage() {
               </div>
             </div>
 
-            <form onSubmit={handleCreateGoal} className="space-y-4">
+            <form onSubmit={handleCreateGoal} className="flex min-h-0 flex-1 flex-col overflow-hidden">
               {/* STEP 1: DETAIL TARGET IMPIAN (2-COLUMN HORIZONTAL GRID) */}
               {step === 1 && (
-                <div className="space-y-4">
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <div className="min-h-0 flex-1 scroll-pb-24 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:-mr-2 sm:scroll-pb-0 sm:px-0 sm:py-0 sm:pr-2">
                   <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
                     <Target className="w-3.5 h-3.5 text-emerald-600" />
                     Detail target tabungan
@@ -1344,11 +1465,11 @@ export default function NabungPage() {
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5">
                     {/* LEFT COLUMN */}
-                    <div className="space-y-4">
+                    <div className="contents md:block md:space-y-4">
                       {/* Nama Target */}
-                      <div>
+                      <div className="order-1">
                         <label className="block text-sm font-semibold text-slate-700 mb-1.5">
                           Nama Barang / Tujuan Impian
                         </label>
@@ -1361,12 +1482,12 @@ export default function NabungPage() {
                             setCreateGoalError(null);
                             setTitle(e.target.value);
                           }}
-                          className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                          className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                         />
                       </div>
 
                       {/* Target Nominal */}
-                      <div>
+                      <div className="order-2">
                         <label className="block text-sm font-semibold text-slate-700 mb-1.5">
                           Target Nominal (Rp)
                         </label>
@@ -1380,12 +1501,12 @@ export default function NabungPage() {
                             setCreateGoalError(null);
                             setTargetAmount(e.target.value);
                           }}
-                          className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                          className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                         />
                       </div>
 
                       {/* Komitmen Pengeluaran Harian */}
-                      <div>
+                      <div className="order-5">
                         <label className="block text-sm font-semibold text-slate-700 mb-1.5">
                           Komitmen Pengeluaran Harian <span className="text-slate-400 font-normal text-xs">(Opsional)</span>
                         </label>
@@ -1395,7 +1516,7 @@ export default function NabungPage() {
                           placeholder="Contoh: 100000"
                           value={maxDailyExpense}
                           onChange={(e) => setMaxDailyExpense(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                          className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                         />
                         <div className="flex items-start gap-1.5 mt-1.5 text-xs text-slate-500">
                           <Info className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
@@ -1404,65 +1525,21 @@ export default function NabungPage() {
                           </span>
                         </div>
 
-                        {/* Interactive Real-time Calculation Breakdown Banner */}
-                        {(() => {
-                          const baseBudgetNum = parseFloat(maxDailyExpense) || 0;
-                          if (baseBudgetNum <= 0) return null;
-
-                          const netSafeDailyLimit = Math.max(
-                            0,
-                            baseBudgetNum - activeGoalsCommitment - calculatedDailyTarget
-                          );
-
-                          return (
-                            <div className="mt-2.5 p-3.5 bg-gradient-to-br from-[#0c241b] via-[#123124] to-[#183d2e] border border-emerald-700/60 rounded-xl text-xs text-white shadow-md space-y-2">
-                              <div className="flex items-center justify-between text-emerald-300 font-semibold border-b border-emerald-800/60 pb-1.5">
-                                <span className="flex items-center gap-1.5">
-                                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                                  Kalkulasi Batas Belanja Aman Harian
-                                </span>
-                              </div>
-                              <div className="space-y-1 text-slate-200">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-emerald-400/80">Anggaran Harian Dasar:</span>
-                                  <span className="font-semibold text-white">{formatRupiah(baseBudgetNum)}</span>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-emerald-400/80">Target Tabungan Aktif ({activeGoalsCount}):</span>
-                                  <span className="font-semibold text-amber-300">-{formatRupiah(activeGoalsCommitment)}</span>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-emerald-400/80">Target Harian Target Ini:</span>
-                                  <span className="font-semibold text-lime-300">-{formatRupiah(calculatedDailyTarget)}</span>
-                                </div>
-                              </div>
-                              <div className="flex items-center justify-between pt-1.5 border-t border-emerald-800/60 font-bold">
-                                <span className="text-emerald-200 flex items-center gap-1">
-                                  <Sparkles className="w-3.5 h-3.5 text-lime-400" />
-                                  Net Safe Daily Limit:
-                                </span>
-                                <span className="text-sm font-extrabold text-[#a3e635]">
-                                  {formatRupiah(netSafeDailyLimit)} / hari
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })()}
                       </div>
                     </div>
 
 
                     {/* RIGHT COLUMN */}
-                    <div className="space-y-4">
+                    <div className="contents md:block md:space-y-4">
                       {/* Jangka Waktu / Target Selesai */}
-                      <div className="space-y-2">
+                      <div className="order-3 space-y-2">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                           <label className="text-sm font-semibold text-slate-700">Jangka Waktu Target</label>
-                          <div className="inline-flex p-0.5 bg-slate-100 rounded-md border border-slate-200/80 h-[28px]">
+                          <div className="inline-flex h-11 w-full rounded-lg border border-slate-200/80 bg-slate-100 p-0.5 sm:h-7 sm:w-auto sm:rounded-md">
                             <button
                               type="button"
                               onClick={() => setDurationMode('DAYS')}
-                              className={`px-2.5 py-1 text-[11px] whitespace-nowrap rounded-sm transition-all cursor-pointer flex items-center ${durationMode === 'DAYS'
+                              className={`flex flex-1 cursor-pointer items-center justify-center whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition-all sm:flex-none sm:rounded-sm ${durationMode === 'DAYS'
                                   ? 'bg-[#0e281e] text-white shadow-xs border border-emerald-600/40'
                                   : 'text-slate-600 hover:text-slate-900 bg-transparent'
                                 }`}
@@ -1474,7 +1551,7 @@ export default function NabungPage() {
                             <button
                               type="button"
                               onClick={() => setDurationMode('DATE')}
-                              className={`px-2.5 py-1 text-[11px] whitespace-nowrap rounded-sm transition-all cursor-pointer flex items-center ${durationMode === 'DATE'
+                              className={`flex flex-1 cursor-pointer items-center justify-center whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition-all sm:flex-none sm:rounded-sm ${durationMode === 'DATE'
                                   ? 'bg-[#0e281e] text-white shadow-xs border border-emerald-600/40'
                                   : 'text-slate-600 hover:text-slate-900 bg-transparent'
                                 }`}
@@ -1493,13 +1570,14 @@ export default function NabungPage() {
                             placeholder="Jumlah hari (contoh: 30)"
                             value={daysCount}
                             onChange={(e) => setDaysCount(e.target.value)}
-                            className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                            className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                           />
                         ) : (
                           <CustomDatePicker
                             value={targetDate}
                             onChange={setTargetDate}
                             placeholder="Pilih Tanggal Target"
+                            buttonClassName="min-h-11"
                           />
                         )}
 
@@ -1518,7 +1596,7 @@ export default function NabungPage() {
                       </div>
 
                       {/* Link Produk / E-commerce (Opsional) */}
-                      <div>
+                      <div className="order-4">
                         <label className="block text-sm font-semibold text-slate-700 mb-1.5">
                           Link Produk / E-commerce (Opsional)
                         </label>
@@ -1527,7 +1605,7 @@ export default function NabungPage() {
                           placeholder="Contoh: https://www.tokopedia.com/... (atau kosongkan untuk cari otomatis)"
                           value={productUrl}
                           onChange={(e) => setProductUrl(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                          className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                         />
                         <p className="text-xs text-slate-500 mt-1">
                           Kosongkan untuk pencarian produk dan thumbnail gambar secara otomatis oleh Douit AI.
@@ -1536,12 +1614,63 @@ export default function NabungPage() {
                     </div>
                   </div>
 
+                  {/* Full-width safe spending summary */}
+                  {(() => {
+                    const baseBudgetNum = parseFloat(maxDailyExpense) || 0;
+                    if (baseBudgetNum <= 0) return null;
+
+                    const netSafeDailyLimit = Math.max(
+                      0,
+                      baseBudgetNum - activeGoalsCommitment - calculatedDailyTarget
+                    );
+
+                    return (
+                      <div className="space-y-2 rounded-xl border border-emerald-700/60 bg-gradient-to-r from-[#0c241b] via-[#123124] to-[#183d2e] p-3.5 text-xs text-white shadow-md md:grid md:grid-cols-[minmax(180px,0.8fr)_minmax(0,2fr)] md:items-center md:gap-5 md:space-y-0 md:px-4">
+                        <div className="flex items-start justify-between gap-3 md:items-center md:justify-start">
+                          <ShieldCheck className="hidden h-8 w-8 shrink-0 text-emerald-400 md:block" />
+                          <div>
+                            <span className="block text-[10px] font-semibold uppercase tracking-[0.1em] text-emerald-300/70">Net Safe Daily Limit</span>
+                            <strong className="mt-0.5 block text-base font-extrabold text-[#c8f36b]">{formatRupiah(netSafeDailyLimit)} / hari</strong>
+                          </div>
+                          <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-400 md:hidden" />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSafeLimitDetailsOpen((current) => !current)}
+                          className="mt-1 flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg border border-emerald-700/45 bg-emerald-950/35 px-2.5 py-2 text-left text-[11px] font-semibold text-emerald-100 transition-colors hover:border-emerald-600/60 hover:bg-emerald-900/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#c8f36b] md:hidden"
+                          aria-expanded={safeLimitDetailsOpen}
+                          aria-controls="safe-limit-breakdown"
+                        >
+                          <span>Lihat detail kalkulasi</span>
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-900/70 text-emerald-200" aria-hidden="true">
+                            <ChevronRight className={`h-4 w-4 transition-transform duration-200 motion-reduce:transition-none ${safeLimitDetailsOpen ? 'rotate-90' : ''}`} />
+                          </span>
+                        </button>
+                        <div id="safe-limit-breakdown" className={`${safeLimitDetailsOpen ? 'grid animate-in fade-in slide-in-from-top-1 duration-200 motion-reduce:animate-none' : 'hidden'} gap-2.5 border-t border-emerald-800/60 px-0.5 pt-2.5 text-slate-200 md:grid md:grid-cols-3 md:divide-x md:divide-emerald-800/60 md:border-l md:border-t-0 md:pl-5 md:pt-0 md:animate-none`}>
+                          <div className="flex items-center justify-between gap-2 md:block md:px-3">
+                            <span className="text-emerald-300/70">Anggaran dasar</span>
+                            <strong className="block font-semibold text-white">{formatRupiah(baseBudgetNum)}</strong>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 md:block md:px-3">
+                            <span className="text-emerald-300/70">Target aktif ({activeGoalsCount})</span>
+                            <strong className="block font-semibold text-amber-300">-{formatRupiah(activeGoalsCommitment)}</strong>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 md:block md:px-3">
+                            <span className="text-emerald-300/70">Target harian ini</span>
+                            <strong className="block font-semibold text-lime-300">-{formatRupiah(calculatedDailyTarget)}</strong>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  </div>
                   {/* STEP 1 FOOTER ACTIONS */}
-                  <div className="pt-3 mt-4 border-t border-slate-100 flex items-center justify-between gap-3">
+                  <div className="sticky bottom-0 z-10 flex shrink-0 items-center gap-3 border-t border-slate-100 bg-white px-4 py-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-[0_-10px_24px_rgba(15,42,29,0.07)] sm:static sm:mt-4 sm:justify-between sm:px-0 sm:pb-0 sm:shadow-none">
                     <button
                       type="button"
                       onClick={() => setCreateModalOpen(false)}
-                      className="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 text-sm font-semibold hover:bg-slate-100 transition-colors cursor-pointer"
+                      className="hidden min-h-11 cursor-pointer items-center rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100 sm:inline-flex"
                     >
                       Batal
                     </button>
@@ -1560,10 +1689,10 @@ export default function NabungPage() {
                         setCreateGoalError(null);
                         setStep(2);
                       }}
-                      className={`inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm border shadow-md transition-all active:scale-[0.98] ${
+                      className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border px-6 py-2.5 text-sm font-semibold shadow-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-500 focus-visible:ring-offset-2 active:scale-[0.98] sm:w-auto ${
                         isGoalLimitReached
                           ? "bg-slate-200 text-slate-400 border-slate-200 cursor-not-allowed"
-                          : "bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] hover:from-[#113227] hover:to-[#224b38] text-white border-emerald-600/50 cursor-pointer"
+                          : "cursor-pointer border-lime-500 bg-[#c8f36b] text-[#0f2a1d] hover:bg-[#b8e557] [&>span]:!text-[#0f2a1d]"
                       }`}
                     >
                       <span className={isGoalLimitReached ? "text-slate-400 font-semibold tracking-wide" : "text-white font-semibold tracking-wide"}>Lanjutkan →</span>
@@ -1574,7 +1703,8 @@ export default function NabungPage() {
 
               {/* STEP 2: METODE & PENGATURAN SETORAN */}
               {step === 2 && (
-                <div className="space-y-4">
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <div className="min-h-0 flex-1 scroll-pb-24 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:-mr-2 sm:scroll-pb-0 sm:px-0 sm:py-0 sm:pr-2">
                   <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
                     <Wallet className="w-3.5 h-3.5 text-emerald-600" />
                     Metode & Pengaturan Setoran
@@ -1585,11 +1715,11 @@ export default function NabungPage() {
                     <label className="block text-sm font-semibold text-slate-700 mb-1.5">
                       Tempat Menyimpan Dana
                     </label>
-                    <div className="grid grid-cols-3 gap-2 mb-2">
+                    <div className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
                       <button
                         type="button"
                         onClick={() => setStorageType('GOPAY_MERCHANT')}
-                        className={`p-3 rounded-xl text-xs font-medium border flex flex-col items-center justify-center gap-1.5 transition-all cursor-pointer ${storageType === 'GOPAY_MERCHANT'
+                        className={`flex min-h-12 cursor-pointer flex-row items-center justify-start gap-3 rounded-xl border p-3 text-left text-xs font-medium transition-all sm:flex-col sm:justify-center sm:gap-1.5 sm:text-center ${storageType === 'GOPAY_MERCHANT'
                             ? 'bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border-2 border-emerald-500/70 text-white font-semibold shadow-sm'
                             : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
                           }`}
@@ -1600,7 +1730,7 @@ export default function NabungPage() {
                       <button
                         type="button"
                         onClick={() => setStorageType('BANK_TRANSFER')}
-                        className={`p-3 rounded-xl text-xs font-medium border flex flex-col items-center justify-center gap-1.5 transition-all cursor-pointer ${storageType === 'BANK_TRANSFER'
+                        className={`flex min-h-12 cursor-pointer flex-row items-center justify-start gap-3 rounded-xl border p-3 text-left text-xs font-medium transition-all sm:flex-col sm:justify-center sm:gap-1.5 sm:text-center ${storageType === 'BANK_TRANSFER'
                             ? 'bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border-2 border-emerald-500/70 text-white font-semibold shadow-sm'
                             : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
                           }`}
@@ -1611,7 +1741,7 @@ export default function NabungPage() {
                       <button
                         type="button"
                         onClick={() => setStorageType('TUNAI')}
-                        className={`p-3 rounded-xl text-xs font-medium border flex flex-col items-center justify-center gap-1.5 transition-all cursor-pointer ${storageType === 'TUNAI'
+                        className={`flex min-h-12 cursor-pointer flex-row items-center justify-start gap-3 rounded-xl border p-3 text-left text-xs font-medium transition-all sm:flex-col sm:justify-center sm:gap-1.5 sm:text-center ${storageType === 'TUNAI'
                             ? 'bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border-2 border-emerald-500/70 text-white font-semibold shadow-sm'
                             : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
                           }`}
@@ -1631,7 +1761,7 @@ export default function NabungPage() {
                       }
                       value={storageDetail}
                       onChange={(e) => setStorageDetail(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                     />
                   </div>
 
@@ -1648,13 +1778,13 @@ export default function NabungPage() {
                           </span>
                         )}
                       </div>
-                      <div className="inline-flex p-0.5 bg-slate-100 rounded-md border border-slate-200/80 h-[28px]">
+                      <div className="inline-flex h-11 w-full rounded-lg border border-slate-200/80 bg-slate-100 p-0.5 sm:h-7 sm:w-auto sm:rounded-md">
                         {[1, 2, 3].map((num) => (
                           <button
                             key={num}
                             type="button"
                             onClick={() => handleFrequencyChange(num)}
-                            className={`px-2.5 py-1 text-[11px] whitespace-nowrap rounded-sm transition-all cursor-pointer flex items-center ${
+                            className={`flex flex-1 cursor-pointer items-center justify-center whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition-all sm:flex-none sm:rounded-sm ${
                               reminderCount === num
                                 ? 'bg-[#0e281e] text-white shadow-xs border border-emerald-600/40'
                                 : 'text-slate-600 hover:text-slate-900 bg-transparent'
@@ -1683,7 +1813,7 @@ export default function NabungPage() {
                         }}
                         disabled={isVerified}
                         placeholder="No. WhatsApp (contoh: 081234567890)"
-                        className={`w-full px-4 py-2.5 rounded-xl border text-sm transition-all outline-none ${
+                        className={`min-h-12 w-full rounded-xl border px-4 py-2.5 text-sm outline-none transition-all ${
                           isVerified
                             ? "bg-emerald-50/40 border-emerald-300 text-slate-700 font-medium cursor-not-allowed pr-28"
                             : "bg-white border-slate-200 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 pr-28"
@@ -1722,7 +1852,7 @@ export default function NabungPage() {
                     {/* Inline OTP Input Box (Shown after OTP is sent and not yet verified) */}
                     {!isVerified && otpSent && (
                       <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 animate-in fade-in duration-150">
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:justify-between">
                           <span className="text-xs text-slate-600 font-medium">
                             Masukkan 4 digit kode yang dikirim ke WhatsApp-mu:
                           </span>
@@ -1738,13 +1868,13 @@ export default function NabungPage() {
                             value={otpCode}
                             onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
                             placeholder="1234"
-                            className="w-32 px-3 py-2 text-center tracking-widest text-base font-bold bg-white border border-slate-300 rounded-lg focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 outline-none"
+                            className="min-h-11 w-32 rounded-lg border border-slate-300 bg-white px-3 py-2 text-center text-base font-bold tracking-widest outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
                           />
                           <button
                             type="button"
                             disabled={otpCode.length < 4 || isVerifying}
                             onClick={handleVerifyOtp}
-                            className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-150 cursor-pointer shadow-sm border border-emerald-900/30 flex items-center justify-center min-w-[90px] ${
+                            className={`flex min-h-11 min-w-[90px] cursor-pointer items-center justify-center rounded-lg border border-emerald-900/30 px-4 py-2 text-xs font-semibold shadow-sm transition-all duration-150 ${
                               otpCode.length < 4 || isVerifying
                                 ? "bg-slate-400 !text-white text-white cursor-not-allowed opacity-90"
                                 : "bg-gradient-to-r from-[#0F2A1D] to-[#163827] hover:from-[#143827] hover:to-[#1c4732] !text-white text-white active:scale-[0.97]"
@@ -1759,8 +1889,8 @@ export default function NabungPage() {
                     )}
 
                     {/* Dynamic Time Slots */}
-                    <div className={`grid gap-2 ${
-                      reminderCount === 1 ? 'grid-cols-1' : reminderCount === 2 ? 'grid-cols-2' : 'grid-cols-3'
+                    <div className={`grid gap-2 [&>button]:min-h-11 ${
+                      reminderCount === 1 ? 'grid-cols-1' : reminderCount === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'
                     }`}>
                       {reminderTimes.slice(0, reminderCount).map((time, idx) => (
                         <CustomTimePicker
@@ -1777,11 +1907,11 @@ export default function NabungPage() {
                     <label className="block text-sm font-semibold text-slate-700 mb-1.5">
                       Mode Disiplin Menabung
                     </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
                       <button
                         type="button"
                         onClick={() => setMode('RELAXED')}
-                        className={`p-3 rounded-xl text-left border text-sm transition-all cursor-pointer ${mode === 'RELAXED'
+                        className={`min-h-16 cursor-pointer rounded-xl border p-3 text-left text-sm transition-all ${mode === 'RELAXED'
                             ? 'bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border-2 border-emerald-500/70 shadow-xs text-white'
                             : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
                           }`}
@@ -1792,7 +1922,7 @@ export default function NabungPage() {
                       <button
                         type="button"
                         onClick={() => setMode('DISCIPLINED')}
-                        className={`p-3 rounded-xl text-left border text-sm transition-all cursor-pointer ${mode === 'DISCIPLINED'
+                        className={`min-h-16 cursor-pointer rounded-xl border p-3 text-left text-sm transition-all ${mode === 'DISCIPLINED'
                             ? 'bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border-2 border-emerald-500/70 shadow-xs text-white'
                             : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
                           }`}
@@ -1802,13 +1932,14 @@ export default function NabungPage() {
                       </button>
                     </div>
                   </div>
+                  </div>
 
                   {/* STEP 2 FOOTER ACTIONS */}
-                  <div className="pt-3 mt-4 border-t border-slate-100 flex items-center justify-between gap-3">
+                  <div className="sticky bottom-0 z-10 grid shrink-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-t border-slate-100 bg-white px-4 py-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-[0_-10px_24px_rgba(15,42,29,0.07)] sm:static sm:mt-4 sm:gap-3 sm:px-0 sm:pb-0 sm:shadow-none">
                     <button
                       type="button"
                       onClick={() => setStep(1)}
-                      className="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 text-sm font-semibold hover:bg-slate-100 transition-colors cursor-pointer"
+                      className="inline-flex min-h-11 cursor-pointer items-center rounded-xl border border-slate-300 px-3 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100 sm:px-5"
                     >
                       ← Kembali
                     </button>
@@ -1820,10 +1951,12 @@ export default function NabungPage() {
                         <button
                           type="submit"
                           disabled={isSubmitDisabled}
-                          className={`inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm border shadow-md transition-all active:scale-[0.98] ${
-                            isSubmitDisabled
-                              ? "bg-slate-200 text-slate-400 border-slate-200 cursor-not-allowed"
-                              : "bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] hover:from-[#113227] hover:to-[#224b38] text-white border-emerald-600/50 cursor-pointer"
+                          className={`inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold shadow-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-500 focus-visible:ring-offset-2 active:scale-[0.98] sm:px-6 ${
+                            submitting
+                              ? "cursor-wait border-emerald-700 bg-[#173b2b] text-white"
+                              : isSubmitDisabled
+                                ? "cursor-not-allowed border-slate-200 bg-slate-200 text-slate-400"
+                                : "cursor-pointer border-lime-500 bg-[#c8f36b] text-[#0f2a1d] hover:bg-[#b8e557] [&>span]:!text-[#0f2a1d]"
                           }`}
                         >
                           {submitting ? (
@@ -1833,7 +1966,7 @@ export default function NabungPage() {
                             </>
                           ) : (
                             <>
-                              <Sparkles className={`w-4 h-4 stroke-[2.5] ${isSubmitDisabled ? "text-slate-400" : "text-emerald-400"}`} />
+                              <Sparkles className={`h-4 w-4 stroke-[2.5] ${isSubmitDisabled ? "text-slate-400" : "text-[#0f2a1d]"}`} />
                               <span className={isSubmitDisabled ? "text-slate-400" : "text-white"}>Simpan target tabungan</span>
                             </>
                           )}
