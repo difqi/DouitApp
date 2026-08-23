@@ -5,14 +5,12 @@ import {
   Bot,
   Calendar,
   ChevronDown,
-  CreditCard,
   Download,
   Edit3,
   FileText,
   Filter,
   Layers,
   PieChart,
-  Smartphone,
   Table,
   TrendingUp,
   Wallet
@@ -40,6 +38,41 @@ const formatMoney = (value: number | string) =>
     currency: "IDR",
     maximumFractionDigits: 0,
   }).format(Number(value));
+
+const getBudgetPresentation = (expense: number, budget: number) => {
+  if (budget <= 0) {
+    return {
+      label: "Belum diatur",
+      detail: "Atur batas bulanan",
+      percentage: 0,
+      progressWidth: 0,
+      textClass: "text-slate-500",
+      barClass: "bg-slate-300",
+      badgeClass: "bg-slate-100 text-slate-600 border-slate-200",
+    };
+  }
+
+  const percentage = (expense / budget) * 100;
+  const isOver = percentage > 100;
+  const isNear = percentage >= 75 && !isOver;
+  const detail = isOver
+    ? "Melebihi " + formatMoney(expense - budget)
+    : "Tersisa " + formatMoney(Math.max(budget - expense, 0));
+
+  return {
+    label: isOver ? "Melewati batas" : isNear ? "Mendekati batas" : "Aman",
+    detail,
+    percentage,
+    progressWidth: Math.min(percentage, 100),
+    textClass: isOver ? "text-rose-700" : isNear ? "text-amber-700" : "text-emerald-700",
+    barClass: isOver ? "bg-rose-500" : isNear ? "bg-amber-500" : "bg-emerald-600",
+    badgeClass: isOver
+      ? "bg-rose-50 text-rose-700 border-rose-200"
+      : isNear
+      ? "bg-amber-50 text-amber-800 border-amber-200"
+      : "bg-emerald-50 text-emerald-700 border-emerald-200",
+  };
+};
 
 // Module-level in-memory cache for instant cross-tab navigation
 let cachedLaporanAccounts: any[] = [];
@@ -136,7 +169,6 @@ export default function LaporanPage() {
   const totalIncome = filteredTx.filter(t => t.type === 'INCOME').reduce((acc, t) => acc + Number(t.amount), 0);
   const totalExpense = filteredTx.filter(t => t.type === 'EXPENSE').reduce((acc, t) => acc + Number(t.amount), 0);
   const netSurplus = totalIncome - totalExpense;
-  const isOverbudget = totalExpense > totalIncome && totalIncome > 0;
 
   // Breakdown Calculations
   const categoryStats: Record<string, { name: string; income: number; expense: number; net: number; count: number; budget: number }> = {};
@@ -215,9 +247,11 @@ export default function LaporanPage() {
 
   // Generate Conic Gradient for Pie Chart
   const activeList = breakdownMode === "Kategori" ? sortedCategories : sortedMerchants;
-  const pieColors = primaryMode === 'Pemasukan' ? ["#10b981", "#059669", "#34d399", "#6ee7b7", "#0ea5e9", "#0284c7", "#3b82f6"] :
-                    primaryMode === 'Pengeluaran' ? ["#f43f5e", "#e11d48", "#fb923c", "#f97316", "#ef4444", "#f59e0b", "#d97706"] :
-                    ["#6366f1", "#4f46e5", "#8b5cf6", "#a855f7", "#ec4899", "#d946ef", "#8b5cf6"];
+  const pieColors = primaryMode === 'Pemasukan'
+    ? ["#16825d", "#2f9871", "#54aa88", "#78b99c", "#9bc8b0", "#3f7f70", "#6f9f8b"]
+    : primaryMode === 'Pengeluaran'
+    ? ["#16825d", "#4f8f78", "#7aa58f", "#d78b27", "#c7a97c", "#7b8f86", "#ec6b56"]
+    : ["#16825d", "#4b7f70", "#769b8c", "#d78b27", "#8a8175", "#4b7bec", "#ec6b56"];
 
   const chartSum = activeList.reduce((acc, item) => acc + Math.abs(getStatValue(item)), 0);
 
@@ -276,7 +310,12 @@ export default function LaporanPage() {
     : Object.entries(annualMerchantStats).filter(([name]) => annualMerchantCounts[name] >= 2);
 
   const heatmapData = heatmapDataRaw
-    .map(([name, months]) => ({ name, months, total: months.reduce((a,b)=>a+b,0) }))
+    .map(([name, months]) => ({
+      name,
+      months,
+      total: months.reduce((a,b)=>a+b,0),
+      count: annualBreakdownMode === "Merchant" ? annualMerchantCounts[name] || 0 : null,
+    }))
     .filter(row => row.total > 0)
     .sort((a,b) => b.total - a.total)
     .slice(0, annualBreakdownMode === "Merchant" ? 20 : undefined);
@@ -405,7 +444,13 @@ export default function LaporanPage() {
       } else if (prevVal !== null && prevVal === 0 && currentVal > 0) {
         yoy = Infinity;
       }
-      return { name, currentVal, prevVal, yoy };
+      return {
+        name,
+        currentVal,
+        prevVal,
+        yoy,
+        count: multiYearBreakdownMode === "Merchant" ? multiYearMerchantCounts[name] || 0 : null,
+      };
     })
     .filter(row => row.currentVal > 0)
     .sort((a,b) => b.currentVal - a.currentVal);
@@ -413,7 +458,7 @@ export default function LaporanPage() {
   const myBreakdownTotal = myBreakdownData.reduce((acc, row) => acc + row.currentVal, 0);
 
   let myCumValue = 0;
-  const donutColors = ["#f43f5e", "#e11d48", "#fb923c", "#f97316", "#ef4444", "#f59e0b", "#d97706", "#6366f1", "#4f46e5", "#8b5cf6"];
+  const donutColors = ["#16825d", "#4f8f78", "#7aa58f", "#d78b27", "#c7a97c", "#7b8f86", "#ec6b56", "#4b7bec", "#7866d8", "#8a8175"];
   const mySvgPaths = myBreakdownData.map((item, i) => {
     const val = item.currentVal;
     const startAngle = myBreakdownTotal > 0 ? (myCumValue / myBreakdownTotal) * 360 : 0;
@@ -436,7 +481,7 @@ export default function LaporanPage() {
     return val.toString();
   };
 
-  const annualDonutColors = ["#f43f5e", "#e11d48", "#fb923c", "#f97316", "#ef4444", "#f59e0b", "#d97706", "#6366f1", "#4f46e5", "#8b5cf6"];
+  const annualDonutColors = ["#16825d", "#4f8f78", "#7aa58f", "#d78b27", "#c7a97c", "#7b8f86", "#ec6b56", "#4b7bec", "#7866d8", "#8a8175"];
   let annualCumulativeValue = 0;
   const annualSvgPaths = heatmapData.map((item, i) => {
     const val = item.total;
@@ -851,68 +896,102 @@ export default function LaporanPage() {
     }
   };
 
+  // Presentation-only summaries and insights derived from existing report data.
+  const annualTotalIncome = annualStats.reduce((sum, stat) => sum + stat.income, 0);
+  const annualTotalExpense = annualStats.reduce((sum, stat) => sum + stat.expense, 0);
+  const annualTotalNet = annualTotalIncome - annualTotalExpense;
+  const annualActiveMonths = annualStats.filter((stat) => stat.income > 0 || stat.expense > 0).length;
+  const annualPeakExpense = annualStats.reduce(
+    (peak, stat, index) => stat.expense > peak.value ? { value: stat.expense, index } : peak,
+    { value: 0, index: 0 }
+  );
+  const topExpenseCategory = Object.values(categoryStats)
+    .filter((stat) => stat.expense > 0)
+    .sort((a, b) => b.expense - a.expense)[0];
+  const topExpenseMerchant = Object.values(merchantStats)
+    .filter((stat) => stat.count >= 2 && stat.expense > 0)
+    .sort((a, b) => b.expense - a.expense)[0];
+  const annualTopExpenseCategory = Object.entries(annualCategoryStats)
+    .map(([name, months]) => ({ name, total: months.reduce((sum, value) => sum + value, 0) }))
+    .filter((item) => item.total > 0)
+    .sort((a, b) => b.total - a.total)[0];
+
+  const reportPeriodLabel = activeTab === "Bulanan"
+    ? `${monthNames[selectedMonth]} ${selectedYear}`
+    : activeTab === "Tahunan"
+    ? `Tahun ${selectedYear}`
+    : activeYears.length === 1
+    ? `Tahun ${activeYears[0]}`
+    : `${activeYears[0]}–${activeYears[activeYears.length - 1]}`;
+  const reportIncome = activeTab === "Bulanan" ? totalIncome : activeTab === "Tahunan" ? annualTotalIncome : lifetimeIncome;
+  const reportExpense = activeTab === "Bulanan" ? totalExpense : activeTab === "Tahunan" ? annualTotalExpense : lifetimeExpense;
+  const reportNet = activeTab === "Bulanan" ? netSurplus : activeTab === "Tahunan" ? annualTotalNet : lifetimeNet;
+  const hasReportData = activeTab === "Bulanan" ? filteredTx.length > 0 : activeTab === "Tahunan" ? annualTx.length > 0 : multiYearTx.length > 0;
+
+  const allocationStatus = totalBudgetedCount === 0
+    ? "Belum diatur"
+    : overbudgetCount > 0
+    ? `${overbudgetCount} melewati batas`
+    : `${hematCount} terkendali`;
+
+  let primaryInsight = "Belum ada transaksi pada periode ini. Tambahkan transaksi untuk mulai melihat pola keuanganmu.";
+  let supportingInsight = "Semua data detail tetap tersedia di bagian analisis di bawah.";
+
+  if (hasReportData) {
+    if (reportNet < 0) {
+      primaryInsight = `Pengeluaran ${reportPeriodLabel.toLowerCase()} lebih tinggi ${formatMoney(Math.abs(reportNet))} dari pemasukan.`;
+    } else if (reportNet > 0) {
+      primaryInsight = `Kamu mencatat surplus ${formatMoney(reportNet)} pada ${reportPeriodLabel.toLowerCase()}.`;
+    } else {
+      primaryInsight = `Pemasukan dan pengeluaran pada ${reportPeriodLabel.toLowerCase()} sedang seimbang.`;
+    }
+
+    if (activeTab === "Bulanan") {
+      const focus = breakdownMode === "Merchant" ? topExpenseMerchant : topExpenseCategory;
+      supportingInsight = focus
+        ? `${breakdownMode === "Merchant" ? "Merchant" : "Kategori"} ${focus.name} menjadi pengeluaran terbesar, senilai ${formatMoney(focus.expense)}.`
+        : "Belum ada pengeluaran yang cukup untuk membentuk breakdown periode ini.";
+    } else if (activeTab === "Tahunan") {
+      supportingInsight = annualTopExpenseCategory
+        ? `${annualTopExpenseCategory.name} menjadi kategori pengeluaran terbesar tahun ini, senilai ${formatMoney(annualTopExpenseCategory.total)}.`
+        : "Belum ada pengeluaran yang cukup untuk membentuk breakdown tahunan.";
+    } else {
+      supportingInsight = myBreakdownData[0]
+        ? `${multiYearBreakdownMode === "Kategori" ? "Kategori" : "Merchant"} ${myBreakdownData[0].name} paling dominan pada ${safeMultiYearSelected}, senilai ${formatMoney(myBreakdownData[0].currentVal)}.`
+        : "Belum ada pengeluaran yang cukup untuk membentuk breakdown multi-tahun.";
+    }
+  }
+
   return (
-    <div className="w-full max-w-7xl mx-auto p-4 md:p-6 lg:p-8 space-y-6">
+    <div className="w-full max-w-7xl mx-auto px-4 py-5 md:p-6 lg:p-8 space-y-5 md:space-y-6 overflow-x-hidden">
       
       {/* HEADER CONTROLS */}
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Laporan Keuangan</h1>
-          <p className="text-gray-500 text-sm mt-1">Pahami arus kas dan pola pengeluaranmu.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">Analisis keuangan</p>
+          <h1 className="text-[1.65rem] md:text-3xl font-bold text-gray-900 tracking-[-0.04em] leading-tight">Laporan Keuangan</h1>
+          <p className="text-gray-500 text-sm mt-1.5">Pahami arus kas, kebiasaan, dan kesehatan keuanganmu.</p>
         </div>
-        
-        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-          {activeTab === "Bulanan" && (
-            <div className="flex items-center gap-2.5">
-              <CustomSelect
-                value={String(selectedMonth)}
-                onChange={(val) => setSelectedMonth(Number(val))}
-                options={monthNames.map((m, i) => ({ value: String(i), label: m }))}
-                variant="dark-emerald"
-                buttonClassName="min-w-[125px] px-3.5 py-2.5 gap-2.5"
-              />
-              <CustomSelect
-                value={String(selectedYear)}
-                onChange={(val) => setSelectedYear(Number(val))}
-                options={[2024, 2025, 2026, 2027].map((y) => ({ value: String(y), label: String(y) }))}
-                variant="dark-emerald"
-                buttonClassName="min-w-[95px] px-3.5 py-2.5 gap-2"
-              />
-            </div>
-          )}
-
-          <div>
-            <CustomSelect
-              value={selectedAccount}
-              onChange={setSelectedAccount}
-              options={[
-                { value: "Semua", label: "Semua Rekening" },
-                ...accounts.map(acc => ({ value: acc.name, label: acc.name }))
-              ]}
-              placeholder="Semua Rekening"
-              variant="dark-emerald"
-              icon={<Filter className="w-4 h-4 text-emerald-300 shrink-0" />}
-              buttonClassName="min-w-[170px] px-4 py-2.5 gap-3"
-            />
-          </div>
-
+        <div className="shrink-0">
           {/* DYNAMIC CONTEXT-AWARE EXPORT DROPDOWN */}
           <div className="relative" ref={exportDropdownRef}>
             <button 
+              type="button"
               onClick={() => setExportDropdownOpen(prev => !prev)}
-              className="min-w-[110px] px-4 py-2.5 flex items-center justify-between gap-2.5 rounded-xl bg-gradient-to-r from-[#0F2A1D] to-[#163827] hover:from-[#133525] hover:to-[#1a4430] border border-white/10 text-white shadow-sm transition-all duration-150 group cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+              className="min-h-11 px-3 sm:px-4 flex items-center justify-between gap-2 rounded-xl bg-white hover:bg-emerald-50 border border-slate-200 text-slate-700 shadow-sm transition-colors group cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
               aria-expanded={exportDropdownOpen}
               aria-haspopup="true"
+              aria-label="Buka pilihan ekspor laporan"
             >
               <span className="flex items-center gap-2">
-                <Download className="w-4 h-4 text-emerald-300 shrink-0" />
-                <span className="text-sm font-medium text-white">Ekspor</span>
+                <Download className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span className="hidden sm:inline text-sm font-semibold">Ekspor</span>
               </span>
-              <ChevronDown className={`w-4 h-4 text-emerald-200/80 transition-transform duration-200 shrink-0 ${exportDropdownOpen ? 'rotate-180 text-lime-400' : ''}`} />
+              <ChevronDown className={`hidden sm:block w-4 h-4 text-slate-400 transition-transform duration-200 shrink-0 ${exportDropdownOpen ? 'rotate-180 text-emerald-700' : ''}`} />
             </button>
 
             {exportDropdownOpen && (
-              <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+              <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 animate-in fade-in zoom-in-95 duration-150 motion-reduce:animate-none">
                 <div className="px-3 py-2 border-b border-gray-100 mb-1">
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Pilihan Format Ekspor</span>
                   <p className="text-xs text-gray-600 font-medium mt-0.5">
@@ -955,119 +1034,190 @@ export default function LaporanPage() {
       </div>
 
       {/* TAB NAVIGATION */}
-      <div className="bg-gray-100/80 p-1 rounded-xl inline-flex flex-wrap gap-1">
-        <button 
-          onClick={() => setActiveTab("Bulanan")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === "Bulanan" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"}`}
-        >
-          <PieChart className="w-4 h-4" /> Laporan Bulanan
-        </button>
-        <button 
-          onClick={() => setActiveTab("Tahunan")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === "Tahunan" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"}`}
-        >
-          <BarChart3 className="w-4 h-4" /> Tren Tahunan
-        </button>
-        <button 
-          onClick={() => setActiveTab("Makro")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === "Makro" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700 hover:bg-gray-200/50"}`}
-        >
-          <Layers className="w-4 h-4" /> Tren Multi-Tahun
-        </button>
+      <div className="-mx-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="bg-slate-200/60 p-1 rounded-xl inline-flex min-w-max gap-1" role="tablist" aria-label="Mode laporan">
+          <button type="button" role="tab" aria-selected={activeTab === "Bulanan"} onClick={() => setActiveTab("Bulanan")} className={`min-h-11 sm:min-h-10 flex items-center gap-2 px-3.5 md:px-4 rounded-lg text-sm font-semibold transition-colors ${activeTab === "Bulanan" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
+            <PieChart className="w-4 h-4" /> Bulanan
+          </button>
+          <button type="button" role="tab" aria-selected={activeTab === "Tahunan"} onClick={() => setActiveTab("Tahunan")} className={`min-h-11 sm:min-h-10 flex items-center gap-2 px-3.5 md:px-4 rounded-lg text-sm font-semibold transition-colors ${activeTab === "Tahunan" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
+            <BarChart3 className="w-4 h-4" /> Tahunan
+          </button>
+          <button type="button" role="tab" aria-selected={activeTab === "Makro"} onClick={() => setActiveTab("Makro")} className={`min-h-11 sm:min-h-10 flex items-center gap-2 px-3.5 md:px-4 rounded-lg text-sm font-semibold transition-colors ${activeTab === "Makro" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
+            <Layers className="w-4 h-4" /> Multi-Tahun
+          </button>
+        </div>
       </div>
 
-      {/* TAB 1: BULANAN */}
-      {activeTab === "Bulanan" && (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          
-          {/* Top Metrics Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
-              <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-              <span className="text-sm font-semibold text-[#A8C9B9] relative z-10">Total Pemasukan</span>
-              {isLoading ? (
-                <div className="h-8 w-36 bg-emerald-950/60 rounded-lg animate-pulse mt-2 relative z-10 border border-emerald-800/40" />
-              ) : (
-                <div className="mt-2 text-2xl font-bold tracking-tight text-lime-400 relative z-10">{formatMoney(totalIncome)}</div>
-              )}
+      {/* PERIOD AND ACCOUNT FILTERS */}
+      <section className="rounded-2xl border border-slate-200/80 bg-white p-3.5 md:p-4 shadow-sm" aria-label="Filter laporan">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
+              <Calendar className="h-5 w-5" />
             </div>
-            <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
-              <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-              <span className="text-sm font-semibold text-[#A8C9B9] relative z-10">Total Pengeluaran</span>
-              {isLoading ? (
-                <div className="h-8 w-36 bg-emerald-950/60 rounded-lg animate-pulse mt-2 relative z-10 border border-emerald-800/40" />
-              ) : (
-                <div className="mt-2 text-2xl font-bold tracking-tight text-white relative z-10">{formatMoney(totalExpense)}</div>
-              )}
-            </div>
-            <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
-              <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-              <span className="text-sm font-semibold text-[#A8C9B9] relative z-10">Sisa Uang (Surplus)</span>
-              {isLoading ? (
-                <div className="h-8 w-36 bg-emerald-950/60 rounded-lg animate-pulse mt-2 relative z-10 border border-emerald-800/40" />
-              ) : (
-                <div className={`mt-2 text-2xl font-bold tracking-tight ${netSurplus < 0 ? 'text-rose-400' : 'text-lime-400'} relative z-10`}>
-                  {netSurplus > 0 ? '+' : ''}{formatMoney(netSurplus)}
-                </div>
-              )}
-            </div>
-            <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-center items-start">
-              <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-              <div className="flex items-center justify-between w-full mb-2 relative z-10">
-                <span className="text-sm font-semibold text-[#A8C9B9]">Status Alokasi</span>
-                {!isLoading && totalBudgetedCount > 0 && (
-                  <span className="text-[11px] text-[#A8C9B9]/70 font-normal">Dari {totalBudgetedCount} anggaran diatur</span>
-                )}
-              </div>
-              <div className="w-full relative z-10">
-                {isLoading ? (
-                  <div className="h-6 w-28 bg-emerald-950/60 rounded-full animate-pulse mt-1 border border-emerald-800/40" />
-                ) : totalBudgetedCount === 0 ? (
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-800 text-gray-400 border border-gray-700">Belum diatur</span>
-                ) : overbudgetCount > 0 ? (
-                  <div className="flex flex-row gap-2">
-                    <span className="bg-rose-950/60 text-rose-300 border border-rose-800/60 px-2.5 py-0.5 rounded-full text-xs font-medium">
-                      {overbudgetCount} Overbudget
-                    </span>
-                    {hematCount > 0 && (
-                      <span className="bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 px-2.5 py-0.5 rounded-full text-xs font-medium">
-                        {hematCount} Hemat
-                      </span>
-                    )}
-                  </div>
-                ) : (
-                  <span className="bg-emerald-950/60 text-emerald-300 border border-emerald-800/60 px-2.5 py-0.5 rounded-full text-xs font-medium">
-                    Semua Terkendali ({hematCount})
-                  </span>
-                )}
-              </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Periode aktif</p>
+              <p className="truncate text-sm font-bold text-slate-900">{reportPeriodLabel}</p>
+              <p className="truncate text-xs text-slate-500">{selectedAccount === "Semua" ? "Semua rekening" : selectedAccount}</p>
             </div>
           </div>
 
+          <div className={`grid gap-2.5 ${activeTab === "Bulanan" ? "grid-cols-2 lg:grid-cols-[150px_105px_190px]" : activeTab === "Tahunan" ? "grid-cols-2 lg:grid-cols-[110px_190px]" : "grid-cols-1 lg:grid-cols-[190px]"}`}>
+            {activeTab === "Bulanan" && (
+              <CustomSelect
+                label="Bulan"
+                value={String(selectedMonth)}
+                onChange={(val) => setSelectedMonth(Number(val))}
+                options={monthNames.map((m, i) => ({ value: String(i), label: m }))}
+                buttonClassName="min-h-11 px-3"
+              />
+            )}
+            {(activeTab === "Bulanan" || activeTab === "Tahunan") && (
+              <CustomSelect
+                label="Tahun"
+                value={String(selectedYear)}
+                onChange={(val) => setSelectedYear(Number(val))}
+                options={[2024, 2025, 2026, 2027].map((y) => ({ value: String(y), label: String(y) }))}
+                buttonClassName="min-h-11 px-3"
+              />
+            )}
+            <CustomSelect
+              label="Rekening"
+              value={selectedAccount}
+              onChange={setSelectedAccount}
+              options={[
+                { value: "Semua", label: "Semua Rekening" },
+                ...accounts.map(acc => ({ value: acc.name, label: acc.name }))
+              ]}
+              placeholder="Semua Rekening"
+              icon={<Filter className="w-4 h-4 text-emerald-700 shrink-0" />}
+              className={activeTab === "Bulanan" ? "col-span-2 lg:col-span-1" : ""}
+              buttonClassName="min-h-11 px-3"
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* SHARED FINANCIAL SUMMARY */}
+      <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-2 md:p-3 shadow-sm" aria-labelledby="financial-summary-heading">
+        <h2 id="financial-summary-heading" className="sr-only">Ringkasan finansial {reportPeriodLabel}</h2>
+        <div className="grid lg:grid-cols-[1.05fr_1.45fr] gap-2.5 md:gap-3">
+          <div className="relative min-h-[150px] overflow-hidden rounded-xl bg-[#173128] p-5 text-white md:p-6">
+            <div className="absolute -bottom-20 -right-12 h-52 w-52 rounded-full bg-lime-300/10 blur-3xl" />
+            <div className="relative flex h-full flex-col justify-between gap-6">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.11em] text-emerald-100/65">{activeTab === "Makro" ? "Akumulasi tabungan lifetime" : reportNet < 0 ? "Defisit periode ini" : "Surplus periode ini"}</p>
+                  <p className="mt-1 text-xs text-emerald-100/50">{reportPeriodLabel}</p>
+                </div>
+                <Wallet className="h-5 w-5 text-lime-300" />
+              </div>
+              {isLoading ? (
+                <div className="h-9 w-44 animate-pulse rounded-lg bg-white/10" />
+              ) : (
+                <p className={`break-words text-[1.7rem] md:text-3xl font-bold tracking-[-0.045em] tabular-nums ${reportNet < 0 ? "text-rose-300" : "text-lime-300"}`}>
+                  {reportNet > 0 ? "+" : ""}{formatMoney(reportNet)}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-slate-200/80">
+            <div className="bg-white p-3.5 md:p-5">
+              <p className="text-[11px] md:text-xs font-semibold text-slate-500">Pemasukan</p>
+              <p className="mt-1.5 break-words text-sm md:text-xl font-bold tracking-tight text-emerald-700 tabular-nums">{isLoading ? "—" : formatMoney(reportIncome)}</p>
+              <p className="mt-1 text-[10px] md:text-xs text-slate-400">Total periode</p>
+            </div>
+            <div className="bg-white p-3.5 md:p-5">
+              <p className="text-[11px] md:text-xs font-semibold text-slate-500">Pengeluaran</p>
+              <p className="mt-1.5 break-words text-sm md:text-xl font-bold tracking-tight text-slate-900 tabular-nums">{isLoading ? "—" : formatMoney(reportExpense)}</p>
+              <p className="mt-1 text-[10px] md:text-xs text-slate-400">Total periode</p>
+            </div>
+            {activeTab === "Bulanan" ? (
+              <>
+                <div className="bg-white p-3.5 md:p-5">
+                  <p className="text-[11px] md:text-xs font-semibold text-slate-500">Status alokasi</p>
+                  <p className={`mt-1.5 text-sm md:text-base font-bold ${overbudgetCount > 0 ? "text-rose-700" : totalBudgetedCount > 0 ? "text-emerald-700" : "text-slate-600"}`}>{isLoading ? "—" : allocationStatus}</p>
+                  <p className="mt-1 text-[10px] md:text-xs text-slate-400">Kondisi anggaran</p>
+                </div>
+                <div className="bg-white p-3.5 md:p-5">
+                  <p className="text-[11px] md:text-xs font-semibold text-slate-500">Anggaran dipantau</p>
+                  <p className="mt-1.5 text-sm md:text-xl font-bold text-slate-900 tabular-nums">{isLoading ? "—" : totalBudgetedCount}</p>
+                  <p className="mt-1 text-[10px] md:text-xs text-slate-400">Kategori & merchant</p>
+                </div>
+              </>
+            ) : activeTab === "Tahunan" ? (
+              <>
+                <div className="bg-white p-3.5 md:p-5">
+                  <p className="text-[11px] md:text-xs font-semibold text-slate-500">Bulan tercatat</p>
+                  <p className="mt-1.5 text-sm md:text-xl font-bold text-slate-900 tabular-nums">{isLoading ? "—" : `${annualActiveMonths} bulan`}</p>
+                  <p className="mt-1 text-[10px] md:text-xs text-slate-400">Memiliki transaksi</p>
+                </div>
+                <div className="bg-white p-3.5 md:p-5">
+                  <p className="text-[11px] md:text-xs font-semibold text-slate-500">Pengeluaran tertinggi</p>
+                  <p className="mt-1.5 text-sm md:text-base font-bold text-slate-900">{annualPeakExpense.value > 0 ? monthNames[annualPeakExpense.index] : "—"}</p>
+                  <p className="mt-1 text-[10px] md:text-xs text-slate-400">{annualPeakExpense.value > 0 ? formatMoney(annualPeakExpense.value) : "Belum ada data"}</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="bg-white p-3.5 md:p-5">
+                  <p className="text-[11px] md:text-xs font-semibold text-slate-500">Rata-rata pengeluaran tahunan</p>
+                  <p className="mt-1.5 break-words text-sm md:text-lg font-bold text-slate-900 tabular-nums">{isLoading ? "—" : formatMoney(avgAnnualExpense)}</p>
+                  <p className="mt-1 text-[10px] md:text-xs text-slate-400">Sepanjang periode</p>
+                </div>
+                <div className="bg-white p-3.5 md:p-5">
+                  <p className="text-[11px] md:text-xs font-semibold text-slate-500">Tahun terhemat</p>
+                  <p className="mt-1.5 text-sm md:text-xl font-bold text-slate-900">{isLoading || maxMargin === -Infinity ? "—" : bestYear}</p>
+                  <p className="mt-1 text-[10px] md:text-xs text-slate-400">{maxMargin === -Infinity ? "Belum ada margin" : `${(maxMargin * 100).toFixed(1)}% margin`}</p>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className={`flex items-start gap-3 rounded-2xl border p-4 md:p-5 ${hasReportData && reportNet < 0 ? "border-rose-200 bg-rose-50/70" : "border-emerald-200/80 bg-[#F1F7F2]"}`} aria-labelledby="primary-insight-heading">
+        <div className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl ${hasReportData && reportNet < 0 ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-800"}`}>
+          <Bot className="h-4.5 w-4.5" />
+        </div>
+        <div className="min-w-0">
+          <h2 id="primary-insight-heading" className="text-xs font-bold uppercase tracking-[0.1em] text-slate-500">Insight utama</h2>
+          <p className="mt-1 text-sm md:text-base font-semibold leading-relaxed text-slate-900">{primaryInsight}</p>
+          <p className="mt-1 text-xs md:text-sm leading-relaxed text-slate-600">{supportingInsight}</p>
+        </div>
+      </section>
+
+      {/* TAB 1: BULANAN */}
+      {activeTab === "Bulanan" && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 motion-reduce:animate-none">
           {/* Breakdown Section */}
           <div className="w-full">
-            <div className="bg-[#FAF9F6] border border-slate-200/80 rounded-2xl shadow-sm p-6 w-full">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-                <div className="flex flex-col gap-2">
-                  <h3 className="font-semibold text-gray-900">Rincian Transaksi</h3>
-                  <div className="bg-gray-100 p-1 rounded-lg inline-flex">
-                    <button onClick={() => setPrimaryMode("Pengeluaran")} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${primaryMode === "Pengeluaran" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>Pengeluaran</button>
-                    <button onClick={() => setPrimaryMode("Pemasukan")} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${primaryMode === "Pemasukan" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>Pemasukan</button>
-                    <button onClick={() => setPrimaryMode("Net")} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${primaryMode === "Net" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>Saldo Bersih</button>
+            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-4 md:p-6 w-full">
+              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end mb-6 gap-4">
+                <div className="w-full lg:w-auto">
+                  <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Rincian transaksi</h3>
+                  <p className="mt-1 text-xs md:text-sm text-slate-500">Lihat kontribusi, frekuensi, dan kondisi anggaran setiap kelompok.</p>
+                  <div className="mt-3 grid grid-cols-3 bg-slate-100 p-1 rounded-xl">
+                    <button type="button" onClick={() => setPrimaryMode("Pengeluaran")} className={`min-h-11 sm:min-h-9 px-2 md:px-3 text-xs font-semibold rounded-lg transition-colors ${primaryMode === "Pengeluaran" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>Pengeluaran</button>
+                    <button type="button" onClick={() => setPrimaryMode("Pemasukan")} className={`min-h-11 sm:min-h-9 px-2 md:px-3 text-xs font-semibold rounded-lg transition-colors ${primaryMode === "Pemasukan" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>Pemasukan</button>
+                    <button type="button" onClick={() => setPrimaryMode("Net")} className={`min-h-11 sm:min-h-9 px-2 md:px-3 text-xs font-semibold rounded-lg transition-colors ${primaryMode === "Net" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>Saldo Bersih</button>
                   </div>
                 </div>
-                <div className="bg-gray-100 p-1 rounded-lg inline-flex">
+                <div className="grid w-full grid-cols-2 bg-slate-100 p-1 rounded-xl lg:w-auto">
                   <button 
+                    type="button"
                     onClick={() => setBreakdownMode("Kategori")}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${breakdownMode === "Kategori" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                    className={`min-h-11 sm:min-h-9 px-3 text-xs font-semibold rounded-lg transition-colors ${breakdownMode === "Kategori" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
                   >
-                    Per Kategori
+                    Kategori
                   </button>
                   <button 
+                    type="button"
                     onClick={() => setBreakdownMode("Merchant")}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${breakdownMode === "Merchant" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                    className={`min-h-11 sm:min-h-9 px-3 text-xs font-semibold rounded-lg transition-colors ${breakdownMode === "Merchant" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
                   >
-                    Per merchant & kata kunci
+                    Merchant
                   </button>
                 </div>
               </div>
@@ -1093,65 +1243,100 @@ export default function LaporanPage() {
                   </div>
                 </div>
               ) : chartSum === 0 ? (
-                <div className="py-12 text-center text-gray-400 text-sm">Tidak ada transaksi di periode ini untuk mode yang dipilih.</div>
-              ) : primaryMode === 'Net' ? (
-                <div className="overflow-x-auto w-full">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-gray-200">
-                        <th className="py-2 px-3 text-sm font-semibold text-gray-600">Kategori / Merchant</th>
-                        <th className="py-2 px-3 text-sm font-semibold text-emerald-600">Masuk (+)</th>
-                        <th className="py-2 px-3 text-sm font-semibold text-rose-600">Keluar (-)</th>
-                        <th className="py-2 px-3 text-sm font-semibold text-gray-800">Net Total (=)</th>
-                        <th className="py-2 px-3 text-sm font-semibold text-gray-600">Alokasi Anggaran</th>
-                        <th className="py-2 px-3 text-sm font-semibold text-gray-600">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {activeList.map(item => {
-                         const isHemat = item.budget > 0 && item.expense <= item.budget;
-                         const isOver = item.budget > 0 && item.expense > item.budget;
-                         return (
-                           <tr key={item.name} className="border-b border-gray-100 hover:bg-gray-50/50">
-                             <td className="py-2 px-3 text-sm font-medium text-gray-900">{item.name}</td>
-                             <td className="py-2 px-3 text-sm text-emerald-600">{formatMoney(item.income)}</td>
-                             <td className="py-2 px-3 text-sm text-rose-600">{formatMoney(item.expense)}</td>
-                             <td className={`py-2 px-3 text-sm font-bold ${item.net >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatMoney(item.net)}</td>
-                             <td className="py-2 px-3 text-sm text-gray-600">
-                               <button
-                                 type="button"
-                                 onClick={(e) => {
-                                   e.stopPropagation();
-                                   openQuickEditBudget(item.name, breakdownMode === "Merchant");
-                                 }}
-                                 className={`group ${item.budget > 0 
-                                   ? "inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold cursor-pointer transition-all shadow-sm hover:scale-[1.02]"
-                                   : "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-transparent hover:border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:bg-emerald-500/20 text-xs font-medium text-gray-400 italic cursor-pointer transition-all duration-200"}`}
-                                 title="Edit Alokasi Anggaran"
-                                >
-                                 <span className={item.budget > 0 ? "text-white dark:text-slate-100" : ""}>
-                                   {item.budget > 0 ? formatMoney(item.budget) : "Belum diatur"}
-                                 </span>
-                                 <Edit3 className={`w-3.5 h-3.5 transition-colors ${item.budget > 0 ? "text-slate-300 group-hover:text-emerald-400" : "text-gray-400 group-hover:text-emerald-500"}`} />
-                               </button>
-                             </td>
-                             <td className="py-2 px-3">
-                               {isHemat && <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">Hemat</span>}
-                               {isOver && <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-600 border border-rose-500/20">Overbudget</span>}
-                               {!isHemat && !isOver && <span className="text-gray-400 text-xs">-</span>}
-                             </td>
-                           </tr>
-                         )
-                      })}
-                    </tbody>
-                  </table>
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-10 text-center">
+                  <PieChart className="mx-auto h-7 w-7 text-slate-300" />
+                  <p className="mt-3 text-sm font-semibold text-slate-700">Belum ada data untuk ditampilkan</p>
+                  <p className="mt-1 text-xs text-slate-500">Tidak ada transaksi pada periode dan mode yang dipilih.</p>
                 </div>
+              ) : primaryMode === 'Net' ? (
+                <>
+                  <div className="hidden lg:block overflow-x-auto w-full">
+                    <table className="w-full min-w-[980px] text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50/70 text-xs text-slate-500">
+                          <th className="py-3 px-3 font-semibold">Kategori / Merchant</th>
+                          <th className="py-3 px-3 font-semibold text-emerald-700">Masuk (+)</th>
+                          <th className="py-3 px-3 font-semibold text-rose-700">Keluar (-)</th>
+                          <th className="py-3 px-3 font-semibold text-slate-700">Net total (=)</th>
+                          <th className="py-3 px-3 font-semibold">Alokasi anggaran</th>
+                          <th className="py-3 px-3 font-semibold">Kondisi pemakaian</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activeList.map(item => {
+                          const budgetState = getBudgetPresentation(item.expense, item.budget);
+                          return (
+                            <tr key={item.name} className="border-b border-slate-100 hover:bg-slate-50/70 transition-colors">
+                              <td className="py-3.5 px-3">
+                                <p className="text-sm font-semibold text-slate-900">{item.name}</p>
+                                <p className="mt-0.5 text-[11px] text-slate-400">{item.count} transaksi</p>
+                              </td>
+                              <td className="py-3.5 px-3 text-sm font-medium text-emerald-700 tabular-nums">{formatMoney(item.income)}</td>
+                              <td className="py-3.5 px-3 text-sm font-medium text-rose-700 tabular-nums">{formatMoney(item.expense)}</td>
+                              <td className={`py-3.5 px-3 text-sm font-bold tabular-nums ${item.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatMoney(item.net)}</td>
+                              <td className="py-3.5 px-3">
+                                <button type="button" onClick={() => openQuickEditBudget(item.name, breakdownMode === "Merchant")} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:border-emerald-300 hover:bg-emerald-50 transition-colors" title="Edit alokasi anggaran">
+                                  {item.budget > 0 ? formatMoney(item.budget) : "Atur anggaran"}
+                                  <Edit3 className="h-3.5 w-3.5 text-slate-400" />
+                                </button>
+                              </td>
+                              <td className="py-3.5 px-3 min-w-[185px]">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className={`text-xs font-bold ${budgetState.textClass}`}>{budgetState.label}</span>
+                                  {item.budget > 0 && <span className="text-[11px] font-semibold text-slate-500 tabular-nums">{budgetState.percentage.toFixed(0)}%</span>}
+                                </div>
+                                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100" aria-label={`${budgetState.percentage.toFixed(0)} persen anggaran terpakai`}>
+                                  <div className={`h-full rounded-full ${budgetState.barClass}`} style={{ width: `${budgetState.progressWidth}%` }} />
+                                </div>
+                                <p className="mt-1 text-[10px] text-slate-500">{budgetState.detail}</p>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="space-y-3 lg:hidden">
+                    {activeList.map((item, index) => {
+                      const budgetState = getBudgetPresentation(item.expense, item.budget);
+                      return (
+                        <article key={item.name} className="rounded-xl border border-slate-200 bg-[#FCFCF9] p-3.5">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">#{index + 1} · {item.count} transaksi</p>
+                              <h4 className="mt-1 truncate text-sm font-bold text-slate-900">{item.name}</h4>
+                            </div>
+                            <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold ${budgetState.badgeClass}`}>{budgetState.label}</span>
+                          </div>
+                          <dl className="mt-3 grid grid-cols-3 gap-2 border-y border-slate-100 py-3">
+                            <div><dt className="text-[10px] text-slate-400">Masuk</dt><dd className="mt-1 break-words text-xs font-bold text-emerald-700 tabular-nums">{formatMoney(item.income)}</dd></div>
+                            <div><dt className="text-[10px] text-slate-400">Keluar</dt><dd className="mt-1 break-words text-xs font-bold text-rose-700 tabular-nums">{formatMoney(item.expense)}</dd></div>
+                            <div><dt className="text-[10px] text-slate-400">Net</dt><dd className={`mt-1 break-words text-xs font-bold tabular-nums ${item.net >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{formatMoney(item.net)}</dd></div>
+                          </dl>
+                          <div className="mt-3">
+                            <div className="flex items-center justify-between gap-3 text-xs">
+                              <span className={`font-semibold ${budgetState.textClass}`}>{budgetState.detail}</span>
+                              {item.budget > 0 && <span className="font-bold text-slate-600 tabular-nums">{budgetState.percentage.toFixed(0)}%</span>}
+                            </div>
+                            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                              <div className={`h-full rounded-full ${budgetState.barClass}`} style={{ width: `${budgetState.progressWidth}%` }} />
+                            </div>
+                            <button type="button" onClick={() => openQuickEditBudget(item.name, breakdownMode === "Merchant")} className="mt-2.5 inline-flex min-h-11 items-center gap-1.5 rounded-lg text-xs font-semibold text-emerald-700">
+                              <Edit3 className="h-3.5 w-3.5" /> {item.budget > 0 ? `Anggaran ${formatMoney(item.budget)}` : "Atur anggaran"}
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </>
               ) : (
-                <div className="flex flex-col md:flex-row gap-8 items-start w-full">
+                <div className="flex flex-col sm:flex-row gap-5 md:gap-8 items-start w-full">
                   {/* Left Column */}
-                  <div className="w-full md:w-[35%] flex flex-col items-center gap-6">
+                  <div className="w-full sm:w-[35%] flex flex-col items-center gap-5">
                     {/* Interactive Donut Chart */}
-                    <div className="relative w-48 h-48 shrink-0">
+                    <div className="relative hidden sm:block w-44 h-44 lg:w-48 lg:h-48 shrink-0" aria-label={`Diagram kontribusi ${breakdownMode.toLowerCase()}`}>
                       <svg viewBox="0 0 200 200" className="w-full h-full transform -rotate-90">
                         {svgPaths.map((slice) => (
                           <circle
@@ -1197,19 +1382,18 @@ export default function LaporanPage() {
                       </div>
                     </div>
                     {/* Insight Box */}
-                    <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-xl p-4 w-full text-center">
-                       <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-                       <h4 className="text-lime-400 font-semibold text-xs mb-1 flex items-center justify-center gap-1.5 relative z-10"><Bot className="w-3.5 h-3.5" /> Insight AI</h4>
-                       <p className="text-[#A8C9B9] text-xs leading-relaxed relative z-10">
+                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-3.5 w-full text-left">
+                       <h4 className="text-emerald-800 font-bold text-[11px] uppercase tracking-wider mb-1 flex items-center gap-1.5"><TrendingUp className="w-3.5 h-3.5" /> Sorotan breakdown</h4>
+                       <p className="text-slate-600 text-xs leading-relaxed">
                          {activeList.length > 0 && chartSum > 0
-                           ? `${breakdownMode === 'Kategori' ? 'Kategori' : 'Merchant'} ${activeList[0].name} mendominasi ${Math.round((Math.abs(getStatValue(activeList[0])) / chartSum) * 100)}% dari total.` 
+                           ? `${breakdownMode === 'Kategori' ? 'Kategori' : 'Merchant'} ${activeList[0].name} berkontribusi ${Math.round((Math.abs(getStatValue(activeList[0])) / chartSum) * 100)}% dari total ${primaryMode.toLowerCase()}.`
                            : "Belum cukup data untuk analisis."}
                        </p>
                     </div>
                   </div>
 
                   {/* Right Column List items */}
-                  <div className="w-full md:w-[65%] space-y-4">
+                  <div className="w-full sm:w-[65%] space-y-2.5">
                     {activeList.length === 0 && breakdownMode === "Merchant" ? (
                       <div className="py-8 text-center text-gray-500 text-sm border border-dashed border-gray-200 rounded-lg">
                         Belum ada transaksi berulang (minimal 2x) pada bulan ini.
@@ -1221,16 +1405,19 @@ export default function LaporanPage() {
                         const color = pieColors[i % pieColors.length];
 
                         return (
-                          <div key={item.name} className="space-y-1.5">
-                            <div className="flex justify-between items-center text-sm">
-                              <div className="flex items-center gap-2">
-                                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }}></span>
-                                <span className="font-medium text-gray-700">{item.name}</span>
+                          <div key={item.name} className={`rounded-xl border p-3 ${i === 0 ? "border-emerald-200 bg-emerald-50/40" : "border-slate-100 bg-[#FCFCF9]"}`}>
+                            <div className="flex items-start justify-between gap-3 text-sm">
+                              <div className="flex min-w-0 items-start gap-2.5">
+                                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-500">{i + 1}</span>
+                                <div className="min-w-0">
+                                  <p className="truncate font-semibold text-slate-800">{item.name}</p>
+                                  <p className="mt-0.5 text-[10px] text-slate-400">{item.count} transaksi · {pct}% kontribusi</p>
+                                </div>
                               </div>
-                              <span className="font-semibold text-gray-900">{formatMoney(val)} <span className="text-gray-400 font-normal ml-1">({pct}%)</span></span>
+                              <span className="max-w-[48%] break-words text-right font-bold text-slate-900 tabular-nums">{formatMoney(val)}</span>
                             </div>
-                            <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                              <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }}></div>
+                            <div className="mt-2.5 w-full h-1.5 bg-slate-100 rounded-full overflow-hidden" aria-label={`${pct} persen dari total`}>
+                              <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
                             </div>
                           </div>
                         );
@@ -1243,11 +1430,12 @@ export default function LaporanPage() {
           </div>
 
           {/* Rekap Sisa Uang Per Rekening Table */}
-          <div className="bg-[#FAF9F6] border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden">
-            <div className="p-5 border-b border-slate-200/60">
-              <h3 className="font-semibold text-gray-900">Rekap Kas & Saldo Rekening</h3>
+          <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden">
+            <div className="p-4 md:p-5 border-b border-slate-200/60">
+              <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Rekap kas & saldo rekening</h3>
+              <p className="mt-1 text-xs md:text-sm text-slate-500">Pergerakan saldo awal, uang masuk, uang keluar, dan saldo akhir.</p>
             </div>
-            <div className="overflow-x-auto">
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm text-left">
                 <thead className="text-xs uppercase bg-gray-50 text-gray-500 border-b">
                   <tr>
@@ -1300,18 +1488,72 @@ export default function LaporanPage() {
                 </tbody>
               </table>
             </div>
+            <details className="group md:hidden">
+              <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-emerald-800 [&::-webkit-details-marker]:hidden">
+                Lihat rincian {accounts.length} rekening
+                <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="space-y-3 border-t border-slate-100 p-3">
+                {isLoading ? (
+                  [1, 2].map((item) => <div key={item} className="h-32 animate-pulse rounded-xl bg-slate-100" />)
+                ) : accounts.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">Belum ada data rekening.</div>
+                ) : (
+                  accounts.map((acc) => {
+                    const accIn = filteredTx.filter(t => t.type === 'INCOME' && isAccountMatch(acc.name, t.sumber_dana)).reduce((sum, t) => sum + Number(t.amount), 0);
+                    const accOut = filteredTx.filter(t => t.type === 'EXPENSE' && isAccountMatch(acc.name, t.sumber_dana)).reduce((sum, t) => sum + Number(t.amount), 0);
+                    const initBal = Number(acc.initial_balance) || 0;
+                    const finalBal = initBal + accIn - accOut;
+
+                    return (
+                      <article key={acc.id} className="rounded-xl border border-slate-200 bg-[#FCFCF9] p-3.5">
+                        <div className="flex items-center gap-2.5">
+                          <BankLogo bankName={acc.name} className="h-8 min-w-[46px] max-w-[68px] shrink-0 overflow-hidden rounded-lg px-2 shadow-sm" />
+                          <div className="min-w-0">
+                            <h4 className="truncate text-sm font-bold text-slate-900">{acc.name}</h4>
+                            <p className="text-[10px] uppercase tracking-wider text-slate-400">{acc.is_primary ? "Rekening utama" : "Rekening"}</p>
+                          </div>
+                        </div>
+                        <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3">
+                          <div><dt className="text-[10px] text-slate-400">Saldo awal</dt><dd className="mt-1 break-words text-xs font-semibold text-slate-700 tabular-nums">{formatMoney(initBal)}</dd></div>
+                          <div><dt className="text-[10px] text-slate-400">Saldo akhir</dt><dd className="mt-1 break-words text-xs font-bold text-slate-900 tabular-nums">{formatMoney(finalBal)}</dd></div>
+                          <div><dt className="text-[10px] text-slate-400">Masuk</dt><dd className="mt-1 break-words text-xs font-semibold text-emerald-700 tabular-nums">+{formatMoney(accIn)}</dd></div>
+                          <div><dt className="text-[10px] text-slate-400">Keluar</dt><dd className="mt-1 break-words text-xs font-semibold text-rose-700 tabular-nums">-{formatMoney(accOut)}</dd></div>
+                        </dl>
+                      </article>
+                    );
+                  })
+                )}
+              </div>
+            </details>
           </div>
         </div>
       )}
 
       {/* TAB 2: TAHUNAN */}
       {activeTab === "Tahunan" && (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <div className="bg-[#FAF9F6] border border-slate-200/80 rounded-2xl shadow-sm p-6">
-            <h3 className="font-semibold text-gray-900 mb-6">Rekap Tahunan ({selectedYear})</h3>
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 motion-reduce:animate-none">
+          <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-4 md:p-6">
+            <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Arus kas bulanan {selectedYear}</h3>
+                <p className="mt-1 text-xs md:text-sm text-slate-500">Bandingkan pemasukan, pengeluaran, dan pendapatan bersih setiap bulan.</p>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-slate-500">
+                <span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-emerald-500" /> Pemasukan</span>
+                <span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-rose-500" /> Pengeluaran</span>
+              </div>
+            </div>
             
             {/* Real Bar Chart for Yearly */}
-            <div className="h-64 flex items-end justify-between gap-2 border-b border-gray-200 pb-2 px-2">
+            {!isLoading && annualActiveMonths === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-12 text-center">
+                <BarChart3 className="mx-auto h-7 w-7 text-slate-300" />
+                <p className="mt-3 text-sm font-semibold text-slate-700">Belum ada arus kas tahun ini</p>
+                <p className="mt-1 text-xs text-slate-500">Chart akan muncul setelah ada transaksi pada {selectedYear}.</p>
+              </div>
+            ) : (
+            <div className="h-56 md:h-64 flex items-end justify-between gap-1 md:gap-2 border-b border-slate-200 pb-2 px-0 md:px-2" aria-label={`Chart pemasukan dan pengeluaran bulanan ${selectedYear}`}>
               {["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"].map((month, i) => {
                 const stat = annualStats[i];
                 const inHeight = annualChartMax > 0 ? (stat.income / annualChartMax) * 100 : 0; 
@@ -1341,8 +1583,9 @@ export default function LaporanPage() {
                 )
               })}
             </div>
+            )}
             
-            <div className="mt-8 overflow-x-auto">
+            <div className="mt-8 hidden md:block overflow-x-auto">
               <table className="w-full text-sm text-left">
                 <thead className="text-xs uppercase bg-gray-50 text-gray-500 border-b">
                   <tr>
@@ -1378,20 +1621,43 @@ export default function LaporanPage() {
                 </tbody>
               </table>
             </div>
+            <details className="group mt-5 md:hidden">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3.5 text-sm font-semibold text-emerald-800 [&::-webkit-details-marker]:hidden">
+                Rincian angka per bulan
+                <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white px-3">
+                {annualStats.map((stat, index) => (
+                  <div key={monthNames[index]} className="py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-bold text-slate-900">{monthNames[index]}</p>
+                      <p className={`text-xs font-bold tabular-nums ${stat.net < 0 ? "text-rose-700" : "text-emerald-700"}`}>{stat.net > 0 ? "+" : ""}{formatMoney(stat.net)}</p>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                      <p className="text-slate-500">Masuk <strong className="block mt-0.5 break-words text-emerald-700 tabular-nums">{formatMoney(stat.income)}</strong></p>
+                      <p className="text-slate-500">Keluar <strong className="block mt-0.5 break-words text-rose-700 tabular-nums">{formatMoney(stat.expense)}</strong></p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
           </div>
 
           {/* Heatmap Matrix & Pie Chart */}
-          <div className="flex flex-col lg:flex-row gap-6">
-            <div className="bg-[#FAF9F6] border border-slate-200/80 rounded-2xl shadow-sm p-6 lg:w-3/4 flex flex-col">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="font-semibold text-gray-900">Sebaran Pengeluaran Tahunan</h3>
-                <div className="bg-gray-100 p-1 rounded-lg inline-flex">
-                  <button onClick={() => setAnnualBreakdownMode("Kategori")} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${annualBreakdownMode === "Kategori" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>Per Kategori</button>
-                  <button onClick={() => setAnnualBreakdownMode("Merchant")} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${annualBreakdownMode === "Merchant" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}>Per Merchant</button>
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(220px,1fr)]">
+            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-4 md:p-6 min-w-0">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end mb-6 gap-4">
+                <div>
+                  <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Sebaran pengeluaran tahunan</h3>
+                  <p className="mt-1 text-xs md:text-sm text-slate-500">Kontribusi tiap kelompok dan pola pengeluaran dari bulan ke bulan.</p>
+                </div>
+                <div className="grid w-full grid-cols-2 bg-slate-100 p-1 rounded-xl sm:w-auto">
+                  <button type="button" onClick={() => setAnnualBreakdownMode("Kategori")} className={`min-h-11 sm:min-h-9 px-3 text-xs font-semibold rounded-lg transition-colors ${annualBreakdownMode === "Kategori" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>Kategori</button>
+                  <button type="button" onClick={() => setAnnualBreakdownMode("Merchant")} className={`min-h-11 sm:min-h-9 px-3 text-xs font-semibold rounded-lg transition-colors ${annualBreakdownMode === "Merchant" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>Merchant</button>
                 </div>
               </div>
               
-              <div className="w-full overflow-x-auto">
+              <div className="hidden lg:block w-full overflow-x-auto">
                 <table className="w-full text-xs text-left min-w-[900px] border-collapse">
                   <thead>
                     <tr>
@@ -1418,7 +1684,10 @@ export default function LaporanPage() {
                     ) : (
                       heatmapData.map((row) => (
                         <tr key={row.name}>
-                          <td className="p-2 border-b font-medium text-gray-800 sticky left-0 bg-white z-10 border-r border-gray-100">{row.name}</td>
+                          <td className="p-2 border-b font-medium text-gray-800 sticky left-0 bg-white z-10 border-r border-gray-100">
+                            <span className="block">{row.name}</span>
+                            {row.count !== null && <span className="mt-0.5 block text-[9px] font-normal text-slate-400">{row.count} transaksi</span>}
+                          </td>
                           {row.months.map((val, i) => {
                             const ratio = maxHeatmapValue > 0 ? val / maxHeatmapValue : 0;
                             let bgClass = 'bg-transparent text-gray-400';
@@ -1450,11 +1719,46 @@ export default function LaporanPage() {
                   </tbody>
                 </table>
               </div>
+
+              <div className="space-y-2.5 lg:hidden">
+                {isLoading ? (
+                  [1, 2, 3].map((item) => <div key={item} className="h-16 animate-pulse rounded-xl bg-slate-100" />)
+                ) : heatmapData.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-10 text-center">
+                    <p className="text-sm font-semibold text-slate-700">Belum ada pengeluaran tahun ini</p>
+                    <p className="mt-1 text-xs text-slate-500">Breakdown akan muncul setelah ada transaksi pengeluaran.</p>
+                  </div>
+                ) : (
+                  heatmapData.map((row, index) => {
+                    const percentage = heatmapGrandTotal > 0 ? (row.total / heatmapGrandTotal) * 100 : 0;
+                    return (
+                      <details key={row.name} className="group rounded-xl border border-slate-200 bg-[#FCFCF9]">
+                        <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 p-3 [&::-webkit-details-marker]:hidden">
+                          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-500">{index + 1}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-bold text-slate-900">{row.name}</span>
+                            <span className="mt-0.5 block text-[10px] text-slate-400">{percentage.toFixed(1)}% dari pengeluaran{row.count !== null ? ` · ${row.count} transaksi` : ""}</span>
+                          </span>
+                          <span className="max-w-[42%] break-words text-right text-xs font-bold text-slate-900 tabular-nums">{formatMoney(row.total)}</span>
+                          <ChevronDown className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-open:rotate-180" />
+                        </summary>
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-px border-t border-slate-200 bg-slate-200">
+                          {row.months.map((value, monthIndex) => (
+                            <div key={monthNames[monthIndex]} className="bg-white p-2.5">
+                              <p className="text-[10px] text-slate-400">{monthNames[monthIndex].slice(0, 3)}</p>
+                              <p className="mt-1 break-words text-[11px] font-semibold text-slate-700 tabular-nums">{value > 0 ? formatMoney(value) : "—"}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    );
+                  })
+                )}
+              </div>
             </div>
 
-            <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl shadow-sm p-6 lg:w-1/4 flex flex-col items-center justify-center">
-              <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-              <h4 className="text-sm font-semibold text-[#A8C9B9] mb-6 text-center w-full relative z-10">Persentase Pengeluaran</h4>
+            <div className="relative hidden overflow-hidden bg-[#F1F7F2] border border-emerald-100 rounded-2xl shadow-sm p-6 lg:flex flex-col items-center justify-center">
+              <h4 className="text-sm font-bold text-emerald-950 mb-6 text-center w-full">Persentase pengeluaran</h4>
               {isLoading ? (
                 <div className="w-full flex flex-col items-center animate-pulse relative z-10">
                   <div className="w-48 h-48 rounded-full border-[14px] border-emerald-950/60 bg-emerald-950/40 mb-6" />
@@ -1465,7 +1769,7 @@ export default function LaporanPage() {
                   </div>
                 </div>
               ) : heatmapData.length === 0 ? (
-                <div className="text-[#A8C9B9] text-sm relative z-10">Tidak ada data</div>
+                <div className="text-slate-500 text-sm">Tidak ada data</div>
               ) : (
                 <div className="relative z-10 w-full flex flex-col items-center">
                   <div className="relative w-48 h-48 shrink-0 mb-6">
@@ -1491,9 +1795,9 @@ export default function LaporanPage() {
                       <div key={slice.item.name} className="flex justify-between items-center text-xs">
                         <div className="flex items-center gap-1.5 truncate pr-2">
                           <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: slice.color }}></span>
-                          <span className="truncate text-[#A8C9B9]">{slice.item.name}</span>
+                          <span className="truncate text-slate-600">{slice.item.name}</span>
                         </div>
-                        <span className="font-bold text-white shrink-0">{slice.percentage}%</span>
+                        <span className="font-bold text-emerald-900 shrink-0">{slice.percentage}%</span>
                       </div>
                     ))}
                   </div>
@@ -1506,59 +1810,34 @@ export default function LaporanPage() {
 
       {/* TAB 3: MAKRO MULTI-TAHUN */}
       {activeTab === "Makro" && (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 motion-reduce:animate-none">
           
-          {/* Top Multi-Year Summary Metrics */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
-              <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-              <span className="text-sm font-semibold text-[#A8C9B9] relative z-10">Akumulasi Tabungan Lifetime</span>
-              {isLoading ? (
-                <div className="h-8 w-36 bg-emerald-950/60 rounded-lg animate-pulse mt-2 relative z-10 border border-emerald-800/40" />
-              ) : (
-                <div className={`mt-2 text-2xl font-bold tracking-tight ${lifetimeNet >= 0 ? 'text-lime-400' : 'text-rose-400'} relative z-10`}>
-                  {lifetimeNet >= 0 ? '+' : ''}{formatMoney(lifetimeNet)}
-                </div>
-              )}
+          <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-4 md:p-6">
+            <div>
+              <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">{macroChartTitle}</h3>
+              <p className="mt-1 text-xs md:text-sm text-slate-500">Pergerakan pemasukan, pengeluaran, dan tabungan bersih sepanjang periode.</p>
             </div>
-            <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
-              <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-              <span className="text-sm font-semibold text-[#A8C9B9] relative z-10">Rata-Rata Pengeluaran Tahunan</span>
-              {isLoading ? (
-                <div className="h-8 w-36 bg-emerald-950/60 rounded-lg animate-pulse mt-2 relative z-10 border border-emerald-800/40" />
-              ) : (
-                <div className="mt-2 text-2xl font-bold tracking-tight text-white relative z-10">{formatMoney(avgAnnualExpense)}</div>
-              )}
-            </div>
-            <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-2xl p-5 shadow-sm text-white flex flex-col justify-between">
-              <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-              <span className="text-sm font-semibold text-[#A8C9B9] relative z-10">Tahun Terhemat</span>
-              {isLoading ? (
-                <div className="h-8 w-36 bg-emerald-950/60 rounded-lg animate-pulse mt-2 relative z-10 border border-emerald-800/40" />
-              ) : (
-                <div className="mt-2 text-2xl font-bold tracking-tight text-white relative z-10">
-                  {maxMargin !== -Infinity ? `${bestYear} ` : '-'}
-                  {maxMargin !== -Infinity && <span className="text-sm font-medium text-lime-400">({(maxMargin * 100).toFixed(1)}%)</span>}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-[#FAF9F6] border border-slate-200/80 rounded-2xl shadow-sm p-6">
-            <h3 className="font-semibold text-gray-900 mb-6">{macroChartTitle}</h3>
             
-            <div className="h-[350px] w-full mt-6">
+            <div className="h-[290px] md:h-[350px] w-full mt-5 md:mt-6">
               {isLoading ? (
                 <div className="w-full h-full flex items-end justify-between gap-3 px-6 pb-6 pt-12 animate-pulse bg-slate-50/50 rounded-xl">
                   {[40, 65, 55, 80, 70, 90, 85].map((h, i) => (
                     <div key={i} className="flex-1 bg-slate-200/80 rounded-t-md" style={{ height: `${h}%` }} />
                   ))}
                 </div>
+              ) : !hasReportData ? (
+                <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-5 text-center">
+                  <div>
+                    <TrendingUp className="mx-auto h-7 w-7 text-slate-300" />
+                    <p className="mt-3 text-sm font-semibold text-slate-700">Belum ada tren untuk ditampilkan</p>
+                    <p className="mt-1 text-xs text-slate-500">Chart akan muncul setelah ada transaksi pada rekening yang dipilih.</p>
+                  </div>
+                </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart
                     data={macroChartData}
-                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                    margin={{ top: 10, right: 4, left: -8, bottom: 0 }}
                   >
                     <defs>
                       <linearGradient id="colorPemasukan" x1="0" y1="0" x2="0" y2="1">
@@ -1587,7 +1866,7 @@ export default function LaporanPage() {
                         if (Math.abs(value) >= 1000) return (value / 1000).toFixed(0) + 'k';
                         return value.toString();
                       }}
-                      width={60}
+                      width={54}
                     />
                     <RechartsTooltip 
                       content={({ active, payload, label }: any) => {
@@ -1650,7 +1929,7 @@ export default function LaporanPage() {
               )}
             </div>
             
-            <div className="flex gap-6 justify-center mt-6 text-sm">
+            <div className="flex flex-wrap gap-x-5 gap-y-2 justify-center mt-5 text-xs md:text-sm">
                <div className="flex items-center gap-2">
                  <div className="w-3 h-3 rounded-full bg-emerald-500"></div> 
                  <span className="text-gray-600 font-medium">Pemasukan</span>
@@ -1666,11 +1945,12 @@ export default function LaporanPage() {
             </div>
           </div>
 
-          <div className="bg-[#FAF9F6] border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden">
-             <div className="p-5 border-b border-slate-200/60">
-              <h3 className="font-semibold text-gray-900">Rekap Multi-Tahun</h3>
+          <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden">
+             <div className="p-4 md:p-5 border-b border-slate-200/60">
+              <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Rekap multi-tahun</h3>
+              <p className="mt-1 text-xs md:text-sm text-slate-500">Perbandingan pemasukan, pengeluaran, net, dan margin tabungan tiap tahun.</p>
             </div>
-            <div className="overflow-x-auto">
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm text-left">
                 <thead className="text-xs uppercase bg-gray-50 text-gray-500 border-b">
                   <tr>
@@ -1710,33 +1990,62 @@ export default function LaporanPage() {
                 </tbody>
               </table>
             </div>
+            <details className="group md:hidden">
+              <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-emerald-800 [&::-webkit-details-marker]:hidden">
+                Lihat rincian {activeYears.length} tahun
+                <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="space-y-3 border-t border-slate-100 p-3">
+                {activeYears.map((year) => {
+                  const stat = multiYearStats[year];
+                  const margin = stat.income > 0 ? (stat.net / stat.income) * 100 : null;
+                  return (
+                    <article key={year} className="rounded-xl border border-slate-200 bg-[#FCFCF9] p-3.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <h4 className="text-base font-bold text-slate-900">{year}</h4>
+                        <span className={`text-sm font-bold tabular-nums ${stat.net >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{stat.net > 0 ? "+" : ""}{formatMoney(stat.net)}</span>
+                      </div>
+                      <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3">
+                        <div><dt className="text-[10px] text-slate-400">Pemasukan</dt><dd className="mt-1 break-words text-xs font-semibold text-emerald-700 tabular-nums">{formatMoney(stat.income)}</dd></div>
+                        <div><dt className="text-[10px] text-slate-400">Pengeluaran</dt><dd className="mt-1 break-words text-xs font-semibold text-rose-700 tabular-nums">{formatMoney(stat.expense)}</dd></div>
+                        <div className="col-span-2"><dt className="text-[10px] text-slate-400">Margin tabungan</dt><dd className="mt-1 text-xs font-bold text-slate-700 tabular-nums">{margin === null ? "Belum tersedia" : `${margin.toFixed(1)}%`}</dd></div>
+                      </dl>
+                    </article>
+                  );
+                })}
+              </div>
+            </details>
           </div>
 
           {/* Sebaran Pengeluaran Multi-Tahun Visual Breakdown */}
-          <div className="bg-[#FAF9F6] border border-slate-200/80 rounded-2xl shadow-sm p-6 w-full">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-              <div className="flex flex-col gap-2">
-                <h3 className="font-semibold text-gray-900">Sebaran Pengeluaran Multi-Tahun</h3>
-                <div className="w-36">
+          <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-4 md:p-6 w-full">
+            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end mb-6 gap-4">
+              <div className="w-full lg:w-auto">
+                <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Sebaran pengeluaran multi-tahun</h3>
+                <p className="mt-1 text-xs md:text-sm text-slate-500">Ranking pengeluaran dan perubahannya dibanding tahun sebelumnya.</p>
+                <div className="mt-3 w-full sm:w-40">
                   <CustomSelect 
                     value={String(safeMultiYearSelected)} 
                     onChange={val => setMultiYearSelectedYear(Number(val))}
                     options={activeYears.map(y => ({ value: String(y), label: `Tahun ${y}` }))}
+                    buttonClassName="min-h-11"
                   />
                 </div>
               </div>
-              <div className="bg-gray-100 p-1 rounded-lg inline-flex shrink-0">
+              <div className="grid w-full grid-cols-2 bg-slate-100 p-1 rounded-xl lg:w-auto">
                 <button 
+                  type="button"
                   onClick={() => setMultiYearBreakdownMode("Kategori")}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${multiYearBreakdownMode === "Kategori" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                  className={`min-h-11 sm:min-h-9 px-3 text-xs font-semibold rounded-lg transition-colors ${multiYearBreakdownMode === "Kategori" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
                 >
-                  Per Kategori
+                  Kategori
                 </button>
                 <button 
+                  type="button"
                   onClick={() => setMultiYearBreakdownMode("Merchant")}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${multiYearBreakdownMode === "Merchant" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"}`}
+                  className={`min-h-11 sm:min-h-9 px-3 text-xs font-semibold rounded-lg transition-colors ${multiYearBreakdownMode === "Merchant" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
                 >
-                  Per merchant & kata kunci
+                  Merchant
                 </button>
               </div>
             </div>
@@ -1762,13 +2071,17 @@ export default function LaporanPage() {
                 </div>
               </div>
             ) : myBreakdownTotal === 0 ? (
-              <div className="py-12 text-center text-gray-400 text-sm">Tidak ada transaksi pengeluaran di tahun {safeMultiYearSelected}.</div>
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-10 text-center">
+                <PieChart className="mx-auto h-7 w-7 text-slate-300" />
+                <p className="mt-3 text-sm font-semibold text-slate-700">Belum ada pengeluaran pada {safeMultiYearSelected}</p>
+                <p className="mt-1 text-xs text-slate-500">Pilih tahun lain atau tambahkan transaksi untuk melihat breakdown.</p>
+              </div>
             ) : (
-              <div className="flex flex-col md:flex-row gap-8 items-start w-full">
+              <div className="flex flex-col sm:flex-row gap-5 md:gap-8 items-start w-full">
                 {/* Left Column */}
-                <div className="w-full md:w-[35%] flex flex-col items-center gap-6">
+                <div className="w-full sm:w-[35%] flex flex-col items-center gap-5">
                   {/* Interactive Donut Chart */}
-                  <div className="relative w-48 h-48 shrink-0">
+                  <div className="relative hidden sm:block w-44 h-44 lg:w-48 lg:h-48 shrink-0" aria-label={`Diagram pengeluaran ${multiYearBreakdownMode.toLowerCase()} tahun ${safeMultiYearSelected}`}>
                     <svg viewBox="0 0 200 200" className="w-full h-full transform -rotate-90">
                       {mySvgPaths.map((slice) => (
                         <circle
@@ -1820,28 +2133,27 @@ export default function LaporanPage() {
                     </div>
                   </div>
                   {/* Insight Box */}
-                  <div className="relative overflow-hidden bg-[#132A1E] border border-[#1f4230] rounded-xl p-4 w-full text-center">
-                     <div className="absolute -bottom-8 -right-8 w-36 h-36 bg-radial from-amber-400/15 via-lime-400/10 to-transparent rounded-full blur-2xl pointer-events-none" />
-                     <h4 className="text-lime-400 font-semibold text-xs mb-1 flex items-center justify-center gap-1.5 relative z-10"><Bot className="w-3.5 h-3.5" /> Insight AI</h4>
-                     <p className="text-[#A8C9B9] text-xs leading-relaxed relative z-10">
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-3.5 w-full text-left">
+                     <h4 className="text-emerald-800 font-bold text-[11px] uppercase tracking-wider mb-1 flex items-center gap-1.5"><TrendingUp className="w-3.5 h-3.5" /> Sorotan breakdown</h4>
+                     <p className="text-slate-600 text-xs leading-relaxed">
                        {myBreakdownData.length > 0
-                         ? `${multiYearBreakdownMode === 'Kategori' ? 'Kategori' : 'Merchant'} ${myBreakdownData[0].name} mendominasi ${Math.round((myBreakdownData[0].currentVal / myBreakdownTotal) * 100)}% dari total pengeluaran tahun ${safeMultiYearSelected}.` 
+                         ? `${multiYearBreakdownMode === 'Kategori' ? 'Kategori' : 'Merchant'} ${myBreakdownData[0].name} berkontribusi ${Math.round((myBreakdownData[0].currentVal / myBreakdownTotal) * 100)}% dari pengeluaran ${safeMultiYearSelected}.`
                          : "Belum cukup data untuk analisis."}
                      </p>
                   </div>
                 </div>
 
                 {/* Right Column List items */}
-                <div className="w-full md:w-[65%] space-y-4">
+                <div className="w-full sm:w-[65%] space-y-2.5">
                   {myBreakdownData.map((item, i) => {
                     const pct = myBreakdownTotal > 0 ? ((item.currentVal / myBreakdownTotal) * 100).toFixed(1) : "0";
                     const color = mySvgPaths[i]?.color || "#cbd5e1";
                     
                     let yoyBadge = null;
                     if (item.prevVal === null) {
-                      yoyBadge = <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-[10px] font-semibold rounded">{safeMultiYearSelected}</span>;
+                      yoyBadge = <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">Tahun pertama</span>;
                     } else if (item.prevVal === 0 && item.currentVal > 0) {
-                      yoyBadge = <span className="px-2 py-0.5 bg-rose-50 text-rose-600 border border-rose-100 text-[10px] font-semibold rounded">+100% vs {prevYear}</span>;
+                      yoyBadge = <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">Baru di {safeMultiYearSelected}</span>;
                     } else if (item.yoy !== null) {
                       const isIncrease = item.yoy > 0;
                       const isDecrease = item.yoy < 0;
@@ -1856,17 +2168,22 @@ export default function LaporanPage() {
                     }
 
                     return (
-                      <div key={item.name} className="space-y-1.5">
-                        <div className="flex justify-between items-center text-sm">
-                          <div className="flex items-center gap-2">
-                            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }}></span>
-                            <span className="font-medium text-gray-700">{item.name}</span>
-                            {yoyBadge}
+                      <div key={item.name} className={`rounded-xl border p-3 ${i === 0 ? "border-emerald-200 bg-emerald-50/40" : "border-slate-100 bg-[#FCFCF9]"}`}>
+                        <div className="flex justify-between items-start gap-3 text-sm">
+                          <div className="flex min-w-0 items-start gap-2.5">
+                            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg border border-slate-200 bg-white text-[10px] font-bold text-slate-500">{i + 1}</span>
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold text-slate-800">{item.name}</p>
+                              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                <span className="text-[10px] text-slate-400">{pct}% kontribusi{item.count !== null ? ` · ${item.count} transaksi` : ""}</span>
+                                {yoyBadge}
+                              </div>
+                            </div>
                           </div>
-                          <span className="font-semibold text-gray-900">{formatMoney(item.currentVal)} <span className="text-gray-400 font-normal ml-1">({pct}%)</span></span>
+                          <span className="max-w-[44%] break-words text-right font-bold text-slate-900 tabular-nums">{formatMoney(item.currentVal)}</span>
                         </div>
-                        <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }}></div>
+                        <div className="mt-2.5 w-full h-1.5 bg-slate-100 rounded-full overflow-hidden" aria-label={`${pct} persen dari pengeluaran`}>
+                          <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
                         </div>
                       </div>
                     );
@@ -1880,22 +2197,22 @@ export default function LaporanPage() {
 
       {/* QUICK EDIT BUDGET MODAL */}
       {editBudgetModalOpen && (
-        <div className="modal-scrim" onClick={() => setEditBudgetModalOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="modal-dialog" onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '12px', width: '100%', maxWidth: '400px', overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+        <div className="modal-scrim p-4" onClick={() => setEditBudgetModalOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="budget-modal-title" onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '12px', width: '100%', maxWidth: '400px', overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
             <div className="modal-header" style={{ padding: '20px', borderBottom: '1px solid #eee' }}>
-              <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '18px', fontWeight: 600 }}>Alokasi Anggaran</h3>
+              <h3 id="budget-modal-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '18px', fontWeight: 600 }}>Alokasi Anggaran</h3>
             </div>
             <form onSubmit={handleSaveBudget}>
               <div className="form-grid" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ fontSize: '14px', color: '#475569' }}>{editingType === 'merchant' ? 'Merchant' : 'Kategori'}: <strong className="text-gray-900">{editingCatName}</strong></div>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Setel Anggaran Bulanan (Rp)</span>
-                  <input type="number" value={editingBudget === "0" ? "" : editingBudget} onChange={e => setEditingBudget(e.target.value)} placeholder="Contoh: 1500000" style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                  <input type="number" inputMode="numeric" value={editingBudget === "0" ? "" : editingBudget} onChange={e => setEditingBudget(e.target.value)} placeholder="Contoh: 1500000" className="focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600" style={{ padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
                 </label>
               </div>
               <div className="modal-actions" style={{ padding: '16px 20px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: '12px', background: '#f8fafc' }}>
-                <button type="button" disabled={isSavingBudget} className="px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50" onClick={() => setEditBudgetModalOpen(false)}>Batal</button>
-                <button type="submit" disabled={isSavingBudget} className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:opacity-50">{isSavingBudget ? "Menyimpan..." : "Simpan Anggaran"}</button>
+                <button type="button" disabled={isSavingBudget} className="min-h-11 px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50" onClick={() => setEditBudgetModalOpen(false)}>Batal</button>
+                <button type="submit" disabled={isSavingBudget} className="min-h-11 px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:opacity-50">{isSavingBudget ? "Menyimpan..." : "Simpan Anggaran"}</button>
               </div>
             </form>
           </div>
