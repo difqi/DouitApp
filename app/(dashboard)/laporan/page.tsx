@@ -1,17 +1,30 @@
 "use client";
 
 import {
+  ArrowLeft,
+  ArrowLeftRight,
+  ArrowRight,
   BarChart3,
   Bot,
+  Briefcase,
   Calendar,
+  Car,
   ChevronDown,
+  Coffee,
   Download,
   Edit3,
   FileText,
   Filter,
+  LayoutGrid,
   Layers,
   PieChart,
+  Receipt,
+  ShoppingBag,
+  Smartphone,
+  Store,
   Table,
+  Ticket,
+  TrendingDown,
   TrendingUp,
   Wallet
 } from "lucide-react";
@@ -39,6 +52,154 @@ const formatMoney = (value: number | string) =>
     maximumFractionDigits: 0,
   }).format(Number(value));
 
+const formatCompactMoney = (value: number | string) =>
+  new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(Number(value));
+
+type ReportDetailView =
+  | "monthly-breakdown"
+  | "annual-months"
+  | "annual-breakdown"
+  | "multi-year-recap"
+  | "multi-year-breakdown";
+
+const categoryIconClassName = "h-4 w-4";
+
+const getCategoryIcon = (categoryName?: string) => {
+  const normalized = (categoryName || "").trim().toLocaleLowerCase("id-ID");
+
+  if (["makanan", "minuman", "makanan & minuman"].includes(normalized)) return <Coffee className={categoryIconClassName} aria-hidden="true" />;
+  if (normalized === "transportasi") return <Car className={categoryIconClassName} aria-hidden="true" />;
+  if (normalized === "belanja") return <ShoppingBag className={categoryIconClassName} aria-hidden="true" />;
+  if (normalized === "barang digital") return <Smartphone className={categoryIconClassName} aria-hidden="true" />;
+  if (["tagihan", "biaya admin"].includes(normalized)) return <Receipt className={categoryIconClassName} aria-hidden="true" />;
+  if (["transfer", "gaji", "pindah saldo", "transfer antar rekening"].includes(normalized)) return <ArrowLeftRight className={categoryIconClassName} aria-hidden="true" />;
+  if (normalized === "jasa") return <Briefcase className={categoryIconClassName} aria-hidden="true" />;
+  if (normalized === "hiburan") return <Ticket className={categoryIconClassName} aria-hidden="true" />;
+  return <LayoutGrid className={categoryIconClassName} aria-hidden="true" />;
+};
+
+type ExplorerTransaction = {
+  merchant?: unknown;
+  amount?: unknown;
+  categories?: { name?: unknown } | null;
+};
+
+const getDominantMerchantCategories = (reportTransactions: ExplorerTransaction[]) => {
+  const merchantCategoryTotals: Record<string, Record<string, { name: string; amount: number }>> = {};
+
+  reportTransactions.forEach((transaction) => {
+    const merchantKey = String(transaction.merchant || "").trim().toLocaleLowerCase("id-ID");
+    const categoryName = String(transaction.categories?.name || "").trim();
+    const categoryKey = categoryName.toLocaleLowerCase("id-ID");
+    const amount = Math.abs(Number(transaction.amount));
+
+    if (!merchantKey || !categoryKey || !Number.isFinite(amount) || amount <= 0) return;
+    if (!merchantCategoryTotals[merchantKey]) merchantCategoryTotals[merchantKey] = {};
+    if (!merchantCategoryTotals[merchantKey][categoryKey]) {
+      merchantCategoryTotals[merchantKey][categoryKey] = { name: categoryName, amount: 0 };
+    }
+    merchantCategoryTotals[merchantKey][categoryKey].amount += amount;
+  });
+
+  return Object.fromEntries(
+    Object.entries(merchantCategoryTotals).flatMap(([merchantKey, totals]) => {
+      const ranked = Object.values(totals).sort((a, b) => b.amount - a.amount);
+      const hasReliableLeader = ranked[0] && (!ranked[1] || ranked[0].amount > ranked[1].amount);
+      return hasReliableLeader ? [[merchantKey, ranked[0].name]] : [];
+    })
+  ) as Record<string, string>;
+};
+
+function ExplorerMark({
+  categoryName,
+  merchantName,
+  dominantCategories,
+  rank,
+}: {
+  categoryName?: string;
+  merchantName?: string;
+  dominantCategories?: Record<string, string>;
+  rank: number;
+}) {
+  const dominantCategory = merchantName
+    ? dominantCategories?.[merchantName.trim().toLocaleLowerCase("id-ID")]
+    : categoryName;
+  const icon = merchantName && !dominantCategory
+    ? <Store className={categoryIconClassName} aria-hidden="true" />
+    : getCategoryIcon(dominantCategory);
+  const label = merchantName
+    ? dominantCategory
+      ? `Ranking ${rank}, kategori dominan ${dominantCategory}`
+      : `Ranking ${rank}, kategori dominan tidak tersedia`
+    : `Ranking ${rank}, kategori ${categoryName}`;
+
+  return (
+    <span
+      className={`relative grid h-8 w-8 shrink-0 place-items-center rounded-lg border ${merchantName && !dominantCategory ? "border-teal-100 bg-teal-50/80 text-teal-700" : "border-emerald-100 bg-emerald-50/80 text-emerald-700"}`}
+      aria-label={label}
+      title={merchantName ? (dominantCategory ? `Kategori dominan: ${dominantCategory}` : "Kategori dominan tidak tersedia") : categoryName}
+    >
+      {icon}
+      <span className="absolute -bottom-1 -right-1 rounded bg-white px-1 text-[8px] font-bold leading-3 text-slate-500 shadow-sm">#{rank}</span>
+    </span>
+  );
+}
+
+type CompactDonutSlice = {
+  item: { name: string };
+  color: string;
+  strokeDasharray: string;
+  strokeDashoffset: number;
+};
+
+function MobileDetailDonut({
+  slices,
+  total,
+  caption,
+}: {
+  slices: CompactDonutSlice[];
+  total: number;
+  caption: string;
+}) {
+  return (
+    <section className="overflow-hidden rounded-xl border border-emerald-100 bg-[#F6FAF6] p-3 sm:hidden" aria-label={`Komposisi kategori ${caption}`}>
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="relative h-32 w-32 shrink-0" aria-hidden="true">
+          <svg viewBox="0 0 200 200" className="h-full w-full -rotate-90">
+            {slices.map((slice) => (
+              <circle
+                key={slice.item.name}
+                cx="100"
+                cy="100"
+                r="80"
+                fill="transparent"
+                stroke={slice.color}
+                strokeWidth="32"
+                strokeDasharray={slice.strokeDasharray}
+                strokeDashoffset={slice.strokeDashoffset}
+              />
+            ))}
+          </svg>
+          <div className="pointer-events-none absolute inset-0 grid place-content-center px-5 text-center">
+            <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Total</span>
+            <span className="mt-0.5 truncate text-[11px] font-bold text-slate-900 tabular-nums">{formatCompactMoney(total)}</span>
+          </div>
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700">Komposisi kategori</p>
+          <p className="mt-1 text-sm font-bold leading-snug text-slate-900">{caption}</p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">Visual pendukung. Ranking dan nominal lengkap tetap menjadi acuan utama di bawah.</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 const getBudgetPresentation = (expense: number, budget: number) => {
   if (budget <= 0) {
     return {
@@ -64,10 +225,10 @@ const getBudgetPresentation = (expense: number, budget: number) => {
     detail,
     percentage,
     progressWidth: Math.min(percentage, 100),
-    textClass: isOver ? "text-rose-700" : isNear ? "text-amber-700" : "text-emerald-700",
-    barClass: isOver ? "bg-rose-500" : isNear ? "bg-amber-500" : "bg-emerald-600",
+    textClass: isOver ? "text-[#A94732]" : isNear ? "text-amber-700" : "text-emerald-700",
+    barClass: isOver ? "bg-[#D76852]" : isNear ? "bg-amber-500" : "bg-emerald-600",
     badgeClass: isOver
-      ? "bg-rose-50 text-rose-700 border-rose-200"
+      ? "border-[#F2C8BD] bg-[#FFF3EF] text-[#A94732]"
       : isNear
       ? "bg-amber-50 text-amber-800 border-amber-200"
       : "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -106,6 +267,8 @@ export default function LaporanPage() {
   const [isSavingBudget, setIsSavingBudget] = useState(false);
   const [hoveredSlice, setHoveredSlice] = useState<string | null>(null);
   const [myHoveredSlice, setMyHoveredSlice] = useState<string | null>(null);
+  const [detailView, setDetailView] = useState<ReportDetailView | null>(null);
+  const [monthDetailFilter, setMonthDetailFilter] = useState<"Aktif" | "Semua">("Aktif");
   
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -224,10 +387,11 @@ export default function LaporanPage() {
     .filter(stat => primaryMode === 'Net' ? true : getStatValue(stat) > 0)
     .sort((a, b) => getStatValue(b) - getStatValue(a));
   
-  const sortedMerchants = Object.values(merchantStats)
-    .filter(stat => stat.count >= 2 && (primaryMode === 'Net' ? true : getStatValue(stat) > 0))
-    .sort((a, b) => getStatValue(b) - getStatValue(a))
-    .slice(0, 10);
+  const allSortedMerchants = Object.values(merchantStats)
+    .filter(stat => primaryMode === 'Net' ? true : getStatValue(stat) > 0)
+    .sort((a, b) => getStatValue(b) - getStatValue(a));
+
+  const sortedMerchants = allSortedMerchants.filter(stat => stat.count >= 2).slice(0, 10);
 
   let totalBudgetedCount = 0;
   let overbudgetCount = 0;
@@ -247,6 +411,7 @@ export default function LaporanPage() {
 
   // Generate Conic Gradient for Pie Chart
   const activeList = breakdownMode === "Kategori" ? sortedCategories : sortedMerchants;
+  const fullActiveList = breakdownMode === "Kategori" ? sortedCategories : allSortedMerchants;
   const pieColors = primaryMode === 'Pemasukan'
     ? ["#16825d", "#2f9871", "#54aa88", "#78b99c", "#9bc8b0", "#3f7f70", "#6f9f8b"]
     : primaryMode === 'Pengeluaran'
@@ -305,11 +470,11 @@ export default function LaporanPage() {
   const maxAnnualExpense = Math.max(...annualStats.map(s => s.expense), 1);
   const annualChartMax = Math.max(maxAnnualIncome, maxAnnualExpense, 1);
   
-  const heatmapDataRaw = annualBreakdownMode === "Kategori" 
+  const heatmapDataRaw = annualBreakdownMode === "Kategori"
     ? Object.entries(annualCategoryStats)
-    : Object.entries(annualMerchantStats).filter(([name]) => annualMerchantCounts[name] >= 2);
+    : Object.entries(annualMerchantStats);
 
-  const heatmapData = heatmapDataRaw
+  const annualFullBreakdownData = heatmapDataRaw
     .map(([name, months]) => ({
       name,
       months,
@@ -317,15 +482,13 @@ export default function LaporanPage() {
       count: annualBreakdownMode === "Merchant" ? annualMerchantCounts[name] || 0 : null,
     }))
     .filter(row => row.total > 0)
-    .sort((a,b) => b.total - a.total)
+    .sort((a,b) => b.total - a.total);
+
+  const heatmapData = annualFullBreakdownData
+    .filter(row => annualBreakdownMode === "Kategori" || (row.count || 0) >= 2)
     .slice(0, annualBreakdownMode === "Merchant" ? 20 : undefined);
 
-  const heatmapMonthlyTotals = Array(12).fill(0);
-  heatmapData.forEach(row => {
-    row.months.forEach((val, i) => { heatmapMonthlyTotals[i] += val; });
-  });
-  const heatmapGrandTotal = heatmapMonthlyTotals.reduce((a,b) => a+b, 0);
-  const maxHeatmapValue = Math.max(...heatmapData.flatMap(r => r.months), 1);
+  const heatmapGrandTotal = heatmapData.reduce((sum, row) => sum + row.total, 0);
 
   // --- MULTI-YEAR CALCULATIONS ---
   const multiYearTx = transactions.filter(t => selectedAccount === "Semua" || isAccountMatch(selectedAccount, t.sumber_dana));
@@ -422,19 +585,19 @@ export default function LaporanPage() {
       });
 
   const macroChartTitle = isSingleYear 
-    ? `Tren Pertumbuhan Tabungan (${singleYear})`
-    : `Pertumbuhan Kekayaan Multi-Tahun (${activeYears[0]} - ${activeYears[activeYears.length - 1]})`;
+    ? `Tren Saldo Bersih (${singleYear})`
+    : `Perkembangan Saldo Bersih Multi-Tahun (${activeYears[0]} - ${activeYears[activeYears.length - 1]})`;
 
   const safeMultiYearSelected = activeYears.includes(multiYearSelectedYear) ? multiYearSelectedYear : activeYears[activeYears.length - 1];
   const selIdx = activeYears.indexOf(safeMultiYearSelected);
   const prevIdx = selIdx > 0 ? selIdx - 1 : -1;
   const prevYear = prevIdx !== -1 ? activeYears[prevIdx] : null;
 
-  const myBreakdownRaw = multiYearBreakdownMode === "Kategori" 
+  const myBreakdownRaw = multiYearBreakdownMode === "Kategori"
     ? Object.entries(multiYearCategoryStats)
-    : Object.entries(multiYearMerchantStats).filter(([name]) => multiYearMerchantCounts[name] >= 2);
+    : Object.entries(multiYearMerchantStats);
 
-  const myBreakdownData = myBreakdownRaw
+  const multiYearFullBreakdownData = myBreakdownRaw
     .map(([name, yearsData]) => {
       const currentVal = yearsData[selIdx] || 0;
       const prevVal = prevIdx !== -1 ? (yearsData[prevIdx] || 0) : null;
@@ -455,6 +618,9 @@ export default function LaporanPage() {
     .filter(row => row.currentVal > 0)
     .sort((a,b) => b.currentVal - a.currentVal);
 
+  const myBreakdownData = multiYearFullBreakdownData
+    .filter(row => multiYearBreakdownMode === "Kategori" || (row.count || 0) >= 2);
+
   const myBreakdownTotal = myBreakdownData.reduce((acc, row) => acc + row.currentVal, 0);
 
   let myCumValue = 0;
@@ -474,12 +640,6 @@ export default function LaporanPage() {
       percentage: myBreakdownTotal > 0 ? ((val / myBreakdownTotal) * 100).toFixed(1) : "0"
     };
   });
-
-  const formatCompact = (val: number) => {
-    if (val >= 1000000) return (val / 1000000).toFixed(1) + 'M';
-    if (val >= 1000) return Math.round(val / 1000) + 'k';
-    return val.toString();
-  };
 
   const annualDonutColors = ["#16825d", "#4f8f78", "#7aa58f", "#d78b27", "#c7a97c", "#7b8f86", "#ec6b56", "#4b7bec", "#7866d8", "#8a8175"];
   let annualCumulativeValue = 0;
@@ -923,10 +1083,18 @@ export default function LaporanPage() {
     : activeYears.length === 1
     ? `Tahun ${activeYears[0]}`
     : `${activeYears[0]}–${activeYears[activeYears.length - 1]}`;
+  const reportModeLabel = activeTab === "Makro" ? "Multi-Tahun" : activeTab;
   const reportIncome = activeTab === "Bulanan" ? totalIncome : activeTab === "Tahunan" ? annualTotalIncome : lifetimeIncome;
   const reportExpense = activeTab === "Bulanan" ? totalExpense : activeTab === "Tahunan" ? annualTotalExpense : lifetimeExpense;
   const reportNet = activeTab === "Bulanan" ? netSurplus : activeTab === "Tahunan" ? annualTotalNet : lifetimeNet;
   const hasReportData = activeTab === "Bulanan" ? filteredTx.length > 0 : activeTab === "Tahunan" ? annualTx.length > 0 : multiYearTx.length > 0;
+  const reportBalanceContext = !hasReportData
+    ? "Belum ada transaksi pada periode ini"
+    : reportNet < 0
+    ? "Pengeluaran lebih besar dari pemasukan"
+    : reportNet > 0
+    ? "Pemasukan lebih besar dari pengeluaran"
+    : "Pemasukan dan pengeluaran seimbang";
 
   const allocationStatus = totalBudgetedCount === 0
     ? "Belum diatur"
@@ -962,8 +1130,305 @@ export default function LaporanPage() {
     }
   }
 
+  const monthlyMerchantDominantCategories = getDominantMerchantCategories(filteredTx);
+  const annualMerchantDominantCategories = getDominantMerchantCategories(
+    annualTx.filter((transaction) => transaction.type === "EXPENSE" && !isInternalTransfer(transaction.categories?.name || ""))
+  );
+  const multiYearMerchantDominantCategories = getDominantMerchantCategories(
+    multiYearTx.filter((transaction) => {
+      const categoryName = transaction.categories?.name || "";
+      return transaction.type === "EXPENSE"
+        && new Date(transaction.transaction_date).getFullYear() === safeMultiYearSelected
+        && !isInternalTransfer(categoryName)
+        && transaction.is_internal_transfer !== true;
+    })
+  );
+
+  const detailChartSum = fullActiveList.reduce((sum, item) => sum + Math.abs(getStatValue(item)), 0);
+  const annualDetailGrandTotal = annualFullBreakdownData.reduce((sum, item) => sum + item.total, 0);
+  const multiYearDetailTotal = multiYearFullBreakdownData.reduce((sum, item) => sum + item.currentVal, 0);
+  const monthlyOverviewItems = activeList.slice(0, 6);
+  const annualOverviewItems = heatmapData.slice(0, 6);
+  const multiYearOverviewItems = myBreakdownData.slice(0, 6);
+  const annualMonthRows = annualStats.map((stat, index) => ({
+    ...stat,
+    name: monthNames[index],
+    margin: stat.income > 0 ? (stat.net / stat.income) * 100 : null,
+    isActive: stat.income > 0 || stat.expense > 0,
+  }));
+  const annualMonthPreview = annualMonthRows.filter((row) => row.isActive).reverse().slice(0, 3);
+  const annualMonthDetailRows = monthDetailFilter === "Aktif"
+    ? annualMonthRows.filter((row) => row.isActive)
+    : annualMonthRows;
+  const latestYearPreview = [...activeYears].reverse().slice(0, 3);
+  const budgetItems = [...fullActiveList]
+    .filter((item) => item.budget > 0)
+    .sort((a, b) => (b.expense / b.budget) - (a.expense / a.budget));
+  const budgetOverviewItems = budgetItems.slice(0, 6);
+  const currentBudgetStates = budgetItems
+    .map((item) => getBudgetPresentation(item.expense, item.budget));
+  const safeBudgetCount = currentBudgetStates.filter((state) => state.label === "Aman").length;
+  const nearBudgetCount = currentBudgetStates.filter((state) => state.label === "Mendekati batas").length;
+  const exceededBudgetCount = currentBudgetStates.filter((state) => state.label === "Melewati batas").length;
+  const latestComparisonYear = activeYears.length > 1 ? activeYears[activeYears.length - 1] : null;
+  const previousComparisonYear = activeYears.length > 1 ? activeYears[activeYears.length - 2] : null;
+  const multiYearYoYInsight = latestComparisonYear !== null && previousComparisonYear !== null && multiYearStats[previousComparisonYear].expense > 0
+    ? (() => {
+        const change = ((multiYearStats[latestComparisonYear].expense - multiYearStats[previousComparisonYear].expense) / multiYearStats[previousComparisonYear].expense) * 100;
+        const direction = change > 0 ? "naik" : change < 0 ? "turun" : "tetap";
+        return {
+          text: `Pengeluaran ${latestComparisonYear} ${direction}${change === 0 ? "" : ` ${Math.abs(change).toFixed(1)}%`} dibanding ${previousComparisonYear}.`,
+          isIncrease: change > 0,
+          isDecrease: change < 0,
+        };
+      })()
+    : null;
+
+  const openDetailView = (view: ReportDetailView) => {
+    setDetailView(view);
+    window.scrollTo({ top: 0 });
+  };
+
+  const closeDetailView = () => {
+    setDetailView(null);
+    window.scrollTo({ top: 0 });
+  };
+
+  const detailTitle = detailView === "monthly-breakdown"
+    ? primaryMode === "Net"
+      ? `Rincian anggaran ${breakdownMode.toLowerCase()}`
+      : `Seluruh ${breakdownMode.toLowerCase()}`
+    : detailView === "annual-months"
+    ? `Rincian bulanan ${selectedYear}`
+    : detailView === "annual-breakdown"
+    ? `Sebaran ${annualBreakdownMode.toLowerCase()} ${selectedYear}`
+    : detailView === "multi-year-recap"
+    ? "Rekap seluruh tahun"
+    : `Sebaran ${multiYearBreakdownMode.toLowerCase()} ${safeMultiYearSelected}`;
+
+  const detailDescription = detailView === "monthly-breakdown"
+    ? `Ranking lengkap ${breakdownMode.toLowerCase()}, kontribusi, frekuensi, dan detail anggaran pada ${reportPeriodLabel}.`
+    : detailView === "annual-months"
+    ? "Pemasukan, pengeluaran, net, dan margin setiap bulan tanpa horizontal scroll."
+    : detailView === "annual-breakdown"
+    ? `Kontribusi dan pola bulanan seluruh ${annualBreakdownMode.toLowerCase()} yang tersedia.`
+    : detailView === "multi-year-recap"
+    ? "Perbandingan pemasukan, pengeluaran, net, dan margin untuk seluruh tahun yang tersedia."
+    : `Ranking lengkap, kontribusi, dan perubahan dibanding tahun sebelumnya pada ${safeMultiYearSelected}.`;
+
+  const detailContent = detailView ? (
+    <div className="space-y-4 md:space-y-6">
+      <header className="flex flex-col gap-2.5 border-b border-slate-200 pb-4 sm:gap-3 md:flex-row md:items-end md:justify-between">
+        <div className="min-w-0">
+          <button type="button" onClick={closeDetailView} className="mb-1 inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2.5 text-xs font-semibold text-slate-700 transition-[background-color,border-color,color] hover:border-emerald-200 hover:bg-emerald-50/70 hover:text-emerald-900 sm:mb-2 sm:text-sm">
+            <ArrowLeft className="h-4 w-4 text-emerald-700" aria-hidden="true" /> Laporan
+          </button>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-700">Detail laporan</p>
+          <h1 className="mt-0.5 text-xl font-bold tracking-[-0.035em] text-slate-950 sm:text-2xl md:text-3xl">{detailTitle}</h1>
+          <p className="mt-1.5 hidden max-w-2xl text-sm leading-relaxed text-slate-500 sm:block">{detailDescription}</p>
+        </div>
+        <div className="flex min-h-9 items-center self-start rounded-lg border border-teal-100 bg-teal-50/60 px-3 text-[11px] font-semibold text-slate-600 md:min-h-10 md:self-auto md:text-xs">
+          {reportPeriodLabel} <span className="mx-1.5 text-slate-300">·</span> {selectedAccount === "Semua" ? "Semua rekening" : selectedAccount}
+        </div>
+      </header>
+
+      {detailView === "monthly-breakdown" && (
+        <>
+          <section className="rounded-2xl border border-slate-200 bg-white p-3.5 md:p-4" aria-label="Kontrol rincian bulanan">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 lg:w-[390px]" role="group" aria-label="Metric rincian transaksi">
+                {([
+                  ["Pengeluaran", totalExpense, TrendingDown],
+                  ["Pemasukan", totalIncome, TrendingUp],
+                  ["Net", netSurplus, Wallet],
+                ] as const).map(([mode, value, MetricIcon]) => (
+                  <button key={mode} type="button" aria-pressed={primaryMode === mode} onClick={() => setPrimaryMode(mode)} className={`flex min-h-12 cursor-pointer flex-col items-start justify-center rounded-lg border px-2 text-left transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:px-3 ${primaryMode === mode ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
+                    <span className="flex items-center gap-1 text-[10px] font-semibold"><MetricIcon className="h-3 w-3 shrink-0" aria-hidden="true" />{mode === "Net" ? "Saldo bersih" : mode}</span>
+                    <span className="mt-0.5 max-w-full truncate text-xs font-bold text-slate-900 tabular-nums">{formatCompactMoney(value)}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 lg:w-auto" role="group" aria-label="Kelompok rincian">
+                {(["Kategori", "Merchant"] as const).map((mode) => (
+                  <button key={mode} type="button" aria-pressed={breakdownMode === mode} onClick={() => setBreakdownMode(mode)} className={`min-h-11 cursor-pointer rounded-lg border px-4 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none ${breakdownMode === mode ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>{mode}</button>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          {breakdownMode === "Kategori" && primaryMode !== "Net" && chartSum > 0 && (
+            <MobileDetailDonut
+              slices={svgPaths}
+              total={chartSum}
+              caption={`${primaryMode} · ${reportPeriodLabel}`}
+            />
+          )}
+
+          {primaryMode === "Net" && (
+            <section className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Ringkasan kondisi anggaran">
+              {[
+                ["Dipantau", currentBudgetStates.length, "text-slate-900"],
+                ["Aman", safeBudgetCount, "text-emerald-700"],
+                ["Mendekati", nearBudgetCount, "text-amber-700"],
+                ["Melebihi", exceededBudgetCount, "text-rose-700"],
+              ].map(([label, value, color]) => (
+                <div key={String(label)} className="rounded-xl border border-slate-200 bg-[#FCFCF9] p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+                  <p className={`mt-1 text-xl font-bold tabular-nums ${color}`}>{value}</p>
+                </div>
+              ))}
+            </section>
+          )}
+
+          {fullActiveList.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-12 text-center">
+              <p className="text-sm font-semibold text-slate-700">Belum ada data untuk rincian ini</p>
+              <p className="mt-1 text-xs text-slate-500">Ubah metric, periode, atau rekening untuk melihat data lain.</p>
+            </div>
+          ) : primaryMode === "Net" ? (
+            <section className="grid gap-2.5 lg:grid-cols-2" aria-label={`Rincian anggaran ${breakdownMode.toLowerCase()}`}>
+              {fullActiveList.map((item, index) => {
+                const budgetState = getBudgetPresentation(item.expense, item.budget);
+                return (
+                  <article key={item.name} className="rounded-xl border border-slate-200 bg-white p-3.5 transition-[background-color,border-color] hover:border-emerald-200/80 hover:bg-emerald-50/20">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-start gap-2.5">
+                        <ExplorerMark categoryName={breakdownMode === "Kategori" ? item.name : undefined} merchantName={breakdownMode === "Merchant" ? item.name : undefined} dominantCategories={monthlyMerchantDominantCategories} rank={index + 1} />
+                        <div className="min-w-0"><h2 className="truncate text-sm font-bold text-slate-900">{item.name}</h2><p className="mt-0.5 text-[10px] text-slate-400">{item.count} transaksi</p></div>
+                      </div>
+                      <span className={`shrink-0 rounded-lg border px-2 py-1 text-[10px] font-bold ${budgetState.badgeClass}`}>{budgetState.label}</span>
+                    </div>
+                    <div className="mt-3 flex items-end justify-between gap-3">
+                      <p className="min-w-0 break-words text-xs font-bold text-slate-900 tabular-nums">{formatMoney(item.expense)} <span className="font-medium text-slate-400">/ {item.budget > 0 ? formatMoney(item.budget) : "Belum diatur"}</span></p>
+                      {item.budget > 0 && <span className={`shrink-0 text-xs font-bold tabular-nums ${budgetState.textClass}`}>{budgetState.percentage.toFixed(0)}%</span>}
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${budgetState.barClass}`} style={{ width: `${budgetState.progressWidth}%` }} /></div>
+                    <div className="mt-2 flex items-center justify-between gap-3"><p className={`text-[10px] font-semibold ${budgetState.textClass}`}>{budgetState.detail}</p><button type="button" onClick={() => openQuickEditBudget(item.name, breakdownMode === "Merchant")} className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-50 hover:text-emerald-900"><Edit3 className="h-3.5 w-3.5" /> {item.budget > 0 ? "Ubah" : "Atur"}</button></div>
+                  </article>
+                );
+              })}
+            </section>
+          ) : (
+            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white" aria-label={`Ranking ${breakdownMode.toLowerCase()}`}>
+              {fullActiveList.map((item, index) => {
+                const value = getStatValue(item);
+                const percentage = detailChartSum > 0 ? (Math.abs(value) / detailChartSum) * 100 : 0;
+                return (
+                  <article key={item.name} className="border-b border-slate-100 px-3.5 py-3 transition-colors last:border-0 hover:bg-emerald-50/30 md:px-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex min-w-0 items-start gap-3"><ExplorerMark categoryName={breakdownMode === "Kategori" ? item.name : undefined} merchantName={breakdownMode === "Merchant" ? item.name : undefined} dominantCategories={monthlyMerchantDominantCategories} rank={index + 1} /><div className="min-w-0"><h2 className="truncate text-sm font-bold text-slate-900">{item.name}</h2><p className="mt-0.5 text-[10px] text-slate-400">{percentage.toFixed(1)}% kontribusi · {item.count} transaksi</p></div></div>
+                      <p className="max-w-[45%] break-words text-right text-sm font-bold text-slate-900 tabular-nums">{formatMoney(value)}</p>
+                    </div>
+                    <div className="ml-10 mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(percentage, 100)}%` }} /></div>
+                  </article>
+                );
+              })}
+            </section>
+          )}
+        </>
+      )}
+
+      {detailView === "annual-months" && (
+        <>
+          <div className="grid w-full grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:w-64" role="group" aria-label="Cakupan bulan">
+            {(["Aktif", "Semua"] as const).map((mode) => <button key={mode} type="button" aria-pressed={monthDetailFilter === mode} onClick={() => setMonthDetailFilter(mode)} className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none ${monthDetailFilter === mode ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>{mode === "Aktif" ? "Bulan aktif" : "Semua bulan"}</button>)}
+          </div>
+          {annualMonthDetailRows.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-12 text-center text-sm text-slate-500">Belum ada bulan dengan aktivitas pada {selectedYear}.</div>
+          ) : (
+            <section className="grid gap-3 lg:grid-cols-2">
+              {annualMonthDetailRows.map((row) => (
+                <article key={row.name} className={`rounded-2xl border p-4 ${row.isActive ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50/70"}`}>
+                  <div className="border-b border-slate-100 pb-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700">Periode bulanan</p><h2 className="mt-0.5 text-lg font-bold text-slate-900">{row.name} {selectedYear}</h2></div>
+                  <dl className="mt-3 space-y-2.5">
+                    <div className="grid grid-cols-[1fr_auto] items-baseline gap-4"><dt className="text-xs text-slate-500">Pemasukan</dt><dd className="text-sm font-semibold text-emerald-700 tabular-nums">{formatMoney(row.income)}</dd></div>
+                    <div className="grid grid-cols-[1fr_auto] items-baseline gap-4"><dt className="text-xs text-slate-500">Pengeluaran</dt><dd className="text-sm font-semibold text-slate-800 tabular-nums">{formatMoney(row.expense)}</dd></div>
+                    <div className="grid grid-cols-[1fr_auto] items-baseline gap-4 border-t border-slate-100 pt-2.5"><dt className="text-xs font-semibold text-slate-700">Net</dt><dd className={`text-base font-bold tabular-nums ${row.net < 0 ? "text-rose-700" : "text-emerald-700"}`}>{row.net > 0 ? "+" : ""}{formatMoney(row.net)}</dd></div>
+                    <div className="grid grid-cols-[1fr_auto] items-baseline gap-4"><dt className="text-xs text-slate-500">Margin</dt><dd className={`text-xs font-bold tabular-nums ${row.margin === null ? "text-slate-400" : row.margin < 0 ? "text-rose-700" : "text-emerald-700"}`}>{row.margin === null ? "Belum tersedia" : `${row.margin.toFixed(1)}%`}</dd></div>
+                  </dl>
+                </article>
+              ))}
+            </section>
+          )}
+        </>
+      )}
+
+      {detailView === "annual-breakdown" && (
+        <>
+          <div className="grid w-full grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:w-64" role="group" aria-label="Kelompok sebaran tahunan">
+            {(["Kategori", "Merchant"] as const).map((mode) => <button key={mode} type="button" aria-pressed={annualBreakdownMode === mode} onClick={() => setAnnualBreakdownMode(mode)} className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none ${annualBreakdownMode === mode ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>{mode}</button>)}
+          </div>
+          {annualBreakdownMode === "Kategori" && heatmapGrandTotal > 0 && (
+            <MobileDetailDonut
+              slices={annualSvgPaths}
+              total={heatmapGrandTotal}
+              caption={`Pengeluaran · Tahun ${selectedYear}`}
+            />
+          )}
+          {annualFullBreakdownData.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-12 text-center text-sm text-slate-500">Belum ada pengeluaran untuk breakdown ini.</div>
+          ) : (
+            <section className="space-y-3">
+              {annualFullBreakdownData.map((row, index) => {
+                const percentage = annualDetailGrandTotal > 0 ? (row.total / annualDetailGrandTotal) * 100 : 0;
+                return (
+                  <article key={row.name} className="overflow-hidden rounded-2xl border border-slate-200 bg-white transition-[background-color,border-color] hover:border-emerald-200/80 hover:bg-emerald-50/20">
+                    <div className="flex items-start justify-between gap-4 p-3.5 md:p-4"><div className="flex min-w-0 gap-3"><ExplorerMark categoryName={annualBreakdownMode === "Kategori" ? row.name : undefined} merchantName={annualBreakdownMode === "Merchant" ? row.name : undefined} dominantCategories={annualMerchantDominantCategories} rank={index + 1} /><div className="min-w-0"><h2 className="truncate text-sm font-bold text-slate-900">{row.name}</h2><p className="mt-0.5 text-[10px] text-slate-400">{percentage.toFixed(1)}% kontribusi{row.count !== null ? ` · ${row.count} transaksi` : ""}</p></div></div><p className="max-w-[42%] break-words text-right text-sm font-bold text-slate-900 tabular-nums">{formatMoney(row.total)}</p></div>
+                    <div className="mx-3.5 h-1.5 overflow-hidden rounded-full bg-slate-100 md:mx-4"><div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(percentage, 100)}%` }} /></div>
+                    <div className="mt-3 grid grid-cols-3 gap-px border-t border-slate-100 bg-slate-100 sm:grid-cols-6 lg:grid-cols-12">{row.months.map((value, monthIndex) => <div key={monthNames[monthIndex]} className="bg-[#FCFCF9] p-2.5"><p className="text-[10px] text-slate-400">{monthNames[monthIndex].slice(0, 3)}</p><p className={`mt-1 break-words text-[11px] font-semibold tabular-nums ${value > 0 ? "text-slate-700" : "text-slate-300"}`}>{value > 0 ? formatMoney(value) : "—"}</p></div>)}</div>
+                  </article>
+                );
+              })}
+            </section>
+          )}
+        </>
+      )}
+
+      {detailView === "multi-year-recap" && (
+        <section className="grid gap-3 lg:grid-cols-2">
+          {[...activeYears].reverse().map((year) => {
+            const stat = multiYearStats[year];
+            const margin = stat.income > 0 ? (stat.net / stat.income) * 100 : null;
+            return (
+              <article key={year} className="rounded-2xl border border-slate-200 bg-white p-4"><div className="flex items-baseline justify-between gap-4 border-b border-slate-100 pb-3"><h2 className="text-xl font-bold text-slate-900">{year}</h2><p className={`text-base font-bold tabular-nums ${stat.net < 0 ? "text-rose-700" : "text-emerald-700"}`}>{stat.net > 0 ? "+" : ""}{formatMoney(stat.net)}</p></div><dl className="mt-3 space-y-2.5"><div className="grid grid-cols-[1fr_auto] gap-4"><dt className="text-xs text-slate-500">Pemasukan</dt><dd className="text-sm font-semibold text-emerald-700 tabular-nums">{formatMoney(stat.income)}</dd></div><div className="grid grid-cols-[1fr_auto] gap-4"><dt className="text-xs text-slate-500">Pengeluaran</dt><dd className="text-sm font-semibold text-slate-800 tabular-nums">{formatMoney(stat.expense)}</dd></div><div className="grid grid-cols-[1fr_auto] gap-4"><dt className="text-xs text-slate-500">Margin bersih</dt><dd className="text-xs font-bold text-slate-700 tabular-nums">{margin === null ? "Belum tersedia" : `${margin.toFixed(1)}%`}</dd></div></dl></article>
+            );
+          })}
+        </section>
+      )}
+
+      {detailView === "multi-year-breakdown" && (
+        <>
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-end sm:justify-between">
+            <div className="w-full sm:w-40"><CustomSelect value={String(safeMultiYearSelected)} onChange={(value) => setMultiYearSelectedYear(Number(value))} options={activeYears.map((year) => ({ value: String(year), label: `Tahun ${year}` }))} buttonClassName="min-h-11" /></div>
+            <div className="grid grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:w-64" role="group" aria-label="Kelompok sebaran multi-tahun">{(["Kategori", "Merchant"] as const).map((mode) => <button key={mode} type="button" aria-pressed={multiYearBreakdownMode === mode} onClick={() => setMultiYearBreakdownMode(mode)} className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none ${multiYearBreakdownMode === mode ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>{mode}</button>)}</div>
+          </div>
+          {multiYearBreakdownMode === "Kategori" && myBreakdownTotal > 0 && (
+            <MobileDetailDonut
+              slices={mySvgPaths}
+              total={myBreakdownTotal}
+              caption={`Pengeluaran · Tahun ${safeMultiYearSelected}`}
+            />
+          )}
+          {multiYearFullBreakdownData.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-12 text-center text-sm text-slate-500">Belum ada pengeluaran pada {safeMultiYearSelected}.</div>
+          ) : (
+            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              {multiYearFullBreakdownData.map((item, index) => {
+                const percentage = multiYearDetailTotal > 0 ? (item.currentVal / multiYearDetailTotal) * 100 : 0;
+                const comparison = item.prevVal === null ? "Tahun pertama" : item.prevVal === 0 && item.currentVal > 0 ? `Baru di ${safeMultiYearSelected}` : item.yoy !== null && Number.isFinite(item.yoy) ? `${item.yoy > 0 ? "+" : ""}${Math.round(item.yoy)}% vs ${prevYear}` : "Belum ada pembanding valid";
+                return <article key={item.name} className="border-b border-slate-100 p-3.5 transition-colors last:border-0 hover:bg-emerald-50/30 md:p-4"><div className="flex items-start justify-between gap-4"><div className="flex min-w-0 gap-3"><ExplorerMark categoryName={multiYearBreakdownMode === "Kategori" ? item.name : undefined} merchantName={multiYearBreakdownMode === "Merchant" ? item.name : undefined} dominantCategories={multiYearMerchantDominantCategories} rank={index + 1} /><div className="min-w-0"><h2 className="truncate text-sm font-bold text-slate-900">{item.name}</h2><p className="mt-0.5 text-[10px] text-slate-400">{percentage.toFixed(1)}% kontribusi{item.count !== null ? ` · ${item.count} transaksi` : ""}</p><p className="mt-1 text-[10px] font-semibold text-slate-600">{comparison}</p></div></div><p className="max-w-[42%] break-words text-right text-sm font-bold text-slate-900 tabular-nums">{formatMoney(item.currentVal)}</p></div><div className="ml-11 mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(percentage, 100)}%` }} /></div></article>;
+              })}
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  ) : null;
+
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 py-5 md:p-6 lg:p-8 space-y-5 md:space-y-6 overflow-x-hidden">
+    <div className="w-full max-w-7xl mx-auto px-4 py-5 md:p-6 lg:p-8 space-y-5 md:space-y-6 overflow-x-hidden [&_button]:focus-visible:outline-none [&_button]:focus-visible:ring-2 [&_button]:focus-visible:ring-emerald-500/40">
+      {detailView ? detailContent : (
+      <>
       
       {/* HEADER CONTROLS */}
       <div className="flex items-start justify-between gap-4">
@@ -1033,32 +1498,33 @@ export default function LaporanPage() {
         </div>
       </div>
 
+      <div className="flex flex-col gap-5">
       {/* TAB NAVIGATION */}
-      <div className="-mx-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="bg-slate-200/60 p-1 rounded-xl inline-flex min-w-max gap-1" role="tablist" aria-label="Mode laporan">
-          <button type="button" role="tab" aria-selected={activeTab === "Bulanan"} onClick={() => setActiveTab("Bulanan")} className={`min-h-11 sm:min-h-10 flex items-center gap-2 px-3.5 md:px-4 rounded-lg text-sm font-semibold transition-colors ${activeTab === "Bulanan" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
-            <PieChart className="w-4 h-4" /> Bulanan
+      <div className="order-2 flex justify-center sm:justify-start lg:order-1">
+        <div className="grid w-full grid-cols-3 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:inline-grid sm:w-auto" role="tablist" aria-label="Mode laporan">
+          <button type="button" role="tab" aria-selected={activeTab === "Bulanan"} onClick={() => setActiveTab("Bulanan")} className={`flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 sm:px-4 sm:text-sm ${activeTab === "Bulanan" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
+            <PieChart className="hidden h-4 w-4 sm:block" /> Bulanan
           </button>
-          <button type="button" role="tab" aria-selected={activeTab === "Tahunan"} onClick={() => setActiveTab("Tahunan")} className={`min-h-11 sm:min-h-10 flex items-center gap-2 px-3.5 md:px-4 rounded-lg text-sm font-semibold transition-colors ${activeTab === "Tahunan" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
-            <BarChart3 className="w-4 h-4" /> Tahunan
+          <button type="button" role="tab" aria-selected={activeTab === "Tahunan"} onClick={() => setActiveTab("Tahunan")} className={`flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 sm:px-4 sm:text-sm ${activeTab === "Tahunan" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
+            <BarChart3 className="hidden h-4 w-4 sm:block" /> Tahunan
           </button>
-          <button type="button" role="tab" aria-selected={activeTab === "Makro"} onClick={() => setActiveTab("Makro")} className={`min-h-11 sm:min-h-10 flex items-center gap-2 px-3.5 md:px-4 rounded-lg text-sm font-semibold transition-colors ${activeTab === "Makro" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
-            <Layers className="w-4 h-4" /> Multi-Tahun
+          <button type="button" role="tab" aria-selected={activeTab === "Makro"} onClick={() => setActiveTab("Makro")} className={`flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 sm:px-4 sm:text-sm ${activeTab === "Makro" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
+            <Layers className="hidden h-4 w-4 sm:block" /> Multi-Tahun
           </button>
         </div>
       </div>
 
       {/* PERIOD AND ACCOUNT FILTERS */}
-      <section className="rounded-2xl border border-slate-200/80 bg-white p-3.5 md:p-4 shadow-sm" aria-label="Filter laporan">
-        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
+      <section className="order-1 rounded-2xl border border-slate-200/80 bg-white shadow-sm lg:order-2" aria-label="Filter laporan">
+        <div className="hidden gap-6 p-3.5 lg:flex lg:items-center lg:justify-between">
+          <div className="flex min-w-[220px] items-center gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-teal-100 bg-teal-50/70 text-teal-700">
               <Calendar className="h-5 w-5" />
             </div>
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Periode aktif</p>
-              <p className="truncate text-sm font-bold text-slate-900">{reportPeriodLabel}</p>
-              <p className="truncate text-xs text-slate-500">{selectedAccount === "Semua" ? "Semua rekening" : selectedAccount}</p>
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Periode aktif</p>
+              <p className="truncate text-base font-bold leading-tight text-slate-900">{reportPeriodLabel}</p>
+              <p className="truncate text-xs leading-tight text-slate-500">{selectedAccount === "Semua" ? "Semua rekening" : selectedAccount}</p>
             </div>
           </div>
 
@@ -1096,51 +1562,109 @@ export default function LaporanPage() {
             />
           </div>
         </div>
+
+        <details className="group lg:hidden">
+          <summary className="flex min-h-[60px] cursor-pointer list-none items-center justify-between gap-2.5 p-2.5 [&::-webkit-details-marker]:hidden">
+            <span className="flex min-w-0 items-center gap-2.5">
+              <span className="hidden h-9 w-9 shrink-0 place-items-center rounded-lg border border-teal-100 bg-teal-50/70 text-teal-700 min-[380px]:grid">
+                <Calendar className="h-5 w-5" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{reportModeLabel}</span>
+                <span className="mt-0.5 block truncate text-sm font-bold text-slate-900">{reportPeriodLabel} <span className="font-medium text-slate-300">·</span> <span className="font-medium text-slate-500">{selectedAccount === "Semua" ? "Semua rekening" : selectedAccount}</span></span>
+              </span>
+            </span>
+            <span className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-emerald-800 shadow-sm transition-colors group-hover:border-emerald-200 group-hover:bg-emerald-50/60">
+              Filter
+              <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+            </span>
+          </summary>
+          <div className={`grid gap-2.5 border-t border-slate-100 bg-slate-50/60 p-3.5 ${activeTab === "Bulanan" ? "grid-cols-2" : activeTab === "Tahunan" ? "grid-cols-2" : "grid-cols-1"}`}>
+            {activeTab === "Bulanan" && (
+              <CustomSelect
+                label="Bulan"
+                value={String(selectedMonth)}
+                onChange={(val) => setSelectedMonth(Number(val))}
+                options={monthNames.map((m, i) => ({ value: String(i), label: m }))}
+                buttonClassName="min-h-11 px-3"
+              />
+            )}
+            {(activeTab === "Bulanan" || activeTab === "Tahunan") && (
+              <CustomSelect
+                label="Tahun"
+                value={String(selectedYear)}
+                onChange={(val) => setSelectedYear(Number(val))}
+                options={[2024, 2025, 2026, 2027].map((y) => ({ value: String(y), label: String(y) }))}
+                buttonClassName="min-h-11 px-3"
+              />
+            )}
+            <CustomSelect
+              label="Rekening"
+              value={selectedAccount}
+              onChange={setSelectedAccount}
+              options={[
+                { value: "Semua", label: "Semua Rekening" },
+                ...accounts.map(acc => ({ value: acc.name, label: acc.name }))
+              ]}
+              placeholder="Semua Rekening"
+              icon={<Filter className="h-4 w-4 shrink-0 text-emerald-700" />}
+              className={activeTab === "Bulanan" ? "col-span-2" : ""}
+              buttonClassName="min-h-11 px-3"
+            />
+          </div>
+        </details>
       </section>
+      </div>
 
       {/* SHARED FINANCIAL SUMMARY */}
       <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-2 md:p-3 shadow-sm" aria-labelledby="financial-summary-heading">
         <h2 id="financial-summary-heading" className="sr-only">Ringkasan finansial {reportPeriodLabel}</h2>
         <div className="grid lg:grid-cols-[1.05fr_1.45fr] gap-2.5 md:gap-3">
-          <div className="relative min-h-[150px] overflow-hidden rounded-xl bg-[#173128] p-5 text-white md:p-6">
+          <div className="relative min-h-[148px] overflow-hidden rounded-xl bg-[#173128] p-4 text-white md:min-h-[176px] md:p-6">
             <div className="absolute -bottom-20 -right-12 h-52 w-52 rounded-full bg-lime-300/10 blur-3xl" />
-            <div className="relative flex h-full flex-col justify-between gap-6">
+            <div className="relative flex h-full flex-col justify-between gap-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.11em] text-emerald-100/65">{activeTab === "Makro" ? "Akumulasi tabungan lifetime" : reportNet < 0 ? "Defisit periode ini" : "Surplus periode ini"}</p>
-                  <p className="mt-1 text-xs text-emerald-100/50">{reportPeriodLabel}</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-100/60">Kondisi periode</p>
+                  <p className="mt-1.5 text-sm font-bold text-white">{!hasReportData ? "Belum ada data" : activeTab === "Makro" ? "Akumulasi saldo bersih" : reportNet < 0 ? "Defisit" : reportNet > 0 ? "Surplus" : "Seimbang"}</p>
                 </div>
-                <Wallet className="h-5 w-5 text-lime-300" />
+                <span className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/5">
+                  <Wallet className="h-4.5 w-4.5 text-lime-300" />
+                </span>
               </div>
-              {isLoading ? (
-                <div className="h-9 w-44 animate-pulse rounded-lg bg-white/10" />
-              ) : (
-                <p className={`break-words text-[1.7rem] md:text-3xl font-bold tracking-[-0.045em] tabular-nums ${reportNet < 0 ? "text-rose-300" : "text-lime-300"}`}>
-                  {reportNet > 0 ? "+" : ""}{formatMoney(reportNet)}
-                </p>
-              )}
+              <div>
+                {isLoading ? (
+                  <div className="h-9 w-44 animate-pulse rounded-lg bg-white/10" />
+                ) : (
+                  <p className={`break-words text-[1.75rem] font-bold tracking-[-0.045em] tabular-nums md:text-3xl ${reportNet < 0 ? "text-[#F2C4B6]" : "text-lime-300"}`}>
+                    {reportNet > 0 ? "+" : ""}{formatMoney(reportNet)}
+                  </p>
+                )}
+                <p className="mt-2 text-xs font-semibold leading-relaxed text-emerald-50/80">{reportBalanceContext}</p>
+                <p className="mt-1 text-[11px] text-emerald-100/50">{reportPeriodLabel}</p>
+              </div>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-slate-200/80">
-            <div className="bg-white p-3.5 md:p-5">
+            <div className="bg-white p-3 md:p-5">
               <p className="text-[11px] md:text-xs font-semibold text-slate-500">Pemasukan</p>
               <p className="mt-1.5 break-words text-sm md:text-xl font-bold tracking-tight text-emerald-700 tabular-nums">{isLoading ? "—" : formatMoney(reportIncome)}</p>
               <p className="mt-1 text-[10px] md:text-xs text-slate-400">Total periode</p>
             </div>
-            <div className="bg-white p-3.5 md:p-5">
+            <div className="bg-white p-3 md:p-5">
               <p className="text-[11px] md:text-xs font-semibold text-slate-500">Pengeluaran</p>
               <p className="mt-1.5 break-words text-sm md:text-xl font-bold tracking-tight text-slate-900 tabular-nums">{isLoading ? "—" : formatMoney(reportExpense)}</p>
               <p className="mt-1 text-[10px] md:text-xs text-slate-400">Total periode</p>
             </div>
             {activeTab === "Bulanan" ? (
               <>
-                <div className="bg-white p-3.5 md:p-5">
+                <div className="bg-white p-3 md:p-5">
                   <p className="text-[11px] md:text-xs font-semibold text-slate-500">Status alokasi</p>
                   <p className={`mt-1.5 text-sm md:text-base font-bold ${overbudgetCount > 0 ? "text-rose-700" : totalBudgetedCount > 0 ? "text-emerald-700" : "text-slate-600"}`}>{isLoading ? "—" : allocationStatus}</p>
                   <p className="mt-1 text-[10px] md:text-xs text-slate-400">Kondisi anggaran</p>
                 </div>
-                <div className="bg-white p-3.5 md:p-5">
+                <div className="bg-white p-3 md:p-5">
                   <p className="text-[11px] md:text-xs font-semibold text-slate-500">Anggaran dipantau</p>
                   <p className="mt-1.5 text-sm md:text-xl font-bold text-slate-900 tabular-nums">{isLoading ? "—" : totalBudgetedCount}</p>
                   <p className="mt-1 text-[10px] md:text-xs text-slate-400">Kategori & merchant</p>
@@ -1148,12 +1672,12 @@ export default function LaporanPage() {
               </>
             ) : activeTab === "Tahunan" ? (
               <>
-                <div className="bg-white p-3.5 md:p-5">
+                <div className="bg-white p-3 md:p-5">
                   <p className="text-[11px] md:text-xs font-semibold text-slate-500">Bulan tercatat</p>
                   <p className="mt-1.5 text-sm md:text-xl font-bold text-slate-900 tabular-nums">{isLoading ? "—" : `${annualActiveMonths} bulan`}</p>
                   <p className="mt-1 text-[10px] md:text-xs text-slate-400">Memiliki transaksi</p>
                 </div>
-                <div className="bg-white p-3.5 md:p-5">
+                <div className="bg-white p-3 md:p-5">
                   <p className="text-[11px] md:text-xs font-semibold text-slate-500">Pengeluaran tertinggi</p>
                   <p className="mt-1.5 text-sm md:text-base font-bold text-slate-900">{annualPeakExpense.value > 0 ? monthNames[annualPeakExpense.index] : "—"}</p>
                   <p className="mt-1 text-[10px] md:text-xs text-slate-400">{annualPeakExpense.value > 0 ? formatMoney(annualPeakExpense.value) : "Belum ada data"}</p>
@@ -1161,13 +1685,13 @@ export default function LaporanPage() {
               </>
             ) : (
               <>
-                <div className="bg-white p-3.5 md:p-5">
+                <div className="bg-white p-3 md:p-5">
                   <p className="text-[11px] md:text-xs font-semibold text-slate-500">Rata-rata pengeluaran tahunan</p>
                   <p className="mt-1.5 break-words text-sm md:text-lg font-bold text-slate-900 tabular-nums">{isLoading ? "—" : formatMoney(avgAnnualExpense)}</p>
                   <p className="mt-1 text-[10px] md:text-xs text-slate-400">Sepanjang periode</p>
                 </div>
-                <div className="bg-white p-3.5 md:p-5">
-                  <p className="text-[11px] md:text-xs font-semibold text-slate-500">Tahun terhemat</p>
+                <div className="bg-white p-3 md:p-5">
+                  <p className="text-[11px] md:text-xs font-semibold text-slate-500">Margin bersih terbaik</p>
                   <p className="mt-1.5 text-sm md:text-xl font-bold text-slate-900">{isLoading || maxMargin === -Infinity ? "—" : bestYear}</p>
                   <p className="mt-1 text-[10px] md:text-xs text-slate-400">{maxMargin === -Infinity ? "Belum ada margin" : `${(maxMargin * 100).toFixed(1)}% margin`}</p>
                 </div>
@@ -1177,8 +1701,8 @@ export default function LaporanPage() {
         </div>
       </section>
 
-      <section className={`flex items-start gap-3 rounded-2xl border p-4 md:p-5 ${hasReportData && reportNet < 0 ? "border-rose-200 bg-rose-50/70" : "border-emerald-200/80 bg-[#F1F7F2]"}`} aria-labelledby="primary-insight-heading">
-        <div className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl ${hasReportData && reportNet < 0 ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-800"}`}>
+      <section className={`flex items-start gap-3 rounded-2xl border p-4 md:p-5 ${hasReportData && reportNet < 0 ? "border-amber-200/80 bg-[#FBF5EA]" : "border-emerald-200/80 bg-[#F1F7F2]"}`} aria-labelledby="primary-insight-heading">
+        <div className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl ${hasReportData && reportNet < 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
           <Bot className="h-4.5 w-4.5" />
         </div>
         <div className="min-w-0">
@@ -1193,29 +1717,38 @@ export default function LaporanPage() {
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 motion-reduce:animate-none">
           {/* Breakdown Section */}
           <div className="w-full">
-            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-4 md:p-6 w-full">
-              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end mb-6 gap-4">
-                <div className="w-full lg:w-auto">
-                  <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Rincian transaksi</h3>
-                  <p className="mt-1 text-xs md:text-sm text-slate-500">Lihat kontribusi, frekuensi, dan kondisi anggaran setiap kelompok.</p>
-                  <div className="mt-3 grid grid-cols-3 bg-slate-100 p-1 rounded-xl">
-                    <button type="button" onClick={() => setPrimaryMode("Pengeluaran")} className={`min-h-11 sm:min-h-9 px-2 md:px-3 text-xs font-semibold rounded-lg transition-colors ${primaryMode === "Pengeluaran" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>Pengeluaran</button>
-                    <button type="button" onClick={() => setPrimaryMode("Pemasukan")} className={`min-h-11 sm:min-h-9 px-2 md:px-3 text-xs font-semibold rounded-lg transition-colors ${primaryMode === "Pemasukan" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>Pemasukan</button>
-                    <button type="button" onClick={() => setPrimaryMode("Net")} className={`min-h-11 sm:min-h-9 px-2 md:px-3 text-xs font-semibold rounded-lg transition-colors ${primaryMode === "Net" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>Saldo Bersih</button>
+            <div className="border border-emerald-100/80 bg-[#F6FAF6] rounded-2xl shadow-sm p-4 md:p-6 w-full">
+              <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div className="w-full lg:max-w-xl">
+                  <h3 className="text-base font-bold tracking-tight text-gray-900 md:text-lg">Sebaran transaksi</h3>
+                  <p className="mt-1 text-xs text-slate-500 md:text-sm">Top {breakdownMode.toLowerCase()} berdasarkan metric aktif, dengan rincian lengkap melalui drill-down.</p>
+                  <div className="mt-3 grid grid-cols-3 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 lg:max-w-[390px]" role="group" aria-label="Metric sebaran transaksi">
+                    {([
+                      ["Pengeluaran", totalExpense, TrendingDown],
+                      ["Pemasukan", totalIncome, TrendingUp],
+                      ["Net", netSurplus, Wallet],
+                    ] as const).map(([mode, value, MetricIcon]) => (
+                      <button key={mode} type="button" aria-pressed={primaryMode === mode} onClick={() => setPrimaryMode(mode)} className={`flex min-h-12 cursor-pointer flex-col items-start justify-center rounded-lg border px-2 text-left transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:px-3 ${primaryMode === mode ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
+                        <span className="flex items-center gap-1 text-[10px] font-semibold"><MetricIcon className="h-3 w-3 shrink-0" aria-hidden="true" />{mode === "Net" ? "Saldo bersih" : mode}</span>
+                        <span className="mt-0.5 max-w-full truncate text-xs font-bold text-slate-900 tabular-nums">{formatCompactMoney(value)}</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <div className="grid w-full grid-cols-2 bg-slate-100 p-1 rounded-xl lg:w-auto">
+                <div className="grid w-full grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 lg:w-auto" role="group" aria-label="Kelompok breakdown">
                   <button 
                     type="button"
+                    aria-pressed={breakdownMode === "Kategori"}
                     onClick={() => setBreakdownMode("Kategori")}
-                    className={`min-h-11 sm:min-h-9 px-3 text-xs font-semibold rounded-lg transition-colors ${breakdownMode === "Kategori" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                    className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 ${breakdownMode === "Kategori" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}
                   >
                     Kategori
                   </button>
                   <button 
                     type="button"
+                    aria-pressed={breakdownMode === "Merchant"}
                     onClick={() => setBreakdownMode("Merchant")}
-                    className={`min-h-11 sm:min-h-9 px-3 text-xs font-semibold rounded-lg transition-colors ${breakdownMode === "Merchant" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                    className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 ${breakdownMode === "Merchant" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}
                   >
                     Merchant
                   </button>
@@ -1242,95 +1775,57 @@ export default function LaporanPage() {
                     ))}
                   </div>
                 </div>
-              ) : chartSum === 0 ? (
+              ) : chartSum === 0 && primaryMode !== 'Net' ? (
                 <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-10 text-center">
                   <PieChart className="mx-auto h-7 w-7 text-slate-300" />
                   <p className="mt-3 text-sm font-semibold text-slate-700">Belum ada data untuk ditampilkan</p>
                   <p className="mt-1 text-xs text-slate-500">Tidak ada transaksi pada periode dan mode yang dipilih.</p>
                 </div>
               ) : primaryMode === 'Net' ? (
-                <>
-                  <div className="hidden lg:block overflow-x-auto w-full">
-                    <table className="w-full min-w-[980px] text-left border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50/70 text-xs text-slate-500">
-                          <th className="py-3 px-3 font-semibold">Kategori / Merchant</th>
-                          <th className="py-3 px-3 font-semibold text-emerald-700">Masuk (+)</th>
-                          <th className="py-3 px-3 font-semibold text-rose-700">Keluar (-)</th>
-                          <th className="py-3 px-3 font-semibold text-slate-700">Net total (=)</th>
-                          <th className="py-3 px-3 font-semibold">Alokasi anggaran</th>
-                          <th className="py-3 px-3 font-semibold">Kondisi pemakaian</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {activeList.map(item => {
-                          const budgetState = getBudgetPresentation(item.expense, item.budget);
-                          return (
-                            <tr key={item.name} className="border-b border-slate-100 hover:bg-slate-50/70 transition-colors">
-                              <td className="py-3.5 px-3">
-                                <p className="text-sm font-semibold text-slate-900">{item.name}</p>
-                                <p className="mt-0.5 text-[11px] text-slate-400">{item.count} transaksi</p>
-                              </td>
-                              <td className="py-3.5 px-3 text-sm font-medium text-emerald-700 tabular-nums">{formatMoney(item.income)}</td>
-                              <td className="py-3.5 px-3 text-sm font-medium text-rose-700 tabular-nums">{formatMoney(item.expense)}</td>
-                              <td className={`py-3.5 px-3 text-sm font-bold tabular-nums ${item.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatMoney(item.net)}</td>
-                              <td className="py-3.5 px-3">
-                                <button type="button" onClick={() => openQuickEditBudget(item.name, breakdownMode === "Merchant")} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:border-emerald-300 hover:bg-emerald-50 transition-colors" title="Edit alokasi anggaran">
-                                  {item.budget > 0 ? formatMoney(item.budget) : "Atur anggaran"}
-                                  <Edit3 className="h-3.5 w-3.5 text-slate-400" />
-                                </button>
-                              </td>
-                              <td className="py-3.5 px-3 min-w-[185px]">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className={`text-xs font-bold ${budgetState.textClass}`}>{budgetState.label}</span>
-                                  {item.budget > 0 && <span className="text-[11px] font-semibold text-slate-500 tabular-nums">{budgetState.percentage.toFixed(0)}%</span>}
-                                </div>
-                                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100" aria-label={`${budgetState.percentage.toFixed(0)} persen anggaran terpakai`}>
-                                  <div className={`h-full rounded-full ${budgetState.barClass}`} style={{ width: `${budgetState.progressWidth}%` }} />
-                                </div>
-                                <p className="mt-1 text-[10px] text-slate-500">{budgetState.detail}</p>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Ringkasan kondisi anggaran">
+                    {[
+                      ["Dipantau", currentBudgetStates.length, "text-slate-900"],
+                      ["Aman", safeBudgetCount, "text-emerald-700"],
+                      ["Mendekati", nearBudgetCount, "text-amber-700"],
+                      ["Melebihi", exceededBudgetCount, "text-rose-700"],
+                    ].map(([label, value, color]) => (
+                      <div key={String(label)} className="rounded-xl border border-slate-200 bg-[#FCFCF9] p-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+                        <p className={`mt-1 text-lg font-bold tabular-nums ${color}`}>{value}</p>
+                      </div>
+                    ))}
                   </div>
-
-                  <div className="space-y-3 lg:hidden">
-                    {activeList.map((item, index) => {
+                  {budgetOverviewItems.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-8 text-center">
+                      <p className="text-sm font-semibold text-slate-700">Belum ada anggaran yang dipantau</p>
+                      <p className="mt-1 text-xs text-slate-500">Buka rincian untuk mengatur anggaran kategori atau merchant.</p>
+                    </div>
+                  ) : (
+                  <div className="grid gap-2.5 lg:grid-cols-2">
+                    {budgetOverviewItems.map((item, index) => {
                       const budgetState = getBudgetPresentation(item.expense, item.budget);
                       return (
-                        <article key={item.name} className="rounded-xl border border-slate-200 bg-[#FCFCF9] p-3.5">
+                        <article key={item.name} className="rounded-xl border border-slate-200 bg-white p-3 transition-[background-color,border-color] hover:border-emerald-200/80 hover:bg-emerald-50/30">
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">#{index + 1} · {item.count} transaksi</p>
-                              <h4 className="mt-1 truncate text-sm font-bold text-slate-900">{item.name}</h4>
+                            <div className="flex min-w-0 items-start gap-2.5">
+                              <ExplorerMark categoryName={breakdownMode === "Kategori" ? item.name : undefined} merchantName={breakdownMode === "Merchant" ? item.name : undefined} dominantCategories={monthlyMerchantDominantCategories} rank={index + 1} />
+                              <div className="min-w-0"><h4 className="truncate text-sm font-bold text-slate-900">{item.name}</h4><p className="mt-0.5 text-[10px] text-slate-400">{item.count} transaksi</p></div>
                             </div>
-                            <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold ${budgetState.badgeClass}`}>{budgetState.label}</span>
+                            <span className={`shrink-0 rounded-lg border px-2 py-1 text-[10px] font-bold ${budgetState.badgeClass}`}>{budgetState.label}</span>
                           </div>
-                          <dl className="mt-3 grid grid-cols-3 gap-2 border-y border-slate-100 py-3">
-                            <div><dt className="text-[10px] text-slate-400">Masuk</dt><dd className="mt-1 break-words text-xs font-bold text-emerald-700 tabular-nums">{formatMoney(item.income)}</dd></div>
-                            <div><dt className="text-[10px] text-slate-400">Keluar</dt><dd className="mt-1 break-words text-xs font-bold text-rose-700 tabular-nums">{formatMoney(item.expense)}</dd></div>
-                            <div><dt className="text-[10px] text-slate-400">Net</dt><dd className={`mt-1 break-words text-xs font-bold tabular-nums ${item.net >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{formatMoney(item.net)}</dd></div>
-                          </dl>
-                          <div className="mt-3">
-                            <div className="flex items-center justify-between gap-3 text-xs">
-                              <span className={`font-semibold ${budgetState.textClass}`}>{budgetState.detail}</span>
-                              {item.budget > 0 && <span className="font-bold text-slate-600 tabular-nums">{budgetState.percentage.toFixed(0)}%</span>}
-                            </div>
-                            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
-                              <div className={`h-full rounded-full ${budgetState.barClass}`} style={{ width: `${budgetState.progressWidth}%` }} />
-                            </div>
-                            <button type="button" onClick={() => openQuickEditBudget(item.name, breakdownMode === "Merchant")} className="mt-2.5 inline-flex min-h-11 items-center gap-1.5 rounded-lg text-xs font-semibold text-emerald-700">
-                              <Edit3 className="h-3.5 w-3.5" /> {item.budget > 0 ? `Anggaran ${formatMoney(item.budget)}` : "Atur anggaran"}
-                            </button>
-                          </div>
+                          <div className="mt-3 flex items-end justify-between gap-3"><p className="min-w-0 break-words text-xs font-bold text-slate-900 tabular-nums">{formatMoney(item.expense)} <span className="font-medium text-slate-400">/ {item.budget > 0 ? formatMoney(item.budget) : "Belum diatur"}</span></p>{item.budget > 0 && <span className={`shrink-0 text-xs font-bold ${budgetState.textClass}`}>{budgetState.percentage.toFixed(0)}%</span>}</div>
+                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${budgetState.barClass}`} style={{ width: `${budgetState.progressWidth}%` }} /></div>
+                          <p className={`mt-1.5 text-[10px] font-semibold ${budgetState.textClass}`}>{budgetState.detail}</p>
                         </article>
                       );
                     })}
                   </div>
-                </>
+                  )}
+                  <button type="button" onClick={() => openDetailView("monthly-breakdown")} className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-50/70 hover:text-emerald-950">
+                    Lihat rincian anggaran <ArrowRight className="h-4 w-4" />
+                  </button>
+                </div>
               ) : (
                 <div className="flex flex-col sm:flex-row gap-5 md:gap-8 items-start w-full">
                   {/* Left Column */}
@@ -1399,16 +1894,16 @@ export default function LaporanPage() {
                         Belum ada transaksi berulang (minimal 2x) pada bulan ini.
                       </div>
                     ) : (
-                      activeList.map((item, i) => {
+                      monthlyOverviewItems.map((item, i) => {
                         const val = getStatValue(item);
                         const pct = chartSum > 0 ? ((Math.abs(val) / chartSum) * 100).toFixed(1) : "0";
                         const color = pieColors[i % pieColors.length];
 
                         return (
-                          <div key={item.name} className={`rounded-xl border p-3 ${i === 0 ? "border-emerald-200 bg-emerald-50/40" : "border-slate-100 bg-[#FCFCF9]"}`}>
+                          <div key={item.name} className={`rounded-xl border p-3 transition-[background-color,border-color] ${i === 0 ? "border-emerald-200 bg-emerald-50/55" : "border-slate-100 bg-[#FCFCF9] hover:border-emerald-200/70 hover:bg-white"}`}>
                             <div className="flex items-start justify-between gap-3 text-sm">
                               <div className="flex min-w-0 items-start gap-2.5">
-                                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-500">{i + 1}</span>
+                                <ExplorerMark categoryName={breakdownMode === "Kategori" ? item.name : undefined} merchantName={breakdownMode === "Merchant" ? item.name : undefined} dominantCategories={monthlyMerchantDominantCategories} rank={i + 1} />
                                 <div className="min-w-0">
                                   <p className="truncate font-semibold text-slate-800">{item.name}</p>
                                   <p className="mt-0.5 text-[10px] text-slate-400">{item.count} transaksi · {pct}% kontribusi</p>
@@ -1423,6 +1918,9 @@ export default function LaporanPage() {
                         );
                       })
                     )}
+                    <button type="button" onClick={() => openDetailView("monthly-breakdown")} className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-50/70 hover:text-emerald-950">
+                      Lihat semua {breakdownMode.toLowerCase()} <ArrowRight className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
               )}
@@ -1430,7 +1928,7 @@ export default function LaporanPage() {
           </div>
 
           {/* Rekap Sisa Uang Per Rekening Table */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden">
+          <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-[#FCFCF9]">
             <div className="p-4 md:p-5 border-b border-slate-200/60">
               <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Rekap kas & saldo rekening</h3>
               <p className="mt-1 text-xs md:text-sm text-slate-500">Pergerakan saldo awal, uang masuk, uang keluar, dan saldo akhir.</p>
@@ -1537,7 +2035,7 @@ export default function LaporanPage() {
             <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Arus kas bulanan {selectedYear}</h3>
-                <p className="mt-1 text-xs md:text-sm text-slate-500">Bandingkan pemasukan, pengeluaran, dan pendapatan bersih setiap bulan.</p>
+                <p className="mt-1 text-xs md:text-sm text-slate-500">Bandingkan pemasukan, pengeluaran, dan saldo bersih setiap bulan.</p>
               </div>
               <div className="flex items-center gap-4 text-xs text-slate-500">
                 <span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-sm bg-emerald-500" /> Pemasukan</span>
@@ -1553,208 +2051,87 @@ export default function LaporanPage() {
                 <p className="mt-1 text-xs text-slate-500">Chart akan muncul setelah ada transaksi pada {selectedYear}.</p>
               </div>
             ) : (
-            <div className="h-56 md:h-64 flex items-end justify-between gap-1 md:gap-2 border-b border-slate-200 pb-2 px-0 md:px-2" aria-label={`Chart pemasukan dan pengeluaran bulanan ${selectedYear}`}>
+            <div className="flex h-52 items-end justify-between gap-0 border-b border-slate-200 px-0 pb-2 sm:h-56 sm:gap-1 md:h-64 md:gap-2 md:px-2" aria-label={`Chart pemasukan dan pengeluaran bulanan ${selectedYear}`}>
               {["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"].map((month, i) => {
                 const stat = annualStats[i];
                 const inHeight = annualChartMax > 0 ? (stat.income / annualChartMax) * 100 : 0; 
                 const outHeight = annualChartMax > 0 ? (stat.expense / annualChartMax) * 100 : 0;
                 return (
-                  <div key={month} className="flex flex-col items-center gap-1 group flex-1">
-                    <div className="w-full max-w-[24px] flex gap-0.5 items-end h-48 relative">
+                  <div key={month} tabIndex={0} aria-label={`${month} ${selectedYear}, pemasukan ${formatMoney(stat.income)}, pengeluaran ${formatMoney(stat.expense)}, net ${formatMoney(stat.net)}`} className="group flex flex-1 flex-col items-center gap-1 rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40">
+                    <div className="relative flex h-44 w-full max-w-[24px] items-end gap-0.5 sm:h-48">
                       {isLoading ? (
                         <div className="w-full bg-slate-200/70 rounded-t-sm animate-pulse" style={{ height: `${20 + ((i * 17) % 60)}%` }} />
                       ) : (
                         <>
-                          <div className="w-1/2 bg-emerald-400 rounded-t-sm transition-all hover:bg-emerald-500 relative" style={{ height: `${inHeight}%` }}>
-                            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 text-[10px] bg-gray-800 text-white px-2 py-1 rounded pointer-events-none whitespace-nowrap z-10 transition-opacity">
-                              Masuk: {formatMoney(stat.income)}
-                            </div>
+                          <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-lg bg-gray-800 px-2.5 py-2 text-[10px] leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-focus:block group-focus:opacity-100 group-hover:block group-hover:opacity-100">
+                            <span className="block">Masuk: {formatMoney(stat.income)}</span>
+                            <span className="block">Keluar: {formatMoney(stat.expense)}</span>
                           </div>
-                          <div className="w-1/2 bg-rose-400 rounded-t-sm transition-all hover:bg-rose-500 relative" style={{ height: `${outHeight}%` }}>
-                            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 text-[10px] bg-gray-800 text-white px-2 py-1 rounded pointer-events-none whitespace-nowrap z-10 transition-opacity">
-                              Keluar: {formatMoney(stat.expense)}
-                            </div>
-                          </div>
+                          <div className="relative w-1/2 rounded-t-sm bg-emerald-400 transition-all hover:bg-emerald-500" style={{ height: `${inHeight}%` }} />
+                          <div className="relative w-1/2 rounded-t-sm bg-rose-400 transition-all hover:bg-rose-500" style={{ height: `${outHeight}%` }} />
                         </>
                       )}
                     </div>
-                    <span className="text-xs text-gray-500 font-medium">{month}</span>
+                    <span className={`text-[10px] font-medium text-gray-500 sm:text-xs ${i % 2 === 1 ? "hidden sm:inline" : "inline"}`}>{month}</span>
                   </div>
                 )
               })}
             </div>
             )}
             
-            <div className="mt-8 hidden md:block overflow-x-auto">
-              <table className="w-full text-sm text-left">
-                <thead className="text-xs uppercase bg-gray-50 text-gray-500 border-b">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">Bulan</th>
-                    <th className="px-4 py-3 font-medium text-right text-emerald-600">Pemasukan</th>
-                    <th className="px-4 py-3 font-medium text-right text-rose-600">Pengeluaran</th>
-                    <th className="px-4 py-3 font-medium text-right">Pendapatan Bersih</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {isLoading ? (
-                    [0, 1, 2, 3, 4, 5].map((i) => (
-                      <tr key={i} className="animate-pulse">
-                        <td className="px-4 py-3"><div className="h-4 w-20 bg-slate-200 rounded" /></td>
-                        <td className="px-4 py-3 text-right"><div className="h-4 w-24 bg-slate-200 rounded ml-auto" /></td>
-                        <td className="px-4 py-3 text-right"><div className="h-4 w-24 bg-slate-200 rounded ml-auto" /></td>
-                        <td className="px-4 py-3 text-right"><div className="h-4 w-24 bg-slate-200 rounded ml-auto" /></td>
-                      </tr>
-                    ))
-                  ) : (
-                    ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map((month, i) => {
-                      const stat = annualStats[i];
-                      return (
-                        <tr key={month} className="hover:bg-gray-50/50">
-                          <td className="px-4 py-3 font-medium text-gray-900">{month}</td>
-                          <td className="px-4 py-3 text-right">{formatMoney(stat.income)}</td>
-                          <td className="px-4 py-3 text-right">{formatMoney(stat.expense)}</td>
-                          <td className={`px-4 py-3 text-right font-semibold ${stat.net < 0 ? 'text-rose-600' : 'text-gray-900'}`}>{formatMoney(stat.net)}</td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+            <div className="mt-6 border-t border-slate-100 pt-5">
+              <div><h4 className="text-sm font-bold text-slate-900">Bulan terbaru</h4><p className="mt-0.5 text-xs text-slate-500">Preview bulan yang memiliki aktivitas.</p></div>
+              {isLoading ? (
+                <div className="mt-3 grid gap-2.5 md:grid-cols-3">{[1, 2, 3].map((item) => <div key={item} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div>
+              ) : annualMonthPreview.length === 0 ? (
+                <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-5 text-center text-sm text-slate-500">Belum ada bulan dengan aktivitas.</div>
+              ) : (
+                <div className="mt-3 grid gap-2.5 md:grid-cols-3">
+                  {annualMonthPreview.map((row) => (
+                    <article key={row.name} className="rounded-xl border border-slate-200 bg-[#FCFCF9] p-3">
+                      <div className="flex items-baseline justify-between gap-3"><h5 className="text-sm font-bold text-slate-900">{row.name}</h5><span className="text-[10px] font-semibold text-slate-400">{selectedYear}</span></div>
+                      <dl className="mt-2 space-y-1.5"><div className="grid grid-cols-[1fr_auto] gap-3"><dt className="text-[10px] text-slate-500">Masuk</dt><dd className="text-xs font-semibold text-emerald-700 tabular-nums">{formatCompactMoney(row.income)}</dd></div><div className="grid grid-cols-[1fr_auto] gap-3"><dt className="text-[10px] text-slate-500">Keluar</dt><dd className="text-xs font-semibold text-slate-700 tabular-nums">{formatCompactMoney(row.expense)}</dd></div><div className="grid grid-cols-[1fr_auto] gap-3 border-t border-slate-100 pt-1.5"><dt className="text-[10px] font-semibold text-slate-600">Net</dt><dd className={`text-xs font-bold tabular-nums ${row.net < 0 ? "text-rose-700" : "text-emerald-700"}`}>{row.net > 0 ? "+" : ""}{formatCompactMoney(row.net)}</dd></div></dl>
+                    </article>
+                  ))}
+                </div>
+              )}
+              <button type="button" onClick={() => openDetailView("annual-months")} className="mt-3 inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-50/70 hover:text-emerald-950">Lihat seluruh rincian <ArrowRight className="h-4 w-4" /></button>
             </div>
-            <details className="group mt-5 md:hidden">
-              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3.5 text-sm font-semibold text-emerald-800 [&::-webkit-details-marker]:hidden">
-                Rincian angka per bulan
-                <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
-              </summary>
-              <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white px-3">
-                {annualStats.map((stat, index) => (
-                  <div key={monthNames[index]} className="py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-bold text-slate-900">{monthNames[index]}</p>
-                      <p className={`text-xs font-bold tabular-nums ${stat.net < 0 ? "text-rose-700" : "text-emerald-700"}`}>{stat.net > 0 ? "+" : ""}{formatMoney(stat.net)}</p>
-                    </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                      <p className="text-slate-500">Masuk <strong className="block mt-0.5 break-words text-emerald-700 tabular-nums">{formatMoney(stat.income)}</strong></p>
-                      <p className="text-slate-500">Keluar <strong className="block mt-0.5 break-words text-rose-700 tabular-nums">{formatMoney(stat.expense)}</strong></p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </details>
           </div>
 
           {/* Heatmap Matrix & Pie Chart */}
           <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(220px,1fr)]">
-            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-4 md:p-6 min-w-0">
+            <div className="min-w-0 rounded-2xl border border-emerald-100/80 bg-[#F6FAF6] p-4 shadow-sm md:p-6">
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end mb-6 gap-4">
                 <div>
                   <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Sebaran pengeluaran tahunan</h3>
                   <p className="mt-1 text-xs md:text-sm text-slate-500">Kontribusi tiap kelompok dan pola pengeluaran dari bulan ke bulan.</p>
                 </div>
-                <div className="grid w-full grid-cols-2 bg-slate-100 p-1 rounded-xl sm:w-auto">
-                  <button type="button" onClick={() => setAnnualBreakdownMode("Kategori")} className={`min-h-11 sm:min-h-9 px-3 text-xs font-semibold rounded-lg transition-colors ${annualBreakdownMode === "Kategori" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>Kategori</button>
-                  <button type="button" onClick={() => setAnnualBreakdownMode("Merchant")} className={`min-h-11 sm:min-h-9 px-3 text-xs font-semibold rounded-lg transition-colors ${annualBreakdownMode === "Merchant" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>Merchant</button>
+                <div className="grid w-full grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:w-auto" role="group" aria-label="Kelompok sebaran tahunan">
+                  <button type="button" aria-pressed={annualBreakdownMode === "Kategori"} onClick={() => setAnnualBreakdownMode("Kategori")} className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 ${annualBreakdownMode === "Kategori" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>Kategori</button>
+                  <button type="button" aria-pressed={annualBreakdownMode === "Merchant"} onClick={() => setAnnualBreakdownMode("Merchant")} className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 ${annualBreakdownMode === "Merchant" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>Merchant</button>
                 </div>
               </div>
-              
-              <div className="hidden lg:block w-full overflow-x-auto">
-                <table className="w-full text-xs text-left min-w-[900px] border-collapse">
-                  <thead>
-                    <tr>
-                      <th className="p-2 border-b font-medium text-gray-500 w-32 sticky left-0 bg-white z-10">Kategori / Merchant</th>
-                      {["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"].map(m => (
-                        <th key={m} className="p-2 border-b font-medium text-gray-500 text-center w-16">{m}</th>
-                      ))}
-                      <th className="p-2 border-b font-semibold text-gray-700 text-right w-24 bg-gray-50">Jumlah</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {isLoading ? (
-                      [1, 2, 3, 4].map(i => (
-                        <tr key={i} className="animate-pulse">
-                          <td className="p-2 border-b"><div className="h-4 w-24 bg-slate-200 rounded" /></td>
-                          {Array(12).fill(0).map((_, idx) => (
-                            <td key={idx} className="p-2 border-b text-center"><div className="h-3 w-6 bg-slate-100 rounded mx-auto" /></td>
-                          ))}
-                          <td className="p-2 border-b text-right"><div className="h-4 w-16 bg-slate-200 rounded ml-auto" /></td>
-                        </tr>
-                      ))
-                    ) : heatmapData.length === 0 ? (
-                      <tr><td colSpan={14} className="py-8 text-center text-gray-400">Belum ada pengeluaran di tahun ini.</td></tr>
-                    ) : (
-                      heatmapData.map((row) => (
-                        <tr key={row.name}>
-                          <td className="p-2 border-b font-medium text-gray-800 sticky left-0 bg-white z-10 border-r border-gray-100">
-                            <span className="block">{row.name}</span>
-                            {row.count !== null && <span className="mt-0.5 block text-[9px] font-normal text-slate-400">{row.count} transaksi</span>}
-                          </td>
-                          {row.months.map((val, i) => {
-                            const ratio = maxHeatmapValue > 0 ? val / maxHeatmapValue : 0;
-                            let bgClass = 'bg-transparent text-gray-400';
-                            if (ratio > 0.6) bgClass = 'bg-rose-200 font-semibold text-rose-900';
-                            else if (ratio > 0.3) bgClass = 'bg-rose-100 font-medium text-rose-800';
-                            else if (ratio > 0) bgClass = 'bg-rose-50 text-slate-700';
 
-                            return (
-                              <td key={i} className={`p-2 border-b text-center border-l border-white ${bgClass}`}>
-                                <span className="text-[10px]">{val > 0 ? formatCompact(val) : '-'}</span>
-                              </td>
-                            )
-                          })}
-                          <td className="p-2 border-b font-bold text-gray-900 text-right bg-gray-50 border-l border-gray-100">{formatMoney(row.total)}</td>
-                        </tr>
-                      ))
-                    )}
-                    {!isLoading && heatmapData.length > 0 && (
-                      <tr className="bg-gray-100">
-                        <td className="p-2 font-bold text-gray-900 sticky left-0 bg-gray-100 z-10 border-r border-gray-200 border-t border-gray-300">Total Bulanan</td>
-                        {heatmapMonthlyTotals.map((val, i) => (
-                          <td key={i} className="p-2 text-center font-semibold text-gray-800 border-l border-white border-t border-gray-300">
-                            <span className="text-[10px]">{val > 0 ? formatCompact(val) : '-'}</span>
-                          </td>
-                        ))}
-                        <td className="p-2 font-black text-rose-700 text-right bg-gray-200 border-l border-white border-t border-gray-300">{formatMoney(heatmapGrandTotal)}</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="space-y-2.5 lg:hidden">
+              <div className="space-y-2.5">
                 {isLoading ? (
                   [1, 2, 3].map((item) => <div key={item} className="h-16 animate-pulse rounded-xl bg-slate-100" />)
-                ) : heatmapData.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-10 text-center">
-                    <p className="text-sm font-semibold text-slate-700">Belum ada pengeluaran tahun ini</p>
-                    <p className="mt-1 text-xs text-slate-500">Breakdown akan muncul setelah ada transaksi pengeluaran.</p>
-                  </div>
+                ) : annualOverviewItems.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-10 text-center"><p className="text-sm font-semibold text-slate-700">Belum ada pengeluaran tahun ini</p><p className="mt-1 text-xs text-slate-500">Breakdown akan muncul setelah ada transaksi pengeluaran.</p></div>
                 ) : (
-                  heatmapData.map((row, index) => {
+                  annualOverviewItems.map((row, index) => {
                     const percentage = heatmapGrandTotal > 0 ? (row.total / heatmapGrandTotal) * 100 : 0;
                     return (
-                      <details key={row.name} className="group rounded-xl border border-slate-200 bg-[#FCFCF9]">
-                        <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 p-3 [&::-webkit-details-marker]:hidden">
-                          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-500">{index + 1}</span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-bold text-slate-900">{row.name}</span>
-                            <span className="mt-0.5 block text-[10px] text-slate-400">{percentage.toFixed(1)}% dari pengeluaran{row.count !== null ? ` · ${row.count} transaksi` : ""}</span>
-                          </span>
-                          <span className="max-w-[42%] break-words text-right text-xs font-bold text-slate-900 tabular-nums">{formatMoney(row.total)}</span>
-                          <ChevronDown className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-open:rotate-180" />
-                        </summary>
-                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-px border-t border-slate-200 bg-slate-200">
-                          {row.months.map((value, monthIndex) => (
-                            <div key={monthNames[monthIndex]} className="bg-white p-2.5">
-                              <p className="text-[10px] text-slate-400">{monthNames[monthIndex].slice(0, 3)}</p>
-                              <p className="mt-1 break-words text-[11px] font-semibold text-slate-700 tabular-nums">{value > 0 ? formatMoney(value) : "—"}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
+                      <article key={row.name} className="rounded-xl border border-slate-100 bg-[#FCFCF9] p-3 transition-[background-color,border-color] hover:border-emerald-200/70 hover:bg-white">
+                        <div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-start gap-2.5"><ExplorerMark categoryName={annualBreakdownMode === "Kategori" ? row.name : undefined} merchantName={annualBreakdownMode === "Merchant" ? row.name : undefined} dominantCategories={annualMerchantDominantCategories} rank={index + 1} /><div className="min-w-0"><h4 className="truncate text-sm font-bold text-slate-900">{row.name}</h4><p className="mt-0.5 text-[10px] text-slate-400">{percentage.toFixed(1)}% kontribusi{row.count !== null ? ` · ${row.count} transaksi` : ""}</p></div></div><p className="max-w-[42%] break-words text-right text-sm font-bold text-slate-900 tabular-nums">{formatMoney(row.total)}</p></div>
+                        <div className="ml-9 mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(percentage, 100)}%` }} /></div>
+                      </article>
                     );
                   })
                 )}
+                <button type="button" onClick={() => openDetailView("annual-breakdown")} className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-50/70 hover:text-emerald-950">Lihat semua {annualBreakdownMode.toLowerCase()} <ArrowRight className="h-4 w-4" /></button>
               </div>
+
             </div>
 
             <div className="relative hidden overflow-hidden bg-[#F1F7F2] border border-emerald-100 rounded-2xl shadow-sm p-6 lg:flex flex-col items-center justify-center">
@@ -1812,13 +2189,19 @@ export default function LaporanPage() {
       {activeTab === "Makro" && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 motion-reduce:animate-none">
           
-          <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-4 md:p-6">
+          <div className="rounded-2xl border border-[#EDE4D4] bg-[#FBF8F1] p-4 shadow-sm md:p-6">
             <div>
               <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">{macroChartTitle}</h3>
-              <p className="mt-1 text-xs md:text-sm text-slate-500">Pergerakan pemasukan, pengeluaran, dan tabungan bersih sepanjang periode.</p>
+              <p className="mt-1 text-xs md:text-sm text-slate-500">Pergerakan pemasukan, pengeluaran, dan saldo bersih sepanjang periode.</p>
+              {multiYearYoYInsight && (
+                <div className={`mt-3 inline-flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs font-semibold ${multiYearYoYInsight.isIncrease ? "border-amber-200/80 bg-[#FBF5EA] text-amber-900" : "border-emerald-200/80 bg-[#F1F7F2] text-emerald-900"}`}>
+                  <TrendingUp className={`h-3.5 w-3.5 ${multiYearYoYInsight.isDecrease ? "rotate-180" : ""}`} />
+                  {multiYearYoYInsight.text}
+                </div>
+              )}
             </div>
             
-            <div className="h-[290px] md:h-[350px] w-full mt-5 md:mt-6">
+            <div className="mt-5 h-[260px] w-full sm:h-[290px] md:mt-6 md:h-[350px]">
               {isLoading ? (
                 <div className="w-full h-full flex items-end justify-between gap-3 px-6 pb-6 pt-12 animate-pulse bg-slate-50/50 rounded-xl">
                   {[40, 65, 55, 80, 70, 90, 85].map((h, i) => (
@@ -1855,6 +2238,7 @@ export default function LaporanPage() {
                       axisLine={false}
                       tickLine={false}
                       tick={{ fill: '#64748b', fontSize: 12 }}
+                      minTickGap={20}
                       dy={10}
                     />
                     <YAxis 
@@ -1866,7 +2250,7 @@ export default function LaporanPage() {
                         if (Math.abs(value) >= 1000) return (value / 1000).toFixed(0) + 'k';
                         return value.toString();
                       }}
-                      width={54}
+                      width={46}
                     />
                     <RechartsTooltip 
                       content={({ active, payload, label }: any) => {
@@ -1887,7 +2271,7 @@ export default function LaporanPage() {
                               ))}
                               {payload[0]?.payload?.margin !== undefined && (
                                 <div className="flex justify-between items-center text-xs mt-1 pt-2 border-t border-gray-100">
-                                  <span className="text-gray-500 font-medium">Savings Margin</span>
+                                  <span className="text-gray-500 font-medium">Margin bersih</span>
                                   <span className="font-bold text-emerald-600">{payload[0].payload.margin.toFixed(1)}%</span>
                                 </div>
                               )}
@@ -1940,15 +2324,15 @@ export default function LaporanPage() {
                </div>
                <div className="flex items-center gap-2">
                  <div className="w-3 h-3 rounded-full bg-sky-500"></div> 
-                 <span className="text-gray-600 font-medium">Tabungan Bersih (Net)</span>
+                 <span className="text-gray-600 font-medium">Saldo Bersih (Net)</span>
                </div>
             </div>
           </div>
 
-          <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm overflow-hidden">
+          <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-[#FCFCF9]">
              <div className="p-4 md:p-5 border-b border-slate-200/60">
               <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Rekap multi-tahun</h3>
-              <p className="mt-1 text-xs md:text-sm text-slate-500">Perbandingan pemasukan, pengeluaran, net, dan margin tabungan tiap tahun.</p>
+              <p className="mt-1 text-xs md:text-sm text-slate-500">Perbandingan pemasukan, pengeluaran, saldo bersih, dan margin bersih tiap tahun.</p>
             </div>
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm text-left">
@@ -1957,8 +2341,8 @@ export default function LaporanPage() {
                     <th className="px-5 py-3 font-medium">Tahun</th>
                     <th className="px-5 py-3 font-medium text-right text-emerald-600">Pemasukan</th>
                     <th className="px-5 py-3 font-medium text-right text-rose-600">Pengeluaran</th>
-                    <th className="px-5 py-3 font-medium text-right">Pendapatan Bersih</th>
-                    <th className="px-5 py-3 font-medium text-right">Margin Tabungan (%)</th>
+                    <th className="px-5 py-3 font-medium text-right">Saldo Bersih (Net)</th>
+                    <th className="px-5 py-3 font-medium text-right">Margin Bersih (%)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -1990,66 +2374,58 @@ export default function LaporanPage() {
                 </tbody>
               </table>
             </div>
-            <details className="group md:hidden">
-              <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-emerald-800 [&::-webkit-details-marker]:hidden">
-                Lihat rincian {activeYears.length} tahun
-                <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
-              </summary>
-              <div className="space-y-3 border-t border-slate-100 p-3">
-                {activeYears.map((year) => {
-                  const stat = multiYearStats[year];
-                  const margin = stat.income > 0 ? (stat.net / stat.income) * 100 : null;
-                  return (
-                    <article key={year} className="rounded-xl border border-slate-200 bg-[#FCFCF9] p-3.5">
-                      <div className="flex items-center justify-between gap-3">
-                        <h4 className="text-base font-bold text-slate-900">{year}</h4>
-                        <span className={`text-sm font-bold tabular-nums ${stat.net >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{stat.net > 0 ? "+" : ""}{formatMoney(stat.net)}</span>
-                      </div>
-                      <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3">
-                        <div><dt className="text-[10px] text-slate-400">Pemasukan</dt><dd className="mt-1 break-words text-xs font-semibold text-emerald-700 tabular-nums">{formatMoney(stat.income)}</dd></div>
-                        <div><dt className="text-[10px] text-slate-400">Pengeluaran</dt><dd className="mt-1 break-words text-xs font-semibold text-rose-700 tabular-nums">{formatMoney(stat.expense)}</dd></div>
-                        <div className="col-span-2"><dt className="text-[10px] text-slate-400">Margin tabungan</dt><dd className="mt-1 text-xs font-bold text-slate-700 tabular-nums">{margin === null ? "Belum tersedia" : `${margin.toFixed(1)}%`}</dd></div>
-                      </dl>
-                    </article>
-                  );
-                })}
-              </div>
-            </details>
+            <div className="space-y-2.5 p-3 md:hidden">
+              {latestYearPreview.map((year) => {
+                const stat = multiYearStats[year];
+                return (
+                  <article key={year} className="rounded-xl border border-slate-200 bg-white p-3">
+                    <div className="flex items-baseline justify-between gap-3"><h4 className="text-base font-bold text-slate-900">{year}</h4><span className={`text-sm font-bold tabular-nums ${stat.net < 0 ? "text-rose-700" : "text-emerald-700"}`}>{stat.net > 0 ? "+" : ""}{formatCompactMoney(stat.net)}</span></div>
+                    <dl className="mt-2 grid grid-cols-2 gap-2 border-t border-slate-100 pt-2"><div><dt className="text-[10px] text-slate-400">Masuk</dt><dd className="mt-0.5 text-xs font-semibold text-emerald-700 tabular-nums">{formatCompactMoney(stat.income)}</dd></div><div><dt className="text-[10px] text-slate-400">Keluar</dt><dd className="mt-0.5 text-xs font-semibold text-slate-700 tabular-nums">{formatCompactMoney(stat.expense)}</dd></div></dl>
+                  </article>
+                );
+              })}
+              <button type="button" onClick={() => openDetailView("multi-year-recap")} className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-50/70 hover:text-emerald-950">Lihat seluruh tahun <ArrowRight className="h-4 w-4" /></button>
+            </div>
           </div>
 
           {/* Sebaran Pengeluaran Multi-Tahun Visual Breakdown */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl shadow-sm p-4 md:p-6 w-full">
-            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end mb-6 gap-4">
-              <div className="w-full lg:w-auto">
+          <div className="w-full rounded-2xl border border-emerald-100/80 bg-[#F6FAF6] p-4 md:p-6">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
                 <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Sebaran pengeluaran multi-tahun</h3>
                 <p className="mt-1 text-xs md:text-sm text-slate-500">Ranking pengeluaran dan perubahannya dibanding tahun sebelumnya.</p>
-                <div className="mt-3 w-full sm:w-40">
+                <p className="mt-1.5 text-[11px] font-semibold text-emerald-700 md:hidden">Tahun {safeMultiYearSelected} · {multiYearBreakdownMode}</p>
+              </div>
+            </div>
+            <div className="mt-4 block md:mt-5 md:flex md:items-end md:justify-between md:gap-4">
+              <div className="w-full sm:w-40">
                   <CustomSelect 
                     value={String(safeMultiYearSelected)} 
                     onChange={val => setMultiYearSelectedYear(Number(val))}
                     options={activeYears.map(y => ({ value: String(y), label: `Tahun ${y}` }))}
                     buttonClassName="min-h-11"
                   />
-                </div>
               </div>
-              <div className="grid w-full grid-cols-2 bg-slate-100 p-1 rounded-xl lg:w-auto">
+              <div className="mt-2.5 grid w-full grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:w-auto md:mt-0" role="group" aria-label="Kelompok sebaran multi-tahun">
                 <button 
                   type="button"
+                  aria-pressed={multiYearBreakdownMode === "Kategori"}
                   onClick={() => setMultiYearBreakdownMode("Kategori")}
-                  className={`min-h-11 sm:min-h-9 px-3 text-xs font-semibold rounded-lg transition-colors ${multiYearBreakdownMode === "Kategori" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                  className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 ${multiYearBreakdownMode === "Kategori" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}
                 >
                   Kategori
                 </button>
                 <button 
                   type="button"
+                  aria-pressed={multiYearBreakdownMode === "Merchant"}
                   onClick={() => setMultiYearBreakdownMode("Merchant")}
-                  className={`min-h-11 sm:min-h-9 px-3 text-xs font-semibold rounded-lg transition-colors ${multiYearBreakdownMode === "Merchant" ? "bg-white text-emerald-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                  className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 ${multiYearBreakdownMode === "Merchant" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}
                 >
                   Merchant
                 </button>
               </div>
             </div>
-            
+            <div className="mt-5 block md:mt-6">
             {isLoading ? (
               <div className="flex flex-col md:flex-row gap-8 items-center md:items-start w-full py-4 animate-pulse">
                 <div className="w-full md:w-[35%] flex flex-col items-center gap-6">
@@ -2145,7 +2521,7 @@ export default function LaporanPage() {
 
                 {/* Right Column List items */}
                 <div className="w-full sm:w-[65%] space-y-2.5">
-                  {myBreakdownData.map((item, i) => {
+                  {multiYearOverviewItems.map((item, i) => {
                     const pct = myBreakdownTotal > 0 ? ((item.currentVal / myBreakdownTotal) * 100).toFixed(1) : "0";
                     const color = mySvgPaths[i]?.color || "#cbd5e1";
                     
@@ -2168,10 +2544,10 @@ export default function LaporanPage() {
                     }
 
                     return (
-                      <div key={item.name} className={`rounded-xl border p-3 ${i === 0 ? "border-emerald-200 bg-emerald-50/40" : "border-slate-100 bg-[#FCFCF9]"}`}>
+                      <div key={item.name} className={`rounded-xl border p-3 transition-[background-color,border-color] ${i === 0 ? "border-emerald-200 bg-emerald-50/55" : "border-slate-100 bg-[#FCFCF9] hover:border-emerald-200/70 hover:bg-white"}`}>
                         <div className="flex justify-between items-start gap-3 text-sm">
                           <div className="flex min-w-0 items-start gap-2.5">
-                            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg border border-slate-200 bg-white text-[10px] font-bold text-slate-500">{i + 1}</span>
+                            <ExplorerMark categoryName={multiYearBreakdownMode === "Kategori" ? item.name : undefined} merchantName={multiYearBreakdownMode === "Merchant" ? item.name : undefined} dominantCategories={multiYearMerchantDominantCategories} rank={i + 1} />
                             <div className="min-w-0">
                               <p className="truncate font-semibold text-slate-800">{item.name}</p>
                               <div className="mt-1 flex flex-wrap items-center gap-1.5">
@@ -2188,11 +2564,15 @@ export default function LaporanPage() {
                       </div>
                     );
                   })}
+                  <button type="button" onClick={() => openDetailView("multi-year-breakdown")} className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-50/70 hover:text-emerald-950">Lihat semua {multiYearBreakdownMode.toLowerCase()} <ArrowRight className="h-4 w-4" /></button>
                 </div>
               </div>
             )}
+            </div>
           </div>
         </div>
+      )}
+      </>
       )}
 
       {/* QUICK EDIT BUDGET MODAL */}
