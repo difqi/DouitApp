@@ -1,25 +1,38 @@
 "use client";
 
 import {
-  ArrowDownLeft,
-  ArrowUpRight,
+  ArrowLeft,
+  ArrowLeftRight,
   CalendarDays,
-  ChevronDown,
+  BadgeDollarSign,
+  BriefcaseBusiness,
+  CarFront,
+  ChevronRight,
   CircleDollarSign,
   Download,
   Filter,
+  Gift,
+  LayoutGrid,
+  Mail,
+  MonitorSmartphone,
   MoreHorizontal,
+  PiggyBank,
+  PencilLine,
   Plus,
+  ReceiptText,
   Search,
   CheckCircle2,
   CircleAlert,
   Bot,
+  ShoppingBag,
+  Utensils,
   Wallet,
   CreditCard,
   Smartphone,
-  TrendingUp
+  Ticket,
+  X
 } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { useDouit } from "../providers/DouitProvider";
 import { mockTransactions } from "../../lib/mock-data";
@@ -31,8 +44,93 @@ import { CustomSelect } from "@/app/components/ui/CustomSelect";
 import { CustomDatePicker } from "@/app/components/ui/CustomDatePicker";
 
 const formatMoney = (value: number | string) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value));
-const formatDate = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+const formatDate = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" });
 const formatTime = (value: string) => new Date(value).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }).replace('.', ':') + " WIB";
+const formatTransactionDay = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta" });
+const cleanTransactionNotes = (notes?: string | null) => notes?.replace(/\[NO_TIME\]/g, '').replace(/\[UNMATCHED_BANK:[^\]]+\]/g, '').trim() || '';
+const getTransactionSourceLabel = (source: Transaction['source']) => source === 'AUTOMATIC_EMAIL' ? 'Email Bank' : source === 'MANUAL_CHAT' ? 'AI Chat' : 'Manual';
+const getTransactionDateTimeLabel = (row: Pick<Transaction, 'date' | 'source' | 'notes'>) => `${formatDate(row.date)}${shouldDisplayTransactionTime(row) ? ` · ${formatTime(row.date).replace(' WIB', '')}` : ''}`;
+
+function CategoryIcon({ category, size = 12 }: { category: string; size?: number }) {
+  const normalized = (category || '').toLocaleLowerCase('id-ID');
+  if (normalized.includes('makanan') || normalized.includes('minuman')) return <Utensils size={size} />;
+  if (normalized.includes('transport')) return <CarFront size={size} />;
+  if (normalized.includes('belanja')) return <ShoppingBag size={size} />;
+  if (normalized.includes('tagihan') || normalized.includes('biaya admin')) return <ReceiptText size={size} />;
+  if (normalized.includes('barang digital')) return <MonitorSmartphone size={size} />;
+  if (normalized.includes('hiburan')) return <Ticket size={size} />;
+  if (normalized.includes('transfer')) return <ArrowLeftRight size={size} />;
+  if (normalized.includes('jasa')) return <BriefcaseBusiness size={size} />;
+  if (normalized.includes('gaji')) return <BadgeDollarSign size={size} />;
+  if (normalized.includes('bonus')) return <Gift size={size} />;
+  if (normalized.includes('nabung')) return <PiggyBank size={size} />;
+  return <LayoutGrid size={size} />;
+}
+
+function TransactionSourceIcon({ source, size = 13 }: { source: Transaction['source']; size?: number }) {
+  if (source === 'AUTOMATIC_EMAIL') return <Mail size={size} />;
+  if (source === 'MANUAL_CHAT') return <Bot size={size} />;
+  return <PencilLine size={size} />;
+}
+
+function TransactionBankLogo({ bankName, className = "" }: { bankName: string; className?: string }) {
+  return (
+    <div className={`transaction-logo-frame ${className}`}>
+      <BankLogo bankName={bankName} className="transaction-logo-mark" />
+    </div>
+  );
+}
+
+type DisplayTransaction = Transaction & { sumber_dana?: string; category_id?: string };
+
+const subscribeMobileViewport = (onStoreChange: () => void) => {
+  const mediaQuery = window.matchMedia("(max-width: 760px)");
+  mediaQuery.addEventListener("change", onStoreChange);
+  return () => mediaQuery.removeEventListener("change", onStoreChange);
+};
+
+const getMobileViewportSnapshot = () => window.matchMedia("(max-width: 760px)").matches;
+const getServerMobileViewportSnapshot = () => false;
+
+function TransactionDetailSections({ row }: { row: DisplayTransaction }) {
+  return (
+    <div className="transaction-detail-content">
+      <section className="transaction-detail-summary" aria-labelledby="transaction-summary-heading">
+        <span className="transaction-detail-section-label" id="transaction-summary-heading">Ringkasan</span>
+        <div className="transaction-detail-summary-main">
+          <TransactionBankLogo bankName={row.sumber_dana || 'Tunai'} className="transaction-detail-logo" />
+          <div className="transaction-detail-primary-copy">
+            <h3>{row.merchant}</h3>
+            <div className="transaction-detail-meta">
+              <span className="transaction-detail-type">{row.type === 'INCOME' ? 'Pemasukan' : 'Pengeluaran'}</span>
+              {row.status === 'APPROVED' ? (
+                <span className="transaction-status approved"><CheckCircle2 size={12}/> Disetujui</span>
+              ) : (
+                <span className="transaction-status pending"><CircleAlert size={12}/> Menunggu persetujuan</span>
+              )}
+            </div>
+          </div>
+          <strong className={`transaction-detail-amount ${row.type === 'INCOME' ? 'income' : 'expense'}`}>{row.type === 'INCOME' ? '+' : '−'}{formatMoney(row.amount)}</strong>
+        </div>
+      </section>
+
+      <section className="transaction-detail-section" aria-labelledby="transaction-information-heading">
+        <h3 id="transaction-information-heading">Informasi transaksi</h3>
+        <dl className="transaction-detail-list">
+          <div><dt><CalendarDays size={14} />Tanggal & waktu</dt><dd>{getTransactionDateTimeLabel(row)}</dd></div>
+          <div><dt><CategoryIcon category={row.category} size={13} />Kategori</dt><dd>{row.category}</dd></div>
+          <div><dt><Wallet size={14} />Rekening</dt><dd>{row.sumber_dana || 'Tunai'}</dd></div>
+          <div><dt><TransactionSourceIcon source={row.source} />Sumber pencatatan</dt><dd>{getTransactionSourceLabel(row.source)}</dd></div>
+        </dl>
+      </section>
+
+      <section className="transaction-detail-section transaction-detail-additional" aria-labelledby="transaction-additional-heading">
+        <h3 id="transaction-additional-heading">Detail tambahan</h3>
+        {cleanTransactionNotes(row.notes) ? <p>{cleanTransactionNotes(row.notes)}</p> : <p className="empty">Tidak ada catatan tambahan.</p>}
+      </section>
+    </div>
+  );
+}
 
 export const shouldDisplayTransactionTime = (row: { source?: string; notes?: string | null; date?: string }) => {
   if (!row?.date) return false;
@@ -80,7 +178,7 @@ function WorkspaceHeader({ eyebrow, title, description, actions }: { eyebrow: st
 }
 
 function Shell({ active, children }: { active: "dashboard" | "chat" | "transactions"; children: React.ReactNode }) {
-  return <div className="workspace-page">{children}</div>;
+  return <div className={`workspace-page ${active}-workspace-page`}>{children}</div>;
 }
 
 import { createClient } from "@/lib/supabase/client";
@@ -136,6 +234,12 @@ const getLocalEndOfDay = (dateStr: string) => {
 export function TransactionsView() {
   const [addOpen, setAddOpen] = useState(false);
   const [editRow, setEditRow] = useState<Transaction & { category_id: string } | null>(null);
+  const [detailRow, setDetailRow] = useState<DisplayTransaction | null>(null);
+  const isMobileViewport = useSyncExternalStore(
+    subscribeMobileViewport,
+    getMobileViewportSnapshot,
+    getServerMobileViewportSnapshot,
+  );
   const [kind, setKind] = useState("Semua");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterModalOpen, setFilterModalOpen] = useState(false);
@@ -158,16 +262,30 @@ export function TransactionsView() {
   const [editSumberDana, setEditSumberDana] = useState("Tunai");
   
   const [rows, setRows] = useState<Transaction[]>(cachedWorkspaceTx);
+  const [isLoading, setIsLoading] = useState(cachedWorkspaceTx.length === 0);
+  const [loadError, setLoadError] = useState(false);
   const [categories, setCategories] = useState<{id: string, name: string}[]>(cachedCategories);
   const [accounts, setAccounts] = useState<any[]>(cachedAccounts);
   const [primaryAccount, setPrimaryAccount] = useState<any>(cachedPrimaryAccount);
   const { user, business } = useDouit();
+  const listScrollPositionRef = useRef(0);
+  const advancedOptionRef = useRef<HTMLLabelElement>(null);
+
+  useEffect(() => {
+    if (!saveRule) return;
+    const frame = window.requestAnimationFrame(() => {
+      advancedOptionRef.current?.scrollIntoView({ block: "nearest" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [saveRule]);
 
   useEffect(() => {
     if (!user) return;
     const supabase = createClient();
     
     const fetchTransactions = async () => {
+      setIsLoading(true);
+      setLoadError(false);
       const { data: accData } = await supabase.from('payment_accounts').select('*').eq('user_id', user.id);
       if (accData) {
         cachedAccounts = accData;
@@ -195,7 +313,7 @@ export function TransactionsView() {
         query = query.limit(150);
       }
         
-      const { data } = await query;
+      const { data, error } = await query;
         
       if (data) {
         const mapped = data.map(d => ({
@@ -209,6 +327,8 @@ export function TransactionsView() {
         cachedWorkspaceTx = mapped as any;
         setRows(mapped);
       }
+      setLoadError(Boolean(error));
+      setIsLoading(false);
     };
     
     fetchTransactions();
@@ -429,6 +549,23 @@ export function TransactionsView() {
     setSaveRule(false);
   };
 
+  const restoreTransactionListPosition = () => {
+    if (!isMobileViewport) return;
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: listScrollPositionRef.current, behavior: "auto" });
+    });
+  };
+
+  const openTransactionDetail = (row: DisplayTransaction) => {
+    if (isMobileViewport) listScrollPositionRef.current = window.scrollY;
+    setDetailRow(row);
+  };
+
+  const closeTransactionDetail = () => {
+    setDetailRow(null);
+    restoreTransactionListPosition();
+  };
+
   const typeOptions = [
     { value: "EXPENSE", label: "Pengeluaran" },
     { value: "INCOME", label: "Pemasukan" }
@@ -436,19 +573,19 @@ export function TransactionsView() {
 
   const categoryOptions = categories
     .filter(c => c.name !== 'Nabung')
-    .map(c => ({ value: c.id, label: c.name }));
+    .map(c => ({ value: c.id, label: c.name, icon: <CategoryIcon category={c.name} /> }));
 
   const sumberDanaOptions = [
-    { value: "Tunai", label: "Tunai" },
-    { value: "Bank BCA", label: "Bank BCA" },
-    { value: "Bank Mandiri", label: "Bank Mandiri" },
-    { value: "Bank BRI", label: "Bank BRI" },
-    { value: "Bank BNI", label: "Bank BNI" },
-    { value: "GoPay", label: "GoPay" },
-    { value: "OVO", label: "OVO" },
-    { value: "Dana", label: "Dana" },
-    { value: "ShopeePay", label: "ShopeePay" },
-    { value: "Lainnya", label: "Lainnya" }
+    { value: "Tunai", label: "Tunai", icon: <TransactionBankLogo bankName="Tunai" className="transaction-select-bank-logo" /> },
+    { value: "Bank BCA", label: "Bank BCA", icon: <TransactionBankLogo bankName="Bank BCA" className="transaction-select-bank-logo" /> },
+    { value: "Bank Mandiri", label: "Bank Mandiri", icon: <TransactionBankLogo bankName="Bank Mandiri" className="transaction-select-bank-logo" /> },
+    { value: "Bank BRI", label: "Bank BRI", icon: <TransactionBankLogo bankName="Bank BRI" className="transaction-select-bank-logo" /> },
+    { value: "Bank BNI", label: "Bank BNI", icon: <TransactionBankLogo bankName="Bank BNI" className="transaction-select-bank-logo" /> },
+    { value: "GoPay", label: "GoPay", icon: <TransactionBankLogo bankName="GoPay" className="transaction-select-bank-logo" /> },
+    { value: "OVO", label: "OVO", icon: <TransactionBankLogo bankName="OVO" className="transaction-select-bank-logo" /> },
+    { value: "Dana", label: "Dana", icon: <TransactionBankLogo bankName="Dana" className="transaction-select-bank-logo" /> },
+    { value: "ShopeePay", label: "ShopeePay", icon: <TransactionBankLogo bankName="ShopeePay" className="transaction-select-bank-logo" /> },
+    { value: "Lainnya", label: "Lainnya", icon: <TransactionBankLogo bankName="Lainnya" className="transaction-select-bank-logo" /> }
   ];
 
   const monthOptions = [
@@ -467,235 +604,309 @@ export function TransactionsView() {
     }))
   ];
 
+  const isDefaultDateFilter = dateFilter.mode === "preset" && dateFilter.preset === "Semua";
+  const activeDateFilterLabel = isDefaultDateFilter
+    ? ""
+    : dateFilter.mode === "preset"
+      ? dateFilter.preset
+      : dateFilter.mode === "monthYear" && dateFilter.month !== "" && dateFilter.year
+        ? `${monthOptions.find(option => option.value === dateFilter.month)?.label || "Bulan"} ${dateFilter.year}`
+        : dateFilter.start && dateFilter.end
+          ? `${new Date(dateFilter.start).toLocaleDateString("id-ID", {day: "numeric", month: "short"})} – ${new Date(dateFilter.end).toLocaleDateString("id-ID", {day: "numeric", month: "short", year: "numeric"})}`
+          : "Periode khusus";
+  const groupedMobileRows = filteredRows.reduce<{ label: string; rows: Transaction[] }[]>((groups, row) => {
+    const label = formatTransactionDay(row.date);
+    const currentGroup = groups[groups.length - 1];
+    if (currentGroup?.label === label) currentGroup.rows.push(row);
+    else groups.push({ label, rows: [row] });
+    return groups;
+  }, []);
+  const emptyStateMessage = searchQuery
+    ? `Tidak ada transaksi yang cocok dengan “${searchQuery}”.`
+    : !isDefaultDateFilter
+      ? "Tidak ada transaksi pada periode ini."
+      : kind !== "Semua"
+        ? `Belum ada transaksi ${kind.toLowerCase()}.`
+        : "Belum ada transaksi. Catat transaksi pertamamu untuk memulai.";
+  const emptyStateHint = searchQuery || !isDefaultDateFilter || kind !== "Semua"
+    ? "Ubah pencarian atau filter untuk melihat transaksi lain."
+    : "Gunakan tombol Catat transaksi untuk menambahkan aktivitas keuangan.";
+
+  if (detailRow && isMobileViewport) {
+    return (
+      <main className="transaction-mobile-detail-page">
+        <header className="transaction-mobile-detail-header">
+          <button type="button" className="transaction-detail-back" onClick={closeTransactionDetail}><ArrowLeft size={18} /> Transaksi</button>
+        </header>
+        <TransactionDetailSections row={detailRow} />
+        <footer className="transaction-detail-actions transaction-mobile-detail-actions">
+          <button
+            type="button"
+            className="button secondary transaction-detail-edit-button"
+            onClick={() => {
+              const row = detailRow;
+              setDetailRow(null);
+              restoreTransactionListPosition();
+              openEditModal(row);
+            }}
+          >
+            <PencilLine size={16} /> Edit transaksi
+          </button>
+          {detailRow.status === 'PENDING_APPROVAL' && (
+            <button
+              type="button"
+              className="button primary"
+              onClick={() => {
+                void approveTransaction(detailRow);
+                setDetailRow(null);
+                restoreTransactionListPosition();
+              }}
+            >
+              <CheckCircle2 size={16} /> Setujui
+            </button>
+          )}
+        </footer>
+      </main>
+    );
+  }
+
   return (
     <Shell active="transactions">
       <WorkspaceHeader 
-        eyebrow="Arus kas" 
+        eyebrow="Aktivitas keuangan"
         title="Transaksi" 
         description="Pantau semua pemasukan dan pengeluaranmu di satu tempat."
         actions={
           <>
-            <button className="button secondary" onClick={handleExportCSV}><Download size={16} /> Ekspor CSV</button>
-            <button className="button primary" onClick={openAddModal}><Plus size={16} /> Catat manual</button>
+            <button className="button primary transactions-add-button" onClick={openAddModal}><Plus size={16} /> Catat transaksi</button>
+            <button className="button secondary transactions-export-button" onClick={handleExportCSV} aria-label="Ekspor transaksi ke CSV"><Download size={16} /> <span>Ekspor CSV</span></button>
           </>
         } 
       />
-      <section className="balance-card mb-6" style={{ minHeight: 'auto', padding: '16px 24px' }}>
-        <div className="flex flex-row items-center justify-between gap-8 relative z-10 w-full">
-          {/* LEFT COLUMN: Saldo Info */}
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="text-emerald-400 text-sm font-medium">Saldo Bersih</span>
-              {primaryAccount ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  {primaryAccount.type === 'bank' ? <CreditCard className="w-3 h-3" /> : primaryAccount.type === 'wallet' ? <Smartphone className="w-3 h-3" /> : <Wallet className="w-3 h-3" />}
-                  {primaryAccount.name} (Utama)
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  <Wallet className="w-3 h-3" /> Total Seluruh Rekening
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 mt-1">
-              <h2 className="text-3xl font-bold text-white tracking-tight">{formatMoney(net_balance)}</h2>
-              <span className="inline-flex items-center gap-1 text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                <TrendingUp className="w-3 h-3" /> Data tercatat
-              </span>
-            </div>
+      <section className="balance-card transactions-balance-card" aria-label="Ringkasan saldo transaksi">
+        <div className="transactions-balance-main">
+          <span className="transactions-balance-label">Saldo Bersih</span>
+          <h2>{formatMoney(net_balance)}</h2>
+          <span className="transactions-account-context">
+            {primaryAccount ? (
+              <>{primaryAccount.type === 'bank' ? <CreditCard /> : primaryAccount.type === 'wallet' ? <Smartphone /> : <Wallet />} {primaryAccount.name} · Rekening utama</>
+            ) : (
+              <><Wallet /> Total seluruh rekening</>
+            )}
+          </span>
+        </div>
+        <div className="transactions-balance-breakdown">
+          <div className="transactions-balance-metrics">
+            <div><span><i className="income-dot" />Pemasukan</span><strong>{formatMoney(income)}</strong></div>
+            <div><span><i className="expense-dot" />Pengeluaran</span><strong>{formatMoney(expense)}</strong></div>
           </div>
-
-          {/* RIGHT COLUMN: Pemasukan & Pengeluaran Breakdown */}
-          <div className="flex flex-col space-y-3 shrink-0">
-            <div className="flex items-center gap-8 md:gap-12">
-              {/* Pemasukan Metric */}
-              <div className="flex flex-col space-y-1">
-                <span className="flex items-center gap-1.5 text-gray-300 text-sm">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span> Pemasukan
-                </span>
-                <span className="font-semibold text-white text-base">{formatMoney(income)}</span>
-              </div>
-              
-              {/* Pengeluaran Metric */}
-              <div className="flex flex-col space-y-1">
-                <span className="flex items-center gap-1.5 text-gray-300 text-sm">
-                  <span className="w-2 h-2 rounded-full bg-rose-500"></span> Pengeluaran
-                </span>
-                <span className="font-semibold text-white text-base">{formatMoney(expense)}</span>
-              </div>
-            </div>
-
-            {/* Dual-Color Ratio Bar */}
-            <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden flex">
-              <div className="h-full bg-emerald-500" style={{ width: `${income + expense ? (income / (income + expense)) * 100 : 0}%` }}></div>
-              <div className="h-full bg-rose-500" style={{ width: `${income + expense ? (expense / (income + expense)) * 100 : 0}%` }}></div>
-            </div>
+          <div className="transactions-comparison-bar" aria-label="Perbandingan pemasukan dan pengeluaran">
+            <i className="income-bar" style={{ width: `${income + expense ? (income / (income + expense)) * 100 : 0}%` }} />
+            <i className="expense-bar" style={{ width: `${income + expense ? (expense / (income + expense)) * 100 : 0}%` }} />
           </div>
         </div>
       </section>
       
-      <section className="workspace-card data-card">
-        <div className="data-toolbar">
-          <div className="filter-tabs">
+      <section className="workspace-card data-card transactions-data-card">
+        <div className="data-toolbar transactions-toolbar">
+          <div className="filter-tabs transactions-type-filter" role="group" aria-label="Filter tipe transaksi">
             {["Semua", "Pemasukan", "Pengeluaran"].map(item => (
-              <button key={item} className={kind === item ? "active" : ""} onClick={() => setKind(item)}>{item}</button>
+              <button key={item} type="button" aria-pressed={kind === item} className={kind === item ? "active" : ""} onClick={() => setKind(item)}>{item}</button>
             ))}
           </div>
-          <label className="compact-search">
+          <label className="compact-search transactions-search">
             <Search size={15} />
             <input 
               placeholder="Cari transaksi..." 
+              aria-label="Cari transaksi"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
             />
           </label>
-          <div className="relative inline-block">
-            <button 
-              className="compact-control hover:bg-slate-50 cursor-pointer" 
-              onClick={() => {
-                setTempFilterMode(dateFilter.mode);
-                setTempPreset(dateFilter.preset);
-                setTempMonth(dateFilter.month);
-                setTempYear(dateFilter.year);
-                setTempStart(dateFilter.start);
-                setTempEnd(dateFilter.end);
-                setFilterModalOpen(true);
-              }}
-            >
-              <CalendarDays size={15} /> 
-              {dateFilter.mode === "preset" 
-                ? (dateFilter.preset === "Semua" ? "Semua Transaksi" : dateFilter.preset) 
-                : (dateFilter.start && dateFilter.end ? `${new Date(dateFilter.start).toLocaleDateString("id-ID", {day: "numeric", month: "short"})} - ${new Date(dateFilter.end).toLocaleDateString("id-ID", {day: "numeric", month: "short"})}` : "Filter Khusus")}
-            </button>
-          </div>
+          <button
+            type="button"
+            className={`compact-control transactions-filter-button ${activeDateFilterLabel ? "active" : ""}`}
+            aria-label={activeDateFilterLabel ? `Ubah filter tanggal: ${activeDateFilterLabel}` : "Filter tanggal"}
+            onClick={() => {
+              setTempFilterMode(dateFilter.mode);
+              setTempPreset(dateFilter.preset);
+              setTempMonth(dateFilter.month);
+              setTempYear(dateFilter.year);
+              setTempStart(dateFilter.start);
+              setTempEnd(dateFilter.end);
+              setFilterModalOpen(true);
+            }}
+          >
+            <CalendarDays size={15} />
+            <span>{activeDateFilterLabel || "Periode"}</span>
+          </button>
         </div>
-        
-        <div className="w-full overflow-x-auto scrollbar-thin p-6">
-          {dateFilter.mode === "preset" && dateFilter.preset === "Semua" && (
-            <div className="mb-4 text-xs font-medium text-blue-800 bg-blue-50 border border-blue-200 rounded-md py-1.5 px-3 inline-flex items-center gap-1.5">
-              <CircleAlert size={14} /> Menampilkan 150 transaksi terakhir (Default). Gunakan filter tanggal untuk melihat lebih banyak.
+        {activeDateFilterLabel && (
+          <div className="transactions-active-filter">
+            <span>{activeDateFilterLabel}</span>
+            <button type="button" aria-label={`Hapus filter ${activeDateFilterLabel}`} onClick={() => setDateFilter({mode: "preset", preset: "Semua", month: "", year: "", start: "", end: ""})}><X size={13} /></button>
+          </div>
+        )}
+
+        <div className="transactions-list-area">
+          {isDefaultDateFilter && (
+            <div className="transactions-limit-info">
+              <CircleAlert size={14} /> <span>150 transaksi terbaru ditampilkan. Gunakan filter periode untuk melihat lainnya.</span>
             </div>
           )}
-          <table className="w-full text-sm text-left">
-            <thead className="text-xs uppercase bg-gray-50 text-gray-700 border-b">
+          {isLoading && rows.length === 0 ? (
+            <div className="transactions-state" role="status">Memuat transaksi…</div>
+          ) : loadError && rows.length === 0 ? (
+            <div className="transactions-state" role="alert"><strong>Transaksi belum dapat dimuat.</strong><span>Coba muat ulang halaman beberapa saat lagi.</span></div>
+          ) : filteredRows.length === 0 ? (
+            <div className="transactions-state"><strong>{emptyStateMessage}</strong><span>{emptyStateHint}</span></div>
+          ) : (
+            <>
+          <table className="transactions-desktop-table">
+            <thead>
               <tr>
-                <th className="px-4 py-3 whitespace-nowrap">Tanggal</th>
-                <th className="px-4 py-3 whitespace-nowrap">Transaksi</th>
-                <th className="px-4 py-3 whitespace-nowrap">Kategori</th>
-                <th className="px-4 py-3 whitespace-nowrap">Sumber</th>
-                <th className="px-4 py-3 whitespace-nowrap">Status</th>
-                <th className="px-4 py-3 whitespace-nowrap text-right">Jumlah</th>
-                <th className="px-4 py-3 whitespace-nowrap text-center"></th>
+                <th>Tanggal</th>
+                <th>Transaksi</th>
+                <th>Kategori</th>
+                <th>Rekening & sumber</th>
+                <th>Status</th>
+                <th className="amount-column">Jumlah</th>
+                <th><span className="sr-only">Aksi</span></th>
               </tr>
             </thead>
             <tbody>
               {filteredRows.map(row => (
-                <tr className="border-b last:border-b-0 hover:bg-gray-50/50" key={row.id}>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="flex flex-col">
-                      <span className="font-medium text-gray-900">{formatDate(row.date)}</span>
+                <tr key={row.id}>
+                  <td className="transaction-date-cell">
+                    <div>
+                      <span>{formatDate(row.date)}</span>
                       {shouldDisplayTransactionTime(row) && (
-                        <span className="text-xs text-gray-500 mt-0.5">{formatTime(row.date)}</span>
+                        <small>{formatTime(row.date)}</small>
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="flex items-start gap-2">
-                      <i className={row.type.toLowerCase() + " mt-0.5"}>
-                        {row.type === "INCOME" ? <ArrowDownLeft size={15} /> : <ArrowUpRight size={15} />}
+                  <td className="transaction-name-cell">
+                    <div className="transaction-name-wrap">
+                      <i className="transaction-direction transaction-category-mark">
+                        <CategoryIcon category={row.category} />
                       </i>
-                      <div>
-                        <span className="font-semibold text-gray-900 block">{row.merchant}</span>
-                        {row.notes && (
-                          <span
-                            className="text-xs text-gray-500 block max-w-[200px] truncate"
-                            title={row.notes.replace(/\[NO_TIME\]/g, '').replace(/\[UNMATCHED_BANK:[^\]]+\]/g, '').trim()}
-                          >
-                            {row.notes.replace(/\[NO_TIME\]/g, '').replace(/\[UNMATCHED_BANK:[^\]]+\]/g, '').trim()}
-                          </span>
+                      <div className="transaction-copy">
+                        <strong>{row.merchant}</strong>
+                        {cleanTransactionNotes(row.notes) && (
+                          <small title={cleanTransactionNotes(row.notes)}>{cleanTransactionNotes(row.notes)}</small>
                         )}
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-gray-600">{row.category}</td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="flex flex-col gap-1 items-start">
-                      {(() => {
-                        const sdRaw = (row as any).sumber_dana || 'Tunai';
-                        return (
-                          <div className="flex items-center gap-2">
-                            <BankLogo bankName={sdRaw} className="w-10 h-6 rounded shrink-0 shadow-sm" />
-                            <span className="font-medium text-gray-800 text-xs">{sdRaw}</span>
-                          </div>
-                        );
-                      })()}
-                      <span className="text-[11px] text-gray-500">
-                        {row.source === 'AUTOMATIC_EMAIL' ? 'via Email Bank' : row.source === 'MANUAL_CHAT' ? 'via AI Chat' : 'via Manual'}
-                      </span>
+                  <td className="transaction-category-cell"><span><CategoryIcon category={row.category} />{row.category}</span></td>
+                  <td className="transaction-account-cell">
+                    <div>
+                      <TransactionBankLogo bankName={(row as any).sumber_dana || 'Tunai'} className="transaction-bank-logo" />
+                      <span><strong>{(row as any).sumber_dana || 'Tunai'}</strong><small>via {getTransactionSourceLabel(row.source)}</small></span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
+                  <td className="transaction-status-cell">
                     {row.status === 'APPROVED' ? (
-                      <span className="inline-flex items-center gap-1 bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs font-medium"><CheckCircle2 size={12}/> Disetujui</span>
+                      <span className="transaction-status approved"><CheckCircle2 size={12}/> Disetujui</span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 px-2 py-1 rounded-full text-xs font-medium"><CircleAlert size={12}/> Menunggu</span>
+                      <span className="transaction-status pending"><CircleAlert size={12}/> Menunggu</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-right font-medium">
-                    <span style={{ color: row.type === 'INCOME' ? '#16a34a' : 'inherit' }}>
-                      {row.type === "INCOME" ? "+" : "−"}{formatMoney(row.amount)}
-                    </span>
+                  <td className={`transaction-amount ${row.type === "INCOME" ? "income" : "expense"}`}>
+                    {row.type === "INCOME" ? "+" : "−"}{formatMoney(row.amount)}
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-center text-gray-400">
+                  <td className="transaction-actions-cell">
                     {row.status === 'PENDING_APPROVAL' ? (
-                      <div className="flex items-center justify-end gap-2">
-                        <button onClick={() => openEditModal(row)} className="text-gray-400 hover:text-blue-600 cursor-pointer hover:bg-slate-100 p-1.5 rounded-lg transition-colors"><MoreHorizontal size={16} /></button>
-                        <button onClick={() => approveTransaction(row)} className="button primary" style={{ padding: '4px 8px', fontSize: '12px' }}><CheckCircle2 size={14}/> Setujui</button>
+                      <div>
+                        <button type="button" onClick={() => openEditModal(row)} className="transaction-menu-button" aria-label={`Edit transaksi ${row.merchant}`}><MoreHorizontal size={17} /></button>
+                        <button type="button" onClick={() => approveTransaction(row)} className="transaction-approve-button"><CheckCircle2 size={14}/> Setujui</button>
                       </div>
                     ) : (
-                      <button onClick={() => openEditModal(row)} className="text-gray-400 hover:text-blue-600 cursor-pointer hover:bg-slate-100 p-1.5 rounded-lg transition-colors"><MoreHorizontal size={16} /></button>
+                      <button type="button" onClick={() => openEditModal(row)} className="transaction-menu-button" aria-label={`Edit transaksi ${row.merchant}`}><MoreHorizontal size={17} /></button>
                     )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <div className="transactions-mobile-feed">
+            {groupedMobileRows.map(group => (
+              <section className="transaction-day-group" key={group.label} aria-labelledby={`transaction-day-${group.rows[0].id}`}>
+                <h3 id={`transaction-day-${group.rows[0].id}`}>{group.label}</h3>
+                <div>
+                  {group.rows.map(row => (
+                    <button type="button" className="transaction-feed-item" key={row.id} onClick={() => openTransactionDetail(row)} aria-label={`Lihat detail transaksi ${row.merchant}`}>
+                      <TransactionBankLogo bankName={(row as any).sumber_dana || 'Tunai'} className="transaction-feed-logo" />
+                      <span className="transaction-feed-copy">
+                        <strong>{row.merchant}</strong>
+                        <small>{getTransactionDateTimeLabel(row)}</small>
+                      </span>
+                      <span className={`transaction-feed-amount ${row.type === "INCOME" ? "income" : "expense"}`}>{row.type === "INCOME" ? "+" : "−"}{formatMoney(row.amount)}</span>
+                      <ChevronRight className="transaction-feed-chevron" size={18} aria-hidden="true" />
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+            </>
+          )}
         </div>
       </section>
 
+      {detailRow && !isMobileViewport && (
+        <div className="modal-scrim transaction-detail-scrim" onClick={closeTransactionDetail}>
+          <section className="transaction-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="transaction-detail-title" onClick={event => event.stopPropagation()}>
+            <header className="transaction-detail-header">
+              <div className="transaction-detail-heading">
+                <span>Detail transaksi</span>
+                <h2 id="transaction-detail-title">Informasi lengkap</h2>
+              </div>
+              <button type="button" className="transaction-modal-close" onClick={closeTransactionDetail} aria-label="Tutup detail transaksi"><X size={19} /></button>
+            </header>
+            <TransactionDetailSections row={detailRow} />
+            <footer className="transaction-detail-actions">
+              <button type="button" className="button secondary" onClick={() => { const row = detailRow; setDetailRow(null); openEditModal(row); }}><PencilLine size={16} /> Edit transaksi</button>
+              {detailRow.status === 'PENDING_APPROVAL' && (
+                <button type="button" className="button primary" onClick={() => { void approveTransaction(detailRow); setDetailRow(null); }}><CheckCircle2 size={16} /> Setujui</button>
+              )}
+            </footer>
+          </section>
+        </div>
+      )}
+
       {addOpen && (
-        <div className="modal-scrim" onClick={() => setAddOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="modal-dialog relative w-full max-w-lg bg-white rounded-2xl md:rounded-3xl shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()} style={{ overflow: 'visible' }}>
-            <div className="modal-header flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100 rounded-t-2xl md:rounded-t-3xl">
+        <div className="modal-scrim transaction-modal-scrim" onClick={() => setAddOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="modal-dialog transaction-modal-dialog transaction-add-dialog relative w-full max-w-lg bg-white rounded-2xl md:rounded-3xl shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="modal-header transaction-modal-header flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100 rounded-t-2xl md:rounded-t-3xl">
               <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}><CircleDollarSign size={19} /> Catat transaksi</h3>
+              <button type="button" className="transaction-modal-close" onClick={() => setAddOpen(false)} aria-label="Tutup form catat transaksi"><X size={19} /></button>
             </div>
-            <form onSubmit={createTransaction}>
-              <div className="form-grid" style={{ padding: '24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <form className="transaction-modal-form" onSubmit={createTransaction}>
+              <div className="form-grid transaction-modal-fields transaction-add-fields" style={{ padding: '24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="transaction-primary-field" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Tipe</span>
                   <CustomSelect
                     name="type"
                     value={addType}
                     onChange={setAddType}
                     options={typeOptions}
+                    responsiveOverlay
+                    selectionTitle="Pilih tipe transaksi"
                   />
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Tanggal</span>
-                  <CustomDatePicker
-                    name="date"
-                    value={addDate}
-                    onChange={setAddDate}
-                  />
-                </div>
+                <label className="transaction-primary-field" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Jumlah (Rp)</span>
+                  <input name="amount" type="number" min="1" inputMode="numeric" placeholder="0" required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+                </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', gridColumn: 'span 2' }}>
                   <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Nama transaksi / merchant</span>
                   <input name="name" placeholder="Contoh: Beli Makan" required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
                 </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Jumlah (Rp)</span>
-                  <input name="amount" type="number" min="1" placeholder="0" required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Tanggal</span>
+                  <CustomDatePicker name="date" value={addDate} onChange={setAddDate} responsiveOverlay selectionTitle="Pilih tanggal transaksi" />
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Kategori</span>
                   <CustomSelect
@@ -704,6 +915,8 @@ export function TransactionsView() {
                     onChange={setAddCategoryId}
                     options={categoryOptions}
                     placeholder="Pilih Kategori"
+                    responsiveOverlay
+                    selectionTitle="Pilih kategori"
                   />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -714,10 +927,12 @@ export function TransactionsView() {
                     onChange={setAddSumberDana}
                     options={sumberDanaOptions}
                     placeholder="Pilih Sumber Dana"
+                    responsiveOverlay
+                    selectionTitle="Pilih sumber dana"
                   />
                 </div>
               </div>
-              <div className="modal-actions rounded-b-2xl md:rounded-b-3xl" style={{ padding: '16px 24px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: '12px', background: '#f8fafc' }}>
+              <div className="modal-actions transaction-modal-actions rounded-b-2xl md:rounded-b-3xl" style={{ padding: '16px 24px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: '12px', background: '#f8fafc' }}>
                 <button type="button" className="button secondary" onClick={() => setAddOpen(false)}>Batal</button>
                 <button type="submit" className="button primary">Simpan transaksi</button>
               </div>
@@ -727,30 +942,39 @@ export function TransactionsView() {
       )}
 
       {editRow && (
-        <div className="modal-scrim" onClick={() => setEditRow(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="modal-dialog relative w-full max-w-md bg-white rounded-2xl md:rounded-3xl shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()} style={{ overflow: 'visible' }}>
-            <div className="modal-header flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100 rounded-t-2xl md:rounded-t-3xl">
-              <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>Edit Transaksi</h3>
+        <div className="modal-scrim transaction-modal-scrim" onClick={() => setEditRow(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="modal-dialog transaction-modal-dialog transaction-edit-dialog relative w-full max-w-md bg-white rounded-2xl md:rounded-3xl shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="modal-header transaction-modal-header flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100 rounded-t-2xl md:rounded-t-3xl">
+              <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}><PencilLine size={18} /> Edit transaksi</h3>
+              <button type="button" className="transaction-modal-close" onClick={() => { setEditRow(null); setSaveRule(false); }} aria-label="Tutup form edit transaksi"><X size={19} /></button>
             </div>
-            <form onSubmit={updateTransaction}>
-              <div className="form-grid" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ padding: '12px', background: '#f8fafc', borderRadius: '8px' }}>
-                  <p style={{ margin: '0 0 4px', fontSize: '14px', fontWeight: 600 }}>{editRow.merchant}</p>
-                  <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>{formatMoney(editRow.amount)}</p>
-                </div>
-                
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Kategori</span>
+            <form className="transaction-modal-form" onSubmit={updateTransaction}>
+              <div className="form-grid transaction-modal-fields transaction-edit-fields" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <section className="transaction-edit-summary" aria-label="Ringkasan transaksi yang diedit">
+                  <span>Ringkasan</span>
+                  <div>
+                    <div>
+                      <p>{editRow.merchant}</p>
+                      <small>{editRow.type === 'INCOME' ? 'Pemasukan' : 'Pengeluaran'} · {getTransactionDateTimeLabel(editRow)}</small>
+                    </div>
+                    <strong className={editRow.type === 'INCOME' ? 'income' : 'expense'}>{editRow.type === 'INCOME' ? '+' : '−'}{formatMoney(editRow.amount)}</strong>
+                  </div>
+                </section>
+                <span className="transaction-edit-section-label">Informasi yang dapat diubah</span>
+                <div className="transaction-edit-field" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <span className="transaction-edit-field-heading" style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}><CategoryIcon category={(categories.find(category => category.id === editCategoryId)?.name || editRow.category)} />Kategori</span>
                   <CustomSelect
                     name="category_id"
                     value={editCategoryId}
                     onChange={setEditCategoryId}
                     options={categoryOptions}
                     placeholder="Pilih Kategori"
+                    responsiveOverlay
+                    selectionTitle="Pilih kategori"
                   />
                 </div>
                 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div className="transaction-edit-field" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Sumber Dana</span>
                   <CustomSelect
                     name="sumber_dana"
@@ -758,17 +982,19 @@ export function TransactionsView() {
                     onChange={setEditSumberDana}
                     options={sumberDanaOptions}
                     placeholder="Pilih Sumber Dana"
+                    responsiveOverlay
+                    selectionTitle="Pilih sumber dana"
                   />
                 </div>
                 
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label className="transaction-edit-field" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Catatan / kata kunci (opsional)</span>
                   <textarea name="notes" defaultValue={editRow.notes || ""} placeholder="Contoh: Bayar Netflix" rows={2} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc', resize: 'none' }} />
                 </label>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '4px', padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <div className="transaction-rule-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '4px', padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                   <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer' }}>
-                    <input type="checkbox" name="save_rule" checked={saveRule} onChange={e => setSaveRule(e.target.checked)} style={{ marginTop: '3px' }} />
+                    <input className="transaction-rule-checkbox" type="checkbox" name="save_rule" checked={saveRule} onChange={e => setSaveRule(e.target.checked)} style={{ marginTop: '3px' }} />
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                       <span style={{ fontSize: '13px', fontWeight: 600, color: '#334155' }}>Gunakan kategori & keyword ini seterusnya</span>
                       <span style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>Transaksi masa depan dari {editRow.merchant} akan otomatis dikategorikan seperti ini.</span>
@@ -776,16 +1002,16 @@ export function TransactionsView() {
                   </label>
                   
                   {saveRule && (
-                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', paddingLeft: '20px' }}>
-                      <input type="checkbox" name="retroactive" style={{ marginTop: '3px' }} />
+                    <label ref={advancedOptionRef} className="transaction-rule-secondary" style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', paddingLeft: '20px' }}>
+                      <input className="transaction-rule-checkbox" type="checkbox" name="retroactive" style={{ marginTop: '3px' }} />
                       <span style={{ fontSize: '12px', fontWeight: 500, color: '#475569' }}>Terapkan juga ke semua transaksi {editRow.merchant} sebelumnya</span>
                     </label>
                   )}
                 </div>
               </div>
-              <div className="modal-actions rounded-b-2xl md:rounded-b-3xl" style={{ padding: '16px 24px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: '12px', background: '#f8fafc' }}>
+              <div className="modal-actions transaction-modal-actions rounded-b-2xl md:rounded-b-3xl" style={{ padding: '16px 24px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: '12px', background: '#f8fafc' }}>
                 <button type="button" className="button secondary" onClick={() => { setEditRow(null); setSaveRule(false); }}>Batal</button>
-                <button type="submit" className="button primary">Simpan</button>
+                <button type="submit" className="button primary">Simpan perubahan</button>
               </div>
             </form>
           </div>
@@ -793,17 +1019,17 @@ export function TransactionsView() {
       )}
 
       {filterModalOpen && (
-        <div className="modal-scrim" onClick={() => setFilterModalOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="modal-dialog relative w-full max-w-lg bg-white rounded-2xl md:rounded-3xl shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()} style={{ overflow: 'visible' }}>
-            <div className="modal-header rounded-t-2xl md:rounded-t-3xl" style={{ padding: '20px 24px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '16px', fontWeight: 600 }}><Filter size={18} /> Filter Tanggal & Rentang Waktu</h3>
-              <button onClick={() => setFilterModalOpen(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>✕</button>
+        <div className="modal-scrim transaction-modal-scrim" onClick={() => setFilterModalOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="modal-dialog transaction-modal-dialog transaction-filter-dialog relative w-full max-w-lg bg-white rounded-2xl md:rounded-3xl shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="modal-header transaction-modal-header rounded-t-2xl md:rounded-t-3xl" style={{ padding: '20px 24px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '16px', fontWeight: 600 }}><Filter size={18} /> Filter periode</h3>
+              <button type="button" className="transaction-modal-close" onClick={() => setFilterModalOpen(false)} aria-label="Tutup filter"><X size={19} /></button>
             </div>
-            <div style={{ padding: '24px' }}>
+            <div className="transaction-filter-content" style={{ padding: '24px' }}>
               {/* Mode 1: Quick Preset */}
-              <div style={{ marginBottom: '16px' }}>
-                <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569', display: 'block', marginBottom: '8px' }}>Pilih Cepat</span>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              <div className="transaction-filter-section transaction-filter-presets" style={{ marginBottom: '16px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569', display: 'block', marginBottom: '8px' }}>Cepat</span>
+                <div className="transaction-filter-preset-grid" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                   {["Semua", "Hari Ini", "Minggu Ini", "Bulan Ini", "Tahun Ini"].map(preset => (
                     <button 
                       key={preset}
@@ -812,16 +1038,7 @@ export function TransactionsView() {
                         setTempFilterMode("preset");
                         setTempPreset(preset);
                       }}
-                      style={{
-                        padding: '6px 12px',
-                        borderRadius: '20px',
-                        fontSize: '12px',
-                        fontWeight: 500,
-                        border: tempFilterMode === "preset" && tempPreset === preset ? '1px solid #2563eb' : '1px solid #cbd5e1',
-                        background: tempFilterMode === "preset" && tempPreset === preset ? '#eff6ff' : 'white',
-                        color: tempFilterMode === "preset" && tempPreset === preset ? '#1d4ed8' : '#475569',
-                        cursor: 'pointer'
-                      }}
+                      className={tempFilterMode === "preset" && tempPreset === preset ? "active" : ""}
                     >
                       {preset}
                     </button>
@@ -830,9 +1047,9 @@ export function TransactionsView() {
               </div>
               
               {/* Mode 2: Specific Month & Year */}
-              <div style={{ marginBottom: '16px', padding: '16px', background: tempFilterMode === "monthYear" ? '#eff6ff' : '#f8fafc', borderRadius: '8px', border: tempFilterMode === "monthYear" ? '1px solid #2563eb' : '1px solid #e2e8f0' }}>
-                <span style={{ fontSize: '13px', fontWeight: 600, color: tempFilterMode === "monthYear" ? '#1d4ed8' : '#334155', display: 'block', marginBottom: '12px' }}>Pilih Bulan & Tahun Spesifik</span>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div className={`transaction-filter-section ${tempFilterMode === "monthYear" ? "active" : ""}`} style={{ marginBottom: '16px', padding: '16px', background: tempFilterMode === "monthYear" ? '#eff6ff' : '#f8fafc', borderRadius: '8px', border: tempFilterMode === "monthYear" ? '1px solid #2563eb' : '1px solid #e2e8f0' }}>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: tempFilterMode === "monthYear" ? '#1d4ed8' : '#334155', display: 'block', marginBottom: '12px' }}>Bulan tertentu</span>
+                <div className="transaction-filter-field-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <CustomSelect
                     value={tempMonth}
                     onChange={(val) => {
@@ -841,6 +1058,8 @@ export function TransactionsView() {
                     }}
                     options={monthOptions}
                     placeholder="Bulan"
+                    responsiveOverlay
+                    selectionTitle="Pilih bulan"
                   />
                   <CustomSelect
                     value={tempYear}
@@ -850,12 +1069,15 @@ export function TransactionsView() {
                     }}
                     options={yearOptions}
                     placeholder="Tahun"
+                    responsiveOverlay
+                    selectionTitle="Pilih tahun"
                   />
                 </div>
               </div>
               
               {/* Mode 3: Custom Date Range */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', padding: '16px', background: tempFilterMode === "custom" ? '#eff6ff' : 'transparent', borderRadius: '8px', border: tempFilterMode === "custom" ? '1px solid #2563eb' : '1px solid transparent' }}>
+              <div className={`transaction-filter-section transaction-filter-range ${tempFilterMode === "custom" ? "active" : ""}`} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', padding: '16px', background: tempFilterMode === "custom" ? '#eff6ff' : 'transparent', borderRadius: '8px', border: tempFilterMode === "custom" ? '1px solid #2563eb' : '1px solid transparent' }}>
+                <strong className="transaction-filter-section-title">Rentang khusus</strong>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '13px', fontWeight: 500, color: tempFilterMode === "custom" ? '#1d4ed8' : '#475569' }}>Tanggal Mulai</span>
                   <CustomDatePicker
@@ -872,6 +1094,8 @@ export function TransactionsView() {
                     placeholder="dd/mm/yyyy"
                     position="top"
                     align="left"
+                    responsiveOverlay
+                    selectionTitle="Pilih tanggal mulai"
                   />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -885,12 +1109,14 @@ export function TransactionsView() {
                     placeholder="dd/mm/yyyy"
                     position="top"
                     align="right"
+                    responsiveOverlay
+                    selectionTitle="Pilih tanggal akhir"
                   />
                 </div>
               </div>
             </div>
             
-            <div className="modal-actions rounded-b-2xl md:rounded-b-3xl" style={{ padding: '16px 24px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
+            <div className="modal-actions transaction-modal-actions transaction-filter-actions rounded-b-2xl md:rounded-b-3xl" style={{ padding: '16px 24px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
               <button 
                 type="button" 
                 className="button text-button" 

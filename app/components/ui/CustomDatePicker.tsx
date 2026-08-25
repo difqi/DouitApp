@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { ChevronLeft, ChevronRight, ChevronDown, Calendar as CalendarIcon } from "lucide-react";
+import { createPortal } from "react-dom";
+import { ChevronLeft, ChevronRight, ChevronDown, Calendar as CalendarIcon, X } from "lucide-react";
 
 interface CustomDatePickerProps {
   value?: string; // Format: YYYY-MM-DD
@@ -15,6 +16,8 @@ interface CustomDatePickerProps {
   min?: string;
   align?: "left" | "right";
   position?: "bottom" | "top";
+  responsiveOverlay?: boolean;
+  selectionTitle?: string;
 }
 
 const MONTH_NAMES = [
@@ -46,6 +49,35 @@ function formatToYYYYMMDD(d: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function getCalendarPopoverStyle(
+  trigger: HTMLButtonElement,
+  align: "left" | "right",
+  preferredPosition: "bottom" | "top",
+): React.CSSProperties {
+  const rect = trigger.getBoundingClientRect();
+  const viewportPadding = 12;
+  const width = Math.min(288, window.innerWidth - viewportPadding * 2);
+  const preferredLeft = align === "right" ? rect.right - width : rect.left;
+  const left = Math.min(
+    Math.max(preferredLeft, viewportPadding),
+    window.innerWidth - width - viewportPadding,
+  );
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const opensUpward =
+    (preferredPosition === "top" && rect.top >= 320) ||
+    (spaceBelow < 390 && rect.top > spaceBelow);
+
+  return {
+    position: "fixed",
+    left,
+    width,
+    maxHeight: window.innerHeight - viewportPadding * 2,
+    ...(opensUpward
+      ? { bottom: window.innerHeight - rect.top + 8 }
+      : { top: rect.bottom + 8 }),
+  };
+}
+
 export function CustomDatePicker({
   value,
   onChange,
@@ -58,9 +90,16 @@ export function CustomDatePicker({
   min,
   align = "left",
   position = "bottom",
+  responsiveOverlay = false,
+  selectionTitle = "Pilih tanggal",
 }: CustomDatePickerProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isMobileSheet, setIsMobileSheet] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({});
   const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   // Parse initial date
   const parsedDate = parseLocalDate(value);
@@ -88,7 +127,12 @@ export function CustomDatePicker({
   // Close on outside click
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node) &&
+        !popoverRef.current?.contains(event.target as Node) &&
+        !sheetRef.current?.contains(event.target as Node)
+      ) {
         setIsOpen(false);
         setIsMonthPickerOpen(false);
         setIsYearPickerOpen(false);
@@ -97,6 +141,42 @@ export function CustomDatePicker({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+        setIsMonthPickerOpen(false);
+        setIsYearPickerOpen(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !responsiveOverlay) return;
+
+    const updateOverlayLayout = () => {
+      const trigger = buttonRef.current;
+      if (!trigger) return;
+
+      const mobile = window.matchMedia("(max-width: 760px)").matches;
+      setIsMobileSheet(mobile);
+      if (!mobile) setPopoverStyle(getCalendarPopoverStyle(trigger, align, position));
+    };
+
+    updateOverlayLayout();
+    window.addEventListener("resize", updateOverlayLayout);
+    window.addEventListener("scroll", updateOverlayLayout, true);
+    return () => {
+      window.removeEventListener("resize", updateOverlayLayout);
+      window.removeEventListener("scroll", updateOverlayLayout, true);
+    };
+  }, [align, isOpen, position, responsiveOverlay]);
 
   // Calendar calculations
   const firstDayIndex = new Date(currentYear, currentMonth, 1).getDay();
@@ -157,15 +237,25 @@ export function CustomDatePicker({
 
       {/* Trigger Input Display */}
       <button
+        ref={buttonRef}
         type="button"
         disabled={disabled}
         onClick={() => {
           if (!disabled) {
+            if (responsiveOverlay && !isOpen) {
+              const mobile = window.matchMedia("(max-width: 760px)").matches;
+              setIsMobileSheet(mobile);
+              if (!mobile && buttonRef.current) {
+                setPopoverStyle(getCalendarPopoverStyle(buttonRef.current, align, position));
+              }
+            }
             setIsOpen((prev) => !prev);
             setIsMonthPickerOpen(false);
             setIsYearPickerOpen(false);
           }
         }}
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
         className={`w-full flex items-center justify-between px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 shadow-xs transition-all hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 cursor-pointer ${
           disabled ? "opacity-50 cursor-not-allowed bg-slate-50" : ""
         } ${buttonClassName}`}
@@ -177,12 +267,19 @@ export function CustomDatePicker({
       </button>
 
       {/* Date Picker Popover */}
-      {isOpen && (
+      {isOpen && (() => {
+        const calendar = (
         <div
-          className={`absolute z-50 w-72 bg-[#FAF9F5] border border-amber-950/10 rounded-2xl p-4 shadow-2xl shadow-slate-900/15 animate-in fade-in-0 zoom-in-95 duration-150 ${
-            position === "top" ? "bottom-full mb-2" : "top-full mt-2"
-          } ${
-            align === "right" ? "right-0" : "left-0"
+          ref={popoverRef}
+          style={responsiveOverlay && !isMobileSheet ? popoverStyle : undefined}
+          className={`custom-date-picker-calendar bg-[#FAF9F5] p-4 animate-in fade-in-0 zoom-in-95 duration-150 ${
+            responsiveOverlay
+              ? isMobileSheet
+                ? "custom-date-picker-calendar-mobile w-full overflow-y-auto"
+                : "fixed z-[220] w-72 overflow-y-auto rounded-2xl border border-amber-950/10 shadow-2xl shadow-slate-900/15"
+              : `absolute z-50 w-72 rounded-2xl border border-amber-950/10 shadow-2xl shadow-slate-900/15 ${
+                  position === "top" ? "bottom-full mb-2" : "top-full mt-2"
+                } ${align === "right" ? "right-0" : "left-0"}`
           }`}
         >
           {/* Header Month / Year & Chevrons */}
@@ -195,7 +292,7 @@ export function CustomDatePicker({
                   setIsMonthPickerOpen((prev) => !prev);
                   setIsYearPickerOpen(false);
                 }}
-                className="text-xs font-bold text-slate-800 hover:bg-emerald-600/10 hover:text-emerald-900 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                className="custom-date-picker-heading-button text-xs font-bold text-slate-800 hover:bg-emerald-600/10 hover:text-emerald-900 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
               >
                 {MONTH_NAMES[currentMonth]}
                 <ChevronDown className={`w-3 h-3 text-slate-500 transition-transform ${isMonthPickerOpen ? "rotate-180 text-emerald-600" : ""}`} />
@@ -208,7 +305,7 @@ export function CustomDatePicker({
                   setIsYearPickerOpen((prev) => !prev);
                   setIsMonthPickerOpen(false);
                 }}
-                className="text-xs font-bold text-slate-800 hover:bg-emerald-600/10 hover:text-emerald-900 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                className="custom-date-picker-heading-button text-xs font-bold text-slate-800 hover:bg-emerald-600/10 hover:text-emerald-900 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
               >
                 {currentYear}
                 <ChevronDown className={`w-3 h-3 text-slate-500 transition-transform ${isYearPickerOpen ? "rotate-180 text-emerald-600" : ""}`} />
@@ -220,7 +317,7 @@ export function CustomDatePicker({
               <button
                 type="button"
                 onClick={handlePrevMonth}
-                className="p-1 text-slate-500 hover:text-slate-900 hover:bg-emerald-600/10 rounded-lg transition-colors cursor-pointer"
+                className="custom-date-picker-nav p-1 text-slate-500 hover:text-slate-900 hover:bg-emerald-600/10 rounded-lg transition-colors cursor-pointer"
                 title="Bulan Sebelumnya"
               >
                 <ChevronLeft className="w-4 h-4" />
@@ -228,7 +325,7 @@ export function CustomDatePicker({
               <button
                 type="button"
                 onClick={handleNextMonth}
-                className="p-1 text-slate-500 hover:text-slate-900 hover:bg-emerald-600/10 rounded-lg transition-colors cursor-pointer"
+                className="custom-date-picker-nav p-1 text-slate-500 hover:text-slate-900 hover:bg-emerald-600/10 rounded-lg transition-colors cursor-pointer"
                 title="Bulan Berikutnya"
               >
                 <ChevronRight className="w-4 h-4" />
@@ -311,16 +408,24 @@ export function CustomDatePicker({
                 tempSelectedDate.getDate() === day &&
                 tempSelectedDate.getMonth() === currentMonth &&
                 tempSelectedDate.getFullYear() === currentYear;
+              const today = new Date();
+              const isToday =
+                today.getDate() === day &&
+                today.getMonth() === currentMonth &&
+                today.getFullYear() === currentYear;
 
               return (
                 <button
                   key={`day-${day}`}
                   type="button"
                   onClick={() => handleSelectDay(day)}
-                  className={`text-xs flex items-center justify-center h-8 w-8 rounded-xl mx-auto transition-all cursor-pointer ${
+                  aria-label={`${day} ${MONTH_NAMES[currentMonth]} ${currentYear}${isToday ? ", hari ini" : ""}`}
+                  className={`custom-date-picker-day text-xs flex items-center justify-center h-8 w-8 rounded-xl mx-auto transition-all cursor-pointer ${
                     isSelected
-                      ? "bg-gradient-to-r from-[#0F2A1D] to-[#163827] !text-white text-white font-bold shadow-sm"
-                      : "text-slate-800 hover:bg-emerald-600/10 hover:text-emerald-950 font-medium"
+                      ? "bg-[#163827] !text-white text-white font-bold shadow-sm"
+                      : isToday
+                        ? "text-emerald-900 ring-1 ring-emerald-500/50 hover:bg-emerald-600/10 font-semibold"
+                        : "text-slate-800 hover:bg-emerald-600/10 hover:text-emerald-950 font-medium"
                   }`}
                 >
                   <span className={isSelected ? "!text-white text-white font-bold" : "text-slate-800"}>
@@ -332,7 +437,7 @@ export function CustomDatePicker({
           </div>
 
           {/* Footer Action Buttons */}
-          <div className="flex items-center justify-between gap-2 mt-4 pt-3 border-t border-amber-950/10">
+          <div className="custom-date-picker-actions flex items-center justify-between gap-2 mt-4 pt-3 border-t border-amber-950/10">
             <button
               type="button"
               onClick={() => {
@@ -347,13 +452,47 @@ export function CustomDatePicker({
             <button
               type="button"
               onClick={handleConfirmDate}
-              className="px-5 py-2 text-xs font-semibold !text-white text-white bg-gradient-to-r from-[#0F2A1D] to-[#163827] hover:from-[#133525] hover:to-[#1a4430] rounded-xl shadow-sm transition-all active:scale-[0.98] cursor-pointer"
+              className="px-5 py-2 text-xs font-semibold !text-white text-white bg-[#163827] hover:bg-[#1a4430] rounded-xl shadow-sm transition-all active:scale-[0.98] cursor-pointer"
             >
               <span className="!text-white text-white font-semibold">Pilih</span>
             </button>
           </div>
         </div>
-      )}
+        );
+
+        if (responsiveOverlay && typeof document !== "undefined") {
+          return createPortal(
+            isMobileSheet ? (
+              <div className="fixed inset-0 z-[210] bg-slate-950/45 backdrop-blur-[2px]" onMouseDown={() => setIsOpen(false)}>
+                <section
+                  ref={sheetRef}
+                  className="absolute inset-x-0 bottom-0 max-h-[92dvh] overflow-hidden rounded-t-3xl border border-slate-200 bg-[#FAF9F5] shadow-2xl"
+                  onMouseDown={(event) => event.stopPropagation()}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={selectionTitle}
+                >
+                  <header className="flex min-h-16 items-center justify-between border-b border-slate-200 px-5 py-3">
+                    <h3 className="m-0 text-base font-semibold text-slate-900">{selectionTitle}</h3>
+                    <button
+                      type="button"
+                      className="grid h-11 w-11 place-items-center rounded-xl text-slate-500 hover:bg-slate-100"
+                      onClick={() => setIsOpen(false)}
+                      aria-label="Tutup kalender"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </header>
+                  {calendar}
+                </section>
+              </div>
+            ) : calendar,
+            document.body,
+          );
+        }
+
+        return calendar;
+      })()}
     </div>
   );
 }
