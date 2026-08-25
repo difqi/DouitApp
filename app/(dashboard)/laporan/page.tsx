@@ -2,28 +2,19 @@
 
 import {
   ArrowLeft,
-  ArrowLeftRight,
   ArrowRight,
   BarChart3,
   Bot,
-  Briefcase,
   Calendar,
-  Car,
   ChevronDown,
-  Coffee,
   Download,
   Edit3,
   FileText,
   Filter,
-  LayoutGrid,
   Layers,
   PieChart,
-  Receipt,
-  ShoppingBag,
-  Smartphone,
   Store,
   Table,
-  Ticket,
   TrendingDown,
   TrendingUp,
   Wallet
@@ -44,6 +35,7 @@ import {
   exportMultiYearExcel
 } from "@/lib/report-export-utils";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
+import { CategoryIcon } from "@/app/components/CategoryIcon";
 
 const formatMoney = (value: number | string) =>
   new Intl.NumberFormat("id-ID", {
@@ -70,17 +62,7 @@ type ReportDetailView =
 const categoryIconClassName = "h-4 w-4";
 
 const getCategoryIcon = (categoryName?: string) => {
-  const normalized = (categoryName || "").trim().toLocaleLowerCase("id-ID");
-
-  if (["makanan", "minuman", "makanan & minuman"].includes(normalized)) return <Coffee className={categoryIconClassName} aria-hidden="true" />;
-  if (normalized === "transportasi") return <Car className={categoryIconClassName} aria-hidden="true" />;
-  if (normalized === "belanja") return <ShoppingBag className={categoryIconClassName} aria-hidden="true" />;
-  if (normalized === "barang digital") return <Smartphone className={categoryIconClassName} aria-hidden="true" />;
-  if (["tagihan", "biaya admin"].includes(normalized)) return <Receipt className={categoryIconClassName} aria-hidden="true" />;
-  if (["transfer", "gaji", "pindah saldo", "transfer antar rekening"].includes(normalized)) return <ArrowLeftRight className={categoryIconClassName} aria-hidden="true" />;
-  if (normalized === "jasa") return <Briefcase className={categoryIconClassName} aria-hidden="true" />;
-  if (normalized === "hiburan") return <Ticket className={categoryIconClassName} aria-hidden="true" />;
-  return <LayoutGrid className={categoryIconClassName} aria-hidden="true" />;
+  return <CategoryIcon category={categoryName} className={categoryIconClassName} />;
 };
 
 type ExplorerTransaction = {

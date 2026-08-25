@@ -1,22 +1,59 @@
 "use client";
 
-import { Check, Copy, Mail, RefreshCw, Settings, ShieldAlert, User, Shield, AlertTriangle, Trash2, RotateCcw, Tags, Folder, ShoppingBag, Coffee, Car, Home, Smartphone, Briefcase, Heart, Book, Box, Edit2, Wallet, CreditCard, Receipt, CheckCircle2, Clock, CircleDashed, AlertCircle } from "lucide-react";
-
-const IconMap: Record<string, any> = {
-  Folder, ShoppingBag, Coffee, Car, Home, Smartphone, Briefcase, Heart, Book, Box, Tags, Receipt
-};
-import { useState, useEffect } from "react";
+import { AlertCircle, AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronRight, Circle, CircleDashed, Clock, Copy, Edit2, Mail, MoreHorizontal, Plus, RefreshCw, RotateCcw, Settings, Shield, ShieldAlert, Tags, Trash2, User, Wallet, X } from "lucide-react";
+import { useState, useEffect, useSyncExternalStore } from "react";
 import { useDouit } from "../../providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/app/components/ui/ConfirmDialog";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
+import { BankLogo } from "@/app/components/BankLogo";
+import { CATEGORY_ICON_OPTIONS, CategoryIcon, resolveCategoryColor } from "@/app/components/CategoryIcon";
+
+type SettingsTab = 'email' | 'profile' | 'rules' | 'accounts';
+
+const SETTINGS_NAV: { id: SettingsTab; label: string; description: string; icon: typeof Mail }[] = [
+  { id: 'email', label: 'Email otomatis', description: 'Pencatatan dari notifikasi bank', icon: Mail },
+  { id: 'profile', label: 'Profil & preferensi', description: 'Nama, email, dan keamanan', icon: User },
+  { id: 'rules', label: 'Kategori & akun', description: 'Kategori dan aturan merchant', icon: Tags },
+  { id: 'accounts', label: 'Rekening & saldo', description: 'Sumber dana dan saldo awal', icon: Wallet },
+];
+
+const CATEGORY_COLOR_OPTIONS = [
+  "#16825d",
+  "#2563eb",
+  "#7c3aed",
+  "#db2777",
+  "#dc6b2f",
+  "#ca8a04",
+  "#64748b",
+] as const;
+
+const formatRupiah = (value: number | string) => new Intl.NumberFormat("id-ID", {
+  style: "currency",
+  currency: "IDR",
+  maximumFractionDigits: 0,
+}).format(Number(value));
+
+const subscribeSettingsViewport = (onStoreChange: () => void) => {
+  const mediaQuery = window.matchMedia("(max-width: 760px)");
+  mediaQuery.addEventListener("change", onStoreChange);
+  return () => mediaQuery.removeEventListener("change", onStoreChange);
+};
+
+const getSettingsMobileSnapshot = () => window.matchMedia("(max-width: 760px)").matches;
+const getSettingsServerSnapshot = () => false;
 
 export default function SettingsPage() {
   const { user, business, refresh } = useDouit();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const isMobileViewport = useSyncExternalStore(
+    subscribeSettingsViewport,
+    getSettingsMobileSnapshot,
+    getSettingsServerSnapshot,
+  );
 
   // Confirmation Dialog States
   const [confirmDeleteCatId, setConfirmDeleteCatId] = useState<string | null>(null);
@@ -25,6 +62,10 @@ export default function SettingsPage() {
   const [confirmRegenerateOpen, setConfirmRegenerateOpen] = useState(false);
   const [confirmResetDataOpen, setConfirmResetDataOpen] = useState(false);
   const [confirmDeleteAccountOpen, setConfirmDeleteAccountOpen] = useState(false);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const [addCategoryOpen, setAddCategoryOpen] = useState(false);
+  const [categoryIconPickerOpen, setCategoryIconPickerOpen] = useState(false);
+  const [openAccountMenuId, setOpenAccountMenuId] = useState<string | null>(null);
 
   const [passwordError, setPasswordError] = useState<string | null>(null);
 
@@ -34,6 +75,7 @@ export default function SettingsPage() {
     
     if (action === 'add_account') {
       setActiveTab('accounts');
+      setMobileDetailOpen(true);
       setEditAccountId(null);
       setAccName(bankName || "");
       setAccType("bank");
@@ -43,11 +85,30 @@ export default function SettingsPage() {
     }
   }, [searchParams]);
 
+  useEffect(() => {
+    if (!addCategoryOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setAddCategoryOpen(false);
+        setCategoryIconPickerOpen(false);
+      }
+    };
+
+    if (isMobileViewport) document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [addCategoryOpen, isMobileViewport]);
+
   const [copied, setCopied] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
 
   // Tab state
-  const [activeTab, setActiveTab] = useState<'email' | 'profile' | 'rules' | 'accounts'>('email');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('email');
 
   // Tab 3 State
   const [categories, setCategories] = useState<any[]>([]);
@@ -240,16 +301,33 @@ export default function SettingsPage() {
       is_system: false,
       budget_limit: Number(newCatBudget) || 0
     }).select().single();
+
+    if (error) {
+      toast.error("Gagal menambahkan kategori: " + error.message);
+      return;
+    }
     
     if (newCat && Number(newCatBudget) > 0) {
-      await supabase.from('category_budgets').insert({
+      const { error: budgetError } = await supabase.from('category_budgets').insert({
         user_id: user.id,
         category_id: newCat.id,
         amount: Number(newCatBudget)
       });
+      if (budgetError) {
+        toast.error("Kategori dibuat, tetapi alokasi anggaran gagal disimpan: " + budgetError.message);
+        setNewCatName("");
+        setNewCatBudget("");
+        setAddCategoryOpen(false);
+        setCategoryIconPickerOpen(false);
+        fetchRulesAndCategories();
+        return;
+      }
     }
     setNewCatName("");
     setNewCatBudget("");
+    setAddCategoryOpen(false);
+    setCategoryIconPickerOpen(false);
+    toast.success("Kategori berhasil ditambahkan.");
     fetchRulesAndCategories();
   };
 
@@ -264,17 +342,27 @@ export default function SettingsPage() {
     e.preventDefault();
     if (!user || !editCatId) return;
     const supabase = createClient();
-    await supabase.from('categories').update({
+    const { error: categoryError } = await supabase.from('categories').update({
       budget_limit: Number(editCatBudget) || 0,
       name: editCatName
     }).eq('id', editCatId);
+
+    if (categoryError) {
+      toast.error("Gagal menyimpan kategori: " + categoryError.message);
+      return;
+    }
     
-    await supabase.from('category_budgets').upsert({
+    const { error: budgetError } = await supabase.from('category_budgets').upsert({
       user_id: user.id,
       category_id: editCatId,
       amount: Number(editCatBudget) || 0
     }, { onConflict: 'user_id, category_id' });
+    if (budgetError) {
+      toast.error("Kategori tersimpan, tetapi alokasi anggaran gagal diperbarui: " + budgetError.message);
+      return;
+    }
     setEditCatModalOpen(false);
+    toast.success("Perubahan kategori tersimpan.");
     fetchRulesAndCategories();
   };
 
@@ -306,20 +394,29 @@ export default function SettingsPage() {
     }
     
     if (editAccountId) {
-      await supabase.from('payment_accounts').update({
+      const { error } = await supabase.from('payment_accounts').update({
         name: accName,
         type: accType,
         initial_balance: Number(accBalance) || 0,
         is_primary: accIsPrimary
       }).eq('id', editAccountId);
+      if (error) {
+        toast.error("Gagal menyimpan rekening: " + error.message);
+        return;
+      }
     } else {
-      const { data: newAccounts } = await supabase.from('payment_accounts').insert({
+      const { data: newAccounts, error } = await supabase.from('payment_accounts').insert({
         user_id: user.id,
         name: accName,
         type: accType,
         initial_balance: Number(accBalance) || 0,
         is_primary: accIsPrimary
       }).select();
+
+      if (error) {
+        toast.error("Gagal menambahkan rekening: " + error.message);
+        return;
+      }
 
       if (newAccounts && newAccounts.length > 0) {
         const newAccount = newAccounts[0];
@@ -357,10 +454,13 @@ export default function SettingsPage() {
     }
     
     setAccountModalOpen(false);
+    setOpenAccountMenuId(null);
+    toast.success(editAccountId ? "Perubahan rekening tersimpan." : "Rekening berhasil ditambahkan.");
     fetchAccounts();
   };
 
   const handleDeletePaymentAccount = (id: string) => {
+    setOpenAccountMenuId(null);
     setConfirmDeleteAccountId(id);
   };
 
@@ -387,6 +487,7 @@ export default function SettingsPage() {
   };
 
   const openEditAccount = (acc: any) => {
+    setOpenAccountMenuId(null);
     setEditAccountId(acc.id);
     setAccName(acc.name);
     setAccType(acc.type);
@@ -513,182 +614,102 @@ export default function SettingsPage() {
     toast.info("Penghapusan akun sedang diproses. (Fitur ini mungkin memerlukan konfigurasi sisi server lebih lanjut)");
   };
 
+  const openSettingsTab = (tab: SettingsTab, mobile = false) => {
+    setActiveTab(tab);
+    if (mobile) setMobileDetailOpen(true);
+  };
+
+  const activeNavItem = SETTINGS_NAV.find((item) => item.id === activeTab) || SETTINGS_NAV[0];
+  const systemCategories = categories.filter((category) => category.is_system || !category.user_id);
+  const customCategories = categories.filter((category) => !category.is_system && category.user_id);
+
   return (
-    <div className="workspace-page">
-      <div className="workspace-heading">
+    <div className={`workspace-page settings-page ${mobileDetailOpen ? 'settings-mobile-detail-active' : ''}`}>
+      {(!isMobileViewport || !mobileDetailOpen) && (
+      <div className="workspace-heading settings-page-header">
         <div>
           <span className="workspace-eyebrow"><Settings size={14} /> Pengaturan</span>
-          <h1>Pengaturan Douit</h1>
-          <p>Atur pencatatan otomatis, profil, kategori, dan rekeningmu.</p>
+          <h1>Pengaturan</h1>
+          <p>Kelola profil, kategori, rekening, dan preferensi Douit.</p>
         </div>
       </div>
+      )}
 
-      <div className="settings-container" style={{ maxWidth: '800px', margin: '0 auto', padding: '24px 0' }}>
+      <div className="settings-container">
+        {isMobileViewport ? (!mobileDetailOpen ? (
+          <nav className="settings-mobile-index" aria-label="Bagian pengaturan">
+            {SETTINGS_NAV.map((item) => {
+              const ItemIcon = item.icon;
+              return (
+                <button key={item.id} type="button" onClick={() => openSettingsTab(item.id, true)}>
+                  <span className="settings-nav-icon"><ItemIcon size={19} /></span>
+                  <span><b>{item.label}</b><small>{item.description}</small></span>
+                  <ChevronRight size={18} />
+                </button>
+              );
+            })}
+          </nav>
+        ) : null) : (
+          <nav className="settings-desktop-nav" aria-label="Bagian pengaturan">
+            {SETTINGS_NAV.map((item) => {
+              const ItemIcon = item.icon;
+              return (
+                <button key={item.id} type="button" className={activeTab === item.id ? 'active' : ''} onClick={() => openSettingsTab(item.id)} aria-current={activeTab === item.id ? 'page' : undefined}>
+                  <ItemIcon size={16} />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        )}
 
-        {/* Navigation Tabs */}
-        <div style={{ display: 'flex', gap: '16px', borderBottom: '1px solid #e2e8f0', marginBottom: '24px' }}>
-          <button
-            onClick={() => setActiveTab('email')}
-            style={{
-              padding: '12px 16px',
-              background: 'none',
-              border: 'none',
-              borderBottom: activeTab === 'email' ? '2px solid #84cc16' : '2px solid transparent',
-              color: activeTab === 'email' ? '#84cc16' : '#64748b',
-              fontWeight: 600,
-              fontSize: '15px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease'
-            }}
-          >
-            <Mail size={18} />
-            Email Otomatis
-          </button>
-          <button
-            onClick={() => setActiveTab('profile')}
-            style={{
-              padding: '12px 16px',
-              background: 'none',
-              border: 'none',
-              borderBottom: activeTab === 'profile' ? '2px solid #84cc16' : '2px solid transparent',
-              color: activeTab === 'profile' ? '#84cc16' : '#64748b',
-              fontWeight: 600,
-              fontSize: '15px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease'
-            }}
-          >
-            <User size={18} />
-            Profil & Keamanan
-          </button>
-          <button
-            onClick={() => setActiveTab('rules')}
-            style={{
-              padding: '12px 16px',
-              background: 'none',
-              border: 'none',
-              borderBottom: activeTab === 'rules' ? '2px solid #84cc16' : '2px solid transparent',
-              color: activeTab === 'rules' ? '#84cc16' : '#64748b',
-              fontWeight: 600,
-              fontSize: '15px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease'
-            }}
-          >
-            <Tags size={18} />
-            Kategori & Aturan
-          </button>
-          <button
-            onClick={() => setActiveTab('accounts')}
-            style={{
-              padding: '12px 16px',
-              background: 'none',
-              border: 'none',
-              borderBottom: activeTab === 'accounts' ? '2px solid #84cc16' : '2px solid transparent',
-              color: activeTab === 'accounts' ? '#84cc16' : '#64748b',
-              fontWeight: 600,
-              fontSize: '15px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease'
-            }}
-          >
-            <Wallet size={18} />
-            Rekening & Saldo
-          </button>
-        </div>
+        {(!isMobileViewport || mobileDetailOpen) && (
+        <div className="settings-detail-shell">
+          {isMobileViewport && <header className="settings-mobile-detail-header">
+            <button type="button" onClick={() => setMobileDetailOpen(false)} aria-label="Kembali ke Pengaturan"><ArrowLeft size={19} /> Pengaturan</button>
+            <h1>{activeNavItem.label}</h1>
+            <p>{activeNavItem.description}</p>
+          </header>}
 
         {/* TAB 1: INTEGRASI EMAIL */}
         {activeTab === 'email' && (
-          <section className="settings-section" style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden', marginBottom: '24px' }}>
-            <div style={{ padding: '24px', borderBottom: '1px solid #e2e8f0' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div style={{ background: '#ecfccb', color: '#65a30d', padding: '8px', borderRadius: '8px' }}>
-                    <Mail size={20} />
-                  </div>
-                  <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Pencatatan Otomatis dari Email</h2>
-                </div>
-
-                {!isFetchingEmailStatus && (
-                  <div>
-                    {emailStatus === 'CONNECTED' && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border shadow-xs transition-colors bg-emerald-50 text-emerald-700 border-emerald-200/80">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        Terhubung dan terverifikasi
-                      </span>
-                    )}
-                    {emailStatus === 'PENDING' && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border shadow-xs transition-colors bg-amber-50 text-amber-700 border-amber-200/80">
-                        <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-                        Menunggu konfirmasi
-                      </span>
-                    )}
-                    {emailStatus === 'UNLINKED' && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border shadow-xs transition-colors bg-slate-100/80 text-slate-600 border-slate-200">
-                        <CircleDashed className="w-3.5 h-3.5 text-slate-400" />
-                        Belum ditautkan
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-              <p style={{ color: '#64748b', fontSize: '14px', lineHeight: 1.5, margin: '8px 0 0 0' }}>
-                Teruskan email notifikasi transaksi dari bankmu, seperti BCA, Mandiri, atau BRI, ke alamat di bawah. Douit akan mencatat transaksinya secara otomatis.
-              </p>
+          <section className="settings-surface settings-email-section">
+            <div className="settings-section-intro">
+              <span className="settings-section-icon"><Mail size={20} /></span>
+              <div><h2>Pencatatan otomatis dari email</h2><p>Teruskan notifikasi transaksi bank ke Douit agar transaksi dicatat otomatis.</p></div>
             </div>
 
-            <div style={{ padding: '24px', background: '#f8fafc' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Email khususmu</label>
-
-              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                <div style={{ flex: 1, position: 'relative' }}>
-                  <input
-                    type="text"
-                    readOnly
-                    value={inboundEmailAlias || 'Memuat...'}
-                    style={{
-                      width: '100%', padding: '12px 16px', background: '#fff',
-                      border: '1px solid #cbd5e1', borderRadius: '8px',
-                      fontFamily: 'monospace', fontSize: '14px', color: '#0f172a'
-                    }}
-                  />
-                </div>
-                <button
-                  onClick={handleCopy}
-                  className="button primary"
-                  style={{ height: '44px', padding: '0 20px', display: 'flex', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap' }}
-                >
-                  {copied ? <><Check size={16} /> Disalin</> : <><Copy size={16} /> Salin Email</>}
+            <div className="settings-email-address-block">
+              <label>Email tujuan</label>
+              <div className="settings-email-copy-row">
+                <code>{inboundEmailAlias || 'Memuat...'}</code>
+                <button type="button" className="button primary" onClick={handleCopy} disabled={!inboundEmailAlias}>
+                  {copied ? <><Check size={16} /> Tersalin ✓</> : <><Copy size={16} /> Salin alamat</>}
                 </button>
               </div>
+            </div>
 
-              <div style={{ marginTop: '24px', padding: '16px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', display: 'flex', gap: '12px' }}>
-                <ShieldAlert size={20} color="#d97706" style={{ flexShrink: 0 }} />
-                <div>
-                  <h4 style={{ margin: '0 0 4px 0', fontSize: '14px', fontWeight: 600, color: '#92400e' }}>Jaga kerahasiaan email ini</h4>
-                  <p style={{ margin: 0, fontSize: '13px', color: '#b45309', lineHeight: 1.5 }}>
-                    Siapa pun yang mengirim ke alamat ini dapat mencatat transaksi di akunmu. Jika alamatnya tersebar, segera buat email khusus yang baru.
-                  </p>
-                  <button
-                    onClick={handleRegenerate}
-                    disabled={regenerating}
-                    style={{ background: 'none', border: 'none', color: '#d97706', fontWeight: 600, fontSize: '13px', padding: 0, marginTop: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                  >
-                    <RefreshCw size={14} className={regenerating ? "spin" : ""} /> {regenerating ? "Membuat baru..." : "Buat email baru"}
-                  </button>
-                </div>
+            <div className="settings-subsection settings-email-status-row">
+              <div className="settings-email-status-copy">
+                <h3>Status forwarding</h3>
+                <p>Status tautan antara email bank dan alamat Douit.</p>
+                <p className="settings-email-helper"><span>Petunjuk:</span> teruskan notifikasi transaksi bank ke alamat email di atas; detail teknis diproses aman di latar belakang.</p>
+              </div>
+              {isFetchingEmailStatus ? (
+                <span className="settings-status neutral"><CircleDashed className="settings-status-spinner" size={14} /> Memeriksa...</span>
+              ) : emailStatus === 'CONNECTED' ? (
+                <span className="settings-status success"><CheckCircle2 size={14} /> Aktif</span>
+              ) : emailStatus === 'PENDING' ? (
+                <span className="settings-status warning"><Clock size={14} /> Menunggu konfirmasi</span>
+              ) : (
+                <span className="settings-status neutral"><Circle size={14} /> Belum aktif</span>
+              )}
+            </div>
+
+            <div className="settings-notice settings-notice-warning">
+              <ShieldAlert size={18} />
+              <div><b>Jaga kerahasiaan alamat ini</b><p>Siapa pun yang mengirim ke alamat ini dapat memicu pencatatan. Buat alamat baru bila alamat tersebar.</p>
+                <button type="button" onClick={handleRegenerate} disabled={regenerating}><RefreshCw size={14} className={regenerating ? "spin" : ""} /> {regenerating ? "Membuat baru..." : "Buat email baru"}</button>
               </div>
             </div>
           </section>
@@ -696,414 +717,182 @@ export default function SettingsPage() {
 
         {/* TAB 2: PROFIL & KEAMANAN */}
         {activeTab === 'profile' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div className="settings-section-stack">
+            <section className="settings-surface">
+              <div className="settings-section-intro">
+                <span className="settings-profile-avatar">{(fullName || user?.email || 'D').slice(0, 1).toUpperCase()}</span>
+                <div><h2>Profil</h2><p>Informasi utama yang tampil di akun Douit.</p></div>
+              </div>
+              <div className="settings-form-grid settings-form-grid-profile">
+                <label className="settings-field"><span>Nama lengkap</span><input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} /></label>
+                <label className="settings-field"><span>Email akun</span><input type="email" value={user?.email || ""} readOnly disabled /></label>
+              </div>
 
-            {/* CARD A: Informasi Profil & Presets */}
-            <section className="settings-section" style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
-              <div style={{ padding: '24px', borderBottom: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                  <div style={{ background: '#ecfccb', color: '#65a30d', padding: '8px', borderRadius: '8px' }}>
-                    <User size={20} />
-                  </div>
-                  <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Profil & Preferensi</h2>
+              <div className="settings-subsection">
+                <div className="settings-subsection-heading"><h3>Preferensi</h3><p>Pilihan tampilan nominal dan waktu.</p></div>
+                <div className="settings-form-grid">
+                  <label className="settings-field"><span>Mata uang utama</span><CustomSelect value={currency} onChange={setCurrency} responsiveOverlay selectionTitle="Pilih mata uang" options={[{ value: "IDR", label: "IDR (Rupiah Indonesia)" }, { value: "USD", label: "USD (Dolar AS)" }]} /></label>
+                  <label className="settings-field"><span>Zona waktu</span><CustomSelect value={timezone} onChange={setTimezone} responsiveOverlay selectionTitle="Pilih zona waktu" options={[{ value: "Asia/Jakarta", label: "Asia/Jakarta (WIB)" }, { value: "Asia/Makassar", label: "Asia/Makassar (WITA)" }, { value: "Asia/Jayapura", label: "Asia/Jayapura (WIT)" }]} /></label>
                 </div>
               </div>
-              <div style={{ padding: '24px', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Nama Lengkap</label>
-                    <input
-                      type="text"
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      style={{ width: '100%', padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Email akun</label>
-                    <input
-                      type="email"
-                      value={user?.email || ""}
-                      readOnly
-                      disabled
-                      style={{ width: '100%', padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px', background: '#e2e8f0', color: '#64748b' }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Mata uang utama</label>
-                    <CustomSelect
-                      value={currency}
-                      onChange={setCurrency}
-                      options={[
-                        { value: "IDR", label: "IDR (Indonesian Rupiah)" },
-                        { value: "USD", label: "USD (US Dollar)" }
-                      ]}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Zona waktu</label>
-                    <CustomSelect
-                      value={timezone}
-                      onChange={setTimezone}
-                      options={[
-                        { value: "Asia/Jakarta", label: "Asia/Jakarta (WIB)" },
-                        { value: "Asia/Makassar", label: "Asia/Makassar (WITA)" },
-                        { value: "Asia/Jayapura", label: "Asia/Jayapura (WIT)" }
-                      ]}
-                    />
-                  </div>
-                </div>
-                <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end' }}>
-                  <button
-                    className="button primary"
-                    onClick={handleSaveProfile}
-                    disabled={isSavingProfile}
-                    style={{ padding: '10px 20px' }}
-                  >
-                    {isSavingProfile ? "Menyimpan..." : "Simpan Perubahan"}
-                  </button>
-                </div>
-              </div>
+              <div className="settings-save-row"><button type="button" className="button primary" onClick={handleSaveProfile} disabled={isSavingProfile}>{isSavingProfile ? "Menyimpan..." : "Simpan perubahan"}</button></div>
             </section>
 
-            {/* CARD B: Keamanan & Kata Sandi */}
-            <section className="settings-section" style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
-              <div style={{ padding: '24px', borderBottom: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                  <div style={{ background: '#ecfccb', color: '#65a30d', padding: '8px', borderRadius: '8px' }}>
-                    <Shield size={20} />
-                  </div>
-                  <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Keamanan & Kata Sandi</h2>
-                </div>
-              </div>
-              <div style={{ padding: '24px', background: '#f8fafc' }}>
+            <section className="settings-surface">
+              <div className="settings-section-intro"><span className="settings-section-icon"><Shield size={20} /></span><div><h2>Keamanan</h2><p>Kelola kata sandi untuk menjaga akunmu.</p></div></div>
+              <div className="settings-security-content">
                 {isOAuthUser ? (
-                  <div style={{ padding: '16px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', display: 'flex', gap: '12px' }}>
-                    <ShieldAlert size={20} color="#2563eb" style={{ flexShrink: 0 }} />
-                    <p style={{ margin: 0, fontSize: '14px', color: '#1e40af', lineHeight: 1.5 }}>
-                      Akunmu terhubung dengan Google. Kata sandi dikelola langsung melalui akun Google-mu.
-                    </p>
-                  </div>
+                  <div className="settings-notice settings-notice-info"><ShieldAlert size={18} /><p>Akunmu terhubung dengan Google. Kata sandi dikelola langsung melalui akun Google-mu.</p></div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {passwordError && (
-                      <div className="flex items-center gap-2 p-3.5 rounded-xl bg-rose-50 border border-rose-200/70 text-rose-700 text-xs animate-in fade-in duration-150 max-w-md">
-                        <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-                        <span className="font-medium">{passwordError}</span>
-                      </div>
-                    )}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px', maxWidth: '400px' }}>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Kata Sandi Saat Ini</label>
-                        <input
-                          type="password"
-                          value={currentPassword}
-                          onChange={(e) => {
-                            setPasswordError(null);
-                            setCurrentPassword(e.target.value);
-                          }}
-                          placeholder="Masukkan kata sandi lama"
-                          style={{ width: '100%', padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Kata Sandi Baru</label>
-                        <input
-                          type="password"
-                          value={newPassword}
-                          onChange={(e) => {
-                            setPasswordError(null);
-                            setNewPassword(e.target.value);
-                          }}
-                          placeholder="Minimal 6 karakter"
-                          style={{ width: '100%', padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '8px' }}>Konfirmasi Kata Sandi Baru</label>
-                        <input
-                          type="password"
-                          value={confirmPassword}
-                          onChange={(e) => {
-                            setPasswordError(null);
-                            setConfirmPassword(e.target.value);
-                          }}
-                          placeholder="Ulangi kata sandi baru"
-                          style={{ width: '100%', padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }}
-                        />
-                      </div>
+                  <div className="settings-password-form">
+                    {passwordError && <div className="settings-form-error"><AlertCircle size={16} /><span>{passwordError}</span></div>}
+                    <div className="settings-form-grid single">
+                      <label className="settings-field"><span>Kata sandi saat ini</span><input type="password" value={currentPassword} onChange={(e) => { setPasswordError(null); setCurrentPassword(e.target.value); }} placeholder="Masukkan kata sandi lama" /></label>
+                      <label className="settings-field"><span>Kata sandi baru</span><input type="password" value={newPassword} onChange={(e) => { setPasswordError(null); setNewPassword(e.target.value); }} placeholder="Minimal 6 karakter" /></label>
+                      <label className="settings-field"><span>Konfirmasi kata sandi baru</span><input type="password" value={confirmPassword} onChange={(e) => { setPasswordError(null); setConfirmPassword(e.target.value); }} placeholder="Ulangi kata sandi baru" /></label>
                     </div>
-                    <div style={{ marginTop: '8px' }}>
-                      <button
-                        className="button primary"
-                        onClick={handleUpdatePassword}
-                        disabled={isSavingPassword || !newPassword || !confirmPassword}
-                        style={{ padding: '10px 20px' }}
-                      >
-                        {isSavingPassword ? "Memperbarui..." : "Perbarui Kata Sandi"}
-                      </button>
-                    </div>
+                    <div className="settings-save-row"><button type="button" className="button primary" onClick={handleUpdatePassword} disabled={isSavingPassword || !newPassword || !confirmPassword}>{isSavingPassword ? "Menyimpan..." : "Simpan perubahan"}</button></div>
                   </div>
                 )}
               </div>
             </section>
 
-            {/* CARD C: Reset dan Hapus Akun */}
-            <section className="settings-section" style={{ background: '#fff', border: '1px solid #fecaca', borderRadius: '12px', overflow: 'hidden' }}>
-              <div style={{ padding: '24px', borderBottom: '1px solid #fecaca' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                  <div style={{ background: '#fef2f2', color: '#dc2626', padding: '8px', borderRadius: '8px' }}>
-                    <AlertTriangle size={20} />
-                  </div>
-                  <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#7f1d1d' }}>Reset & Hapus Akun</h2>
-                </div>
-              </div>
-              <div style={{ padding: '24px', background: '#fef2f2', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: '#fff', border: '1px solid #fca5a5', borderRadius: '8px' }}>
-                  <div>
-                    <h4 style={{ margin: '0 0 4px 0', fontSize: '15px', fontWeight: 600, color: '#991b1b' }}>Reset Data Transaksi</h4>
-                    <p style={{ margin: 0, fontSize: '13px', color: '#b91c1c' }}>Hapus seluruh riwayat transaksimu. Tindakan ini tidak dapat dibatalkan.</p>
-                  </div>
-                  <button
-                    onClick={handleResetData}
-                    style={{ background: '#fff', border: '1px solid #dc2626', color: '#dc2626', padding: '8px 16px', borderRadius: '6px', fontWeight: 600, fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
-                  >
-                    <RotateCcw size={16} /> Reset Data
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: '#fff', border: '1px solid #fca5a5', borderRadius: '8px' }}>
-                  <div>
-                    <h4 style={{ margin: '0 0 4px 0', fontSize: '15px', fontWeight: 600, color: '#991b1b' }}>Hapus Akun Douit</h4>
-                    <p style={{ margin: 0, fontSize: '13px', color: '#b91c1c' }}>Hapus akunmu beserta seluruh data secara permanen.</p>
-                  </div>
-                  <button
-                    onClick={handleDeleteAccount}
-                    style={{ background: '#dc2626', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '6px', fontWeight: 600, fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
-                  >
-                    <Trash2 size={16} /> Hapus Akun
-                  </button>
-                </div>
-              </div>
+            <section className="settings-danger-zone" aria-labelledby="danger-zone-title">
+              <div className="settings-section-intro"><span><AlertTriangle size={19} /></span><div><h2 id="danger-zone-title">Zona berbahaya</h2><p>Tindakan permanen yang perlu konfirmasi tambahan.</p></div></div>
+              <div className="settings-danger-row"><div><h3>Reset data</h3><p>Hapus seluruh riwayat transaksi. Akunmu tetap aktif.</p></div><button type="button" className="settings-danger-button secondary" onClick={handleResetData}><RotateCcw size={15} /> Reset data</button></div>
+              <div className="settings-danger-row"><div><h3>Hapus akun</h3><p>Hapus akun beserta seluruh data keuangan secara permanen.</p></div><button type="button" className="settings-danger-button" onClick={handleDeleteAccount}><Trash2 size={15} /> Hapus akun</button></div>
             </section>
           </div>
         )}
 
         {/* TAB 3: KATEGORI & ATURAN */}
         {activeTab === 'rules' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            {/* SECTION A: Kategori Kustom */}
-            <section className="settings-section" style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
-              <div style={{ padding: '24px', borderBottom: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                  <div style={{ background: '#ecfccb', color: '#65a30d', padding: '8px', borderRadius: '8px' }}>
-                    <Box size={20} />
-                  </div>
-                  <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Kategori Kustom</h2>
-                </div>
+          <div className="settings-section-stack">
+            <section className="settings-surface settings-category-section">
+              <div className="settings-section-intro">
+                <span className="settings-section-icon"><Tags size={20} /></span>
+                <div><h2>Kategori</h2><p>Gunakan identitas kategori yang konsisten di seluruh Douit.</p></div>
               </div>
-              <div style={{ padding: '24px', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-                  {categories.map(cat => {
-                    const IconComponent = IconMap[cat.icon_name] || Folder;
-                    return (
-                      <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#fff', border: `1px solid ${cat.color_hex}40`, padding: '8px 12px', borderRadius: '8px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
-                        <div style={{ background: `${cat.color_hex}20`, color: cat.color_hex, padding: '6px', borderRadius: '6px' }}>
-                          <IconComponent size={16} />
+
+              {isFetchingRules ? <p className="settings-empty-state">Memuat kategori...</p> : <>
+                <div className="settings-category-group">
+                  <div className="settings-group-heading"><span className="settings-group-title"><h3>Kategori sistem</h3><em>{systemCategories.length}</em></span></div>
+                  <div className="settings-category-list">
+                    {systemCategories.map((category) => (
+                      <div className="settings-category-row" key={category.id}>
+                        <span className="settings-category-mark"><CategoryIcon category={category.name} size={18} /></span>
+                        <span className="settings-list-copy"><b>{category.name}</b><small>{category.type === 'INCOME' ? 'Pemasukan' : 'Pengeluaran'} · {category.budget_limit > 0 ? `Anggaran ${formatRupiah(category.budget_limit)}` : 'Anggaran belum diatur'}</small></span>
+                        <span className="settings-system-badge">Sistem</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="settings-category-group">
+                  <div className="settings-group-heading">
+                    <span className="settings-group-title"><h3>Kategori buatan sendiri</h3><em>{customCategories.length}</em></span>
+                    <button type="button" className="settings-category-add-trigger" onClick={() => setAddCategoryOpen(true)}><Plus size={15} /> Tambah kategori</button>
+                  </div>
+                  {customCategories.length === 0 ? (
+                    <p className="settings-empty-state settings-empty-state-compact">Belum ada kategori buatan sendiri.</p>
+                  ) : (
+                    <div className="settings-category-list">
+                      {customCategories.map((category) => (
+                        <div className="settings-category-row" key={category.id}>
+                          <span className="settings-category-mark" style={{ color: resolveCategoryColor(category), backgroundColor: `${resolveCategoryColor(category)}14` }}><CategoryIcon category={category} size={18} /></span>
+                          <span className="settings-list-copy"><b>{category.name}</b><small>{category.type === 'INCOME' ? 'Pemasukan' : 'Pengeluaran'} · {category.budget_limit > 0 ? `Anggaran ${formatRupiah(category.budget_limit)}` : 'Anggaran belum diatur'}</small></span>
+                          <span className="settings-row-actions"><button type="button" onClick={() => openEditCategory(category)} aria-label={`Edit ${category.name}`}><Edit2 size={15} /></button><button type="button" className="danger" onClick={() => handleDeleteCategory(category.id)} aria-label={`Hapus ${category.name}`}><Trash2 size={15} /></button></span>
                         </div>
-                        <div>
-                          <span style={{ fontSize: '14px', fontWeight: 500, color: '#334155' }}>{cat.name}</span>
-                          {cat.is_system && <span style={{ marginLeft: '6px', fontSize: '10px', background: '#e2e8f0', color: '#475569', padding: '2px 6px', borderRadius: '4px' }}>Sistem</span>}
-                          <div style={{ marginTop: '2px' }}>
-                            <span className="text-[10px] text-gray-500">
-                              Anggaran: {cat.budget_limit > 0 ? new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(cat.budget_limit)) : "Belum diatur"}
-                            </span>
-                          </div>
-                        </div>
-                        {!cat.is_system && (
-                          <div style={{ marginLeft: '8px', display: 'flex', gap: '4px' }}>
-                            <button onClick={() => openEditCategory(cat)} style={{ background: '#f1f5f9', border: 'none', color: '#475569', cursor: 'pointer', padding: '4px', borderRadius: '4px' }}>
-                              <Edit2 size={14} />
-                            </button>
-                            <button onClick={() => handleDeleteCategory(cat.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}>
-                              <Trash2 size={14} />
-                            </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>}
+
+              {addCategoryOpen && (
+                <div className={`settings-category-form-host ${isMobileViewport ? 'mobile-sheet' : 'desktop-panel'}`} onMouseDown={isMobileViewport ? () => { setAddCategoryOpen(false); setCategoryIconPickerOpen(false); } : undefined}>
+                  <form className="settings-category-form" onSubmit={handleAddCategory} onMouseDown={(event) => event.stopPropagation()} role={isMobileViewport ? 'dialog' : undefined} aria-modal={isMobileViewport ? true : undefined} aria-labelledby="add-category-title">
+                    <header className="settings-category-form-header">
+                      <div><h3 id="add-category-title">Tambah kategori</h3><p>Buat identitas kategori yang mudah dikenali.</p></div>
+                      <button type="button" onClick={() => { setAddCategoryOpen(false); setCategoryIconPickerOpen(false); }} aria-label="Tutup form tambah kategori"><X size={19} /></button>
+                    </header>
+
+                    <div className="settings-category-form-body">
+                      <label className="settings-field"><span>Nama kategori</span><input type="text" value={newCatName} onChange={(event) => setNewCatName(event.target.value)} placeholder="Contoh: Freelance" required /></label>
+
+                      <fieldset className="settings-choice-field"><legend>Tipe</legend><div className="settings-segmented-control"><button type="button" className={newCatType === 'EXPENSE' ? 'active' : ''} onClick={() => setNewCatType('EXPENSE')}>Pengeluaran</button><button type="button" className={newCatType === 'INCOME' ? 'active' : ''} onClick={() => setNewCatType('INCOME')}>Pemasukan</button></div></fieldset>
+
+                      <fieldset className="settings-choice-field settings-icon-picker-field">
+                        <legend>Pilih ikon</legend>
+                        {isMobileViewport ? (
+                          <div className="settings-icon-grid">{CATEGORY_ICON_OPTIONS.map((iconName) => <button key={iconName} type="button" className={newCatIcon === iconName ? 'active' : ''} onClick={() => setNewCatIcon(iconName)} aria-label={`Pilih ikon ${iconName}`} aria-pressed={newCatIcon === iconName}><CategoryIcon category={{ icon_name: iconName }} size={19} /></button>)}</div>
+                        ) : (
+                          <div className="settings-icon-picker-popover-wrap">
+                            <button type="button" className="settings-icon-picker-trigger" onClick={() => setCategoryIconPickerOpen((open) => !open)} aria-expanded={categoryIconPickerOpen}><span><CategoryIcon category={{ icon_name: newCatIcon }} size={18} /></span> Pilih ikon</button>
+                            {categoryIconPickerOpen && <div className="settings-icon-picker-popover"><div className="settings-icon-grid">{CATEGORY_ICON_OPTIONS.map((iconName) => <button key={iconName} type="button" className={newCatIcon === iconName ? 'active' : ''} onClick={() => { setNewCatIcon(iconName); setCategoryIconPickerOpen(false); }} aria-label={`Pilih ikon ${iconName}`} aria-pressed={newCatIcon === iconName}><CategoryIcon category={{ icon_name: iconName }} size={19} /></button>)}</div></div>}
                           </div>
                         )}
-                      </div>
-                    );
-                  })}
-                </div>
+                      </fieldset>
 
-                <form onSubmit={handleAddCategory} style={{ background: '#fff', border: '1px solid #e2e8f0', padding: '16px', borderRadius: '8px', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                  <div style={{ flex: '1 1 200px' }}>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '6px' }}>Tambah Kategori Baru</label>
-                    <input type="text" value={newCatName} onChange={e => setNewCatName(e.target.value)} placeholder="Nama Kategori" style={{ width: '100%', padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px' }} required />
-                  </div>
-                  <div className="w-36">
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '6px' }}>Tipe</label>
-                    <CustomSelect
-                      value={newCatType}
-                      onChange={setNewCatType}
-                      options={[
-                        { value: "EXPENSE", label: "Pengeluaran" },
-                        { value: "INCOME", label: "Pemasukan" }
-                      ]}
-                    />
-                  </div>
-                  <div className="w-36">
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '6px' }}>Ikon</label>
-                    <CustomSelect
-                      value={newCatIcon}
-                      onChange={setNewCatIcon}
-                      options={Object.keys(IconMap).map(icon => {
-                        const IconComp = IconMap[icon];
-                        return {
-                          value: icon,
-                          label: icon,
-                          icon: <IconComp className="w-4 h-4 text-emerald-700" />
-                        };
-                      })}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '6px' }}>Warna</label>
-                    <input type="color" value={newCatColor} onChange={e => setNewCatColor(e.target.value)} style={{ width: '40px', height: '36px', padding: '2px', border: '1px solid #cbd5e1', borderRadius: '6px', background: '#fff' }} />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '6px' }}>Alokasi Anggaran (Rp)</label>
-                    <input type="number" value={newCatBudget} onChange={e => setNewCatBudget(e.target.value)} placeholder="Contoh: 500000" style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px' }} />
-                  </div>
-                  <button type="submit" className="button primary" style={{ padding: '8px 16px', height: '36px' }}>Tambah</button>
-                </form>
-              </div>
-            </section>
+                      <fieldset className="settings-choice-field settings-color-field"><legend>Warna aksen</legend><div className="settings-color-swatches">{CATEGORY_COLOR_OPTIONS.map((color) => <button key={color} type="button" className={newCatColor.toLowerCase() === color.toLowerCase() ? 'active' : ''} style={{ backgroundColor: color }} onClick={() => setNewCatColor(color)} aria-label={`Pilih warna ${color}`} aria-pressed={newCatColor.toLowerCase() === color.toLowerCase()}>{newCatColor.toLowerCase() === color.toLowerCase() && <Check size={14} />}</button>)}<label className={`settings-custom-color ${CATEGORY_COLOR_OPTIONS.some((color) => color.toLowerCase() === newCatColor.toLowerCase()) ? '' : 'active'}`} title="Pilih warna lain"><input type="color" value={newCatColor} onChange={(event) => setNewCatColor(event.target.value)} aria-label="Pilih warna lain" /><span style={{ backgroundColor: newCatColor }} /></label></div></fieldset>
 
-            {/* SECTION B: Aturan Merchant */}
-            <section className="settings-section" style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
-              <div style={{ padding: '24px', borderBottom: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                  <div style={{ background: '#ecfccb', color: '#65a30d', padding: '8px', borderRadius: '8px' }}>
-                    <Tags size={20} />
-                  </div>
-                  <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Aturan Transaksi Otomatis</h2>
+                      <label className="settings-field settings-budget-field"><span>Alokasi anggaran (Rp)</span><input type="number" value={newCatBudget} onChange={(event) => setNewCatBudget(event.target.value)} placeholder="Opsional, contoh: 500000" /></label>
+                    </div>
+
+                    <footer className="settings-category-form-actions"><button type="button" className="button secondary" onClick={() => { setAddCategoryOpen(false); setCategoryIconPickerOpen(false); }}>Batal</button><button type="submit" className="button primary">Tambah kategori</button></footer>
+                  </form>
                 </div>
-                <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Terapkan kategori secara otomatis untuk transaksi dari merchant tertentu.</p>
-              </div>
-              <div style={{ padding: '24px', background: '#f8fafc' }}>
-                {rules.length === 0 ? (
-                  <p style={{ margin: 0, fontSize: '14px', color: '#64748b', textAlign: 'center', padding: '24px 0' }}>Belum ada aturan tersimpan.</p>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {rules.map(rule => {
-                      const ruleCat = categories.find(c => c.id === rule.category_id);
-                      return (
-                        <div key={rule.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', border: '1px solid #e2e8f0', padding: '12px 16px', borderRadius: '8px' }}>
-                          <div>
-                            <span style={{ display: 'block', fontSize: '15px', fontWeight: 600, color: '#1e293b' }}>{rule.merchant_name}</span>
-                            <span style={{ fontSize: '13px', color: '#64748b' }}>{ruleCat?.name || "Tidak diketahui"} {rule.keyword ? `• Catatan: ${rule.keyword}` : ''}</span>
-                          </div>
-                          <button onClick={() => handleDeleteRule(rule.id)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>Hapus</button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              )}
+
+              <div className="settings-subsection settings-rules-section"><div className="settings-subsection-heading"><h3>Aturan transaksi otomatis</h3><p>Kategori yang diterapkan otomatis untuk merchant tertentu.</p></div>{rules.length === 0 ? <p className="settings-empty-state">Belum ada aturan tersimpan.</p> : <div className="settings-rule-list">{rules.map((rule) => { const ruleCategory = categories.find((category) => category.id === rule.category_id); return <div className="settings-rule-row" key={rule.id}><span className="settings-category-mark" style={{ color: resolveCategoryColor(ruleCategory), backgroundColor: `${resolveCategoryColor(ruleCategory)}14` }}><CategoryIcon category={ruleCategory || 'Lain-lain'} size={17} /></span><span className="settings-list-copy"><b>{rule.merchant_name}</b><small>{ruleCategory?.name || 'Tidak diketahui'}{rule.keyword ? ` · Catatan: ${rule.keyword}` : ''}</small></span><button type="button" onClick={() => handleDeleteRule(rule.id)}>Hapus</button></div>; })}</div>}</div>
             </section>
           </div>
         )}
         
         {/* TAB 4: REKENING & SALDO AWAL */}
         {activeTab === 'accounts' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            <section className="settings-section" style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
-              <div style={{ padding: '24px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                    <div style={{ background: '#ecfccb', color: '#65a30d', padding: '8px', borderRadius: '8px' }}>
-                      <Wallet size={20} />
-                    </div>
-                    <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#0f172a' }}>Kelola Rekening & Saldo Awal</h2>
-                  </div>
-                  <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Atur rekening, dompet, dan saldo awalmu.</p>
-                </div>
-                <button onClick={openAddAccount} className="button primary" style={{ padding: '8px 16px' }}>+ Tambah Rekening</button>
-              </div>
-              <div style={{ padding: '24px', background: '#f8fafc' }}>
-                {accounts.length === 0 ? (
-                  <p style={{ margin: 0, fontSize: '14px', color: '#64748b', textAlign: 'center', padding: '24px 0' }}>Belum ada rekening tersimpan.</p>
-                ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                    {accounts.map(acc => (
-                      <div key={acc.id} style={{ background: '#fff', border: acc.is_primary ? '1px solid #84cc16' : '1px solid #e2e8f0', padding: '16px', borderRadius: '12px', position: 'relative' }}>
-                        {acc.is_primary && (
-                          <div style={{ position: 'absolute', top: '12px', right: '12px', background: '#ecfccb', color: '#4d7c0f', fontSize: '11px', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>Utama</div>
-                        )}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                          <div style={{ color: '#475569' }}>
-                            {acc.type === 'bank' ? <CreditCard size={18} /> : acc.type === 'wallet' ? <Smartphone size={18} /> : <Wallet size={18} />}
-                          </div>
-                          <span style={{ fontSize: '15px', fontWeight: 600, color: '#1e293b' }}>{acc.name}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div>
-                            <span style={{ display: 'block', fontSize: '12px', color: '#64748b' }}>Saldo Awal</span>
-                            <span style={{ fontSize: '14px', fontWeight: 600, color: '#334155' }}>
-                              {new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(acc.initial_balance))}
-                            </span>
-                          </div>
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <button onClick={() => openEditAccount(acc)} style={{ background: '#f1f5f9', border: 'none', color: '#475569', padding: '6px', borderRadius: '6px', cursor: 'pointer' }}><Edit2 size={14} /></button>
-                            <button onClick={() => handleDeletePaymentAccount(acc.id)} style={{ background: '#fee2e2', border: 'none', color: '#ef4444', padding: '6px', borderRadius: '6px', cursor: 'pointer' }}><Trash2 size={14} /></button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+          <div className="settings-section-stack">
+            <section className="settings-surface">
+              <div className="settings-section-intro settings-section-intro-action"><span className="settings-section-icon"><Wallet size={20} /></span><div><h2>Rekening & sumber dana</h2><p>Kelola rekening, dompet, dan saldo awalmu.</p></div><button type="button" onClick={openAddAccount} className="button primary settings-add-button"><Plus size={16} /> Tambah rekening</button></div>
+              {isFetchingAccounts ? <p className="settings-empty-state">Memuat rekening...</p> : accounts.length === 0 ? <div className="settings-empty-state"><p>Belum ada rekening atau sumber dana.</p><button type="button" onClick={openAddAccount}>+ Tambah rekening</button></div> : <div className="settings-account-list">{accounts.map((account) => <div className={`settings-account-row ${account.is_primary ? 'primary' : ''}`} key={account.id}>
+                <span className="settings-account-logo"><BankLogo bankName={account.name} className="settings-bank-logo" /></span>
+                <span className="settings-list-copy"><span className="settings-account-name"><b>{account.name}</b>{account.is_primary && <em>Utama</em>}</span><small>Saldo awal · {formatRupiah(account.initial_balance)}</small></span>
+                <div className="settings-overflow"><button type="button" className="settings-overflow-trigger" onClick={() => setOpenAccountMenuId((id) => id === account.id ? null : account.id)} aria-label={`Tindakan untuk ${account.name}`} aria-expanded={openAccountMenuId === account.id}><MoreHorizontal size={19} /></button>{openAccountMenuId === account.id && <div className="settings-overflow-menu"><button type="button" onClick={() => openEditAccount(account)}><Edit2 size={15} /> Edit</button><button type="button" className="danger" onClick={() => handleDeletePaymentAccount(account.id)}><Trash2 size={15} /> Hapus</button></div>}</div>
+              </div>)}</div>}
             </section>
           </div>
+        )}
+
+        </div>
         )}
         
         {/* ACCOUNT MODAL */}
         {accountModalOpen && (
-          <div className="modal-scrim" onClick={() => setAccountModalOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div className="modal-dialog relative w-full max-w-md bg-white rounded-2xl md:rounded-3xl shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()} style={{ overflow: 'visible' }}>
-              <div className="modal-header rounded-t-2xl md:rounded-t-3xl" style={{ padding: '20px 24px', borderBottom: '1px solid #eee' }}>
-                <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{editAccountId ? "Edit Rekening" : "Tambah Rekening"}</h3>
-              </div>
+          <div className="settings-modal-scrim" onClick={() => setAccountModalOpen(false)}>
+            <div className="settings-modal-dialog" onClick={e => e.stopPropagation()}>
+              <div className="settings-modal-header"><div><h3>{editAccountId ? "Edit rekening" : "Tambah rekening"}</h3><p>Atur sumber dana dan saldo awal.</p></div><button type="button" onClick={() => setAccountModalOpen(false)} aria-label="Tutup"><X size={19} /></button></div>
               <form onSubmit={handleSaveAccount}>
-                <div className="form-grid" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Nama Rekening / Bank</span>
-                    <input type="text" value={accName} onChange={e => setAccName(e.target.value)} required placeholder="Contoh: Bank BRI" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-                  </label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Tipe Rekening</span>
+                <div className="settings-modal-body">
+                  <label className="settings-field"><span>Nama rekening / bank</span><input type="text" value={accName} onChange={e => setAccName(e.target.value)} required placeholder="Contoh: Bank BRI" /></label>
+                  <label className="settings-field"><span>Tipe rekening</span>
                     <CustomSelect
                       value={accType}
                       onChange={setAccType}
+                      responsiveOverlay
+                      selectionTitle="Pilih tipe rekening"
                       options={[
                         { value: "bank", label: "Bank" },
                         { value: "wallet", label: "E-Wallet" },
                         { value: "cash", label: "Tunai" }
                       ]}
                     />
-                  </div>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Saldo Awal (Rp)</span>
-                    <input type="number" value={accBalance === 0 ? "" : accBalance} onChange={e => setAccBalance(e.target.value)} required placeholder="Contoh: 100000" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={accIsPrimary} onChange={e => setAccIsPrimary(e.target.checked)} />
-                    <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Jadikan Rekening Utama</span>
-                  </label>
+                  <label className="settings-field"><span>Saldo awal (Rp)</span><input type="number" value={accBalance === 0 ? "" : accBalance} onChange={e => setAccBalance(e.target.value)} required placeholder="Contoh: 100000" /></label>
+                  <label className="settings-checkbox"><input type="checkbox" checked={accIsPrimary} onChange={e => setAccIsPrimary(e.target.checked)} /><span>Jadikan rekening utama</span></label>
                 </div>
-                <div className="modal-actions rounded-b-2xl md:rounded-b-3xl" style={{ padding: '16px 24px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: '12px', background: '#f8fafc' }}>
+                <div className="settings-modal-actions">
                   <button type="button" className="button secondary" onClick={() => setAccountModalOpen(false)}>Batal</button>
-                  <button type="submit" className="button primary">Simpan</button>
+                  <button type="submit" className="button primary">Simpan perubahan</button>
                 </div>
               </form>
             </div>
@@ -1112,25 +901,14 @@ export default function SettingsPage() {
 
         {/* EDIT CATEGORY MODAL */}
         {editCatModalOpen && (
-          <div className="modal-scrim" onClick={() => setEditCatModalOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div className="modal-dialog relative w-full max-w-md bg-white rounded-2xl md:rounded-3xl shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()} style={{ overflow: 'visible' }}>
-              <div className="modal-header rounded-t-2xl md:rounded-t-3xl" style={{ padding: '20px 24px', borderBottom: '1px solid #eee' }}>
-                <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>Edit Kategori & Alokasi</h3>
-              </div>
+          <div className="settings-modal-scrim" onClick={() => setEditCatModalOpen(false)}>
+            <div className="settings-modal-dialog" onClick={e => e.stopPropagation()}>
+              <div className="settings-modal-header"><div><h3>Edit kategori</h3><p>Perbarui nama dan alokasi anggaran.</p></div><button type="button" onClick={() => setEditCatModalOpen(false)} aria-label="Tutup"><X size={19} /></button></div>
               <form onSubmit={handleSaveCategoryEdit}>
-                <div className="form-grid" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Nama Kategori</span>
-                    <input type="text" value={editCatName} onChange={e => setEditCatName(e.target.value)} required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-                  </label>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Alokasi Anggaran (Rp)</span>
-                    <input type="number" value={editCatBudget === "0" ? "" : editCatBudget} onChange={e => setEditCatBudget(e.target.value)} placeholder="Contoh: 1000000" style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-                  </label>
-                </div>
-                <div className="modal-actions rounded-b-2xl md:rounded-b-3xl" style={{ padding: '16px 24px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: '12px', background: '#f8fafc' }}>
+                <div className="settings-modal-body"><label className="settings-field"><span>Nama kategori</span><input type="text" value={editCatName} onChange={e => setEditCatName(e.target.value)} required /></label><label className="settings-field"><span>Alokasi anggaran (Rp)</span><input type="number" value={editCatBudget === "0" ? "" : editCatBudget} onChange={e => setEditCatBudget(e.target.value)} placeholder="Contoh: 1000000" /></label></div>
+                <div className="settings-modal-actions">
                   <button type="button" className="button secondary" onClick={() => setEditCatModalOpen(false)}>Batal</button>
-                  <button type="submit" className="button primary">Simpan</button>
+                  <button type="submit" className="button primary">Simpan perubahan</button>
                 </div>
               </form>
             </div>

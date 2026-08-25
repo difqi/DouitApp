@@ -7,7 +7,6 @@ import {
   Check,
   CircleAlert,
   CircleCheck,
-  LayoutGrid,
   FileText,
   History,
   MoreVertical,
@@ -19,17 +18,6 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
-  Utensils,
-  CarFront,
-  ShoppingBag,
-  ReceiptText,
-  MonitorSmartphone,
-  Ticket,
-  ArrowLeftRight,
-  BriefcaseBusiness,
-  BadgeDollarSign,
-  Gift,
-  PiggyBank,
   X
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -39,6 +27,7 @@ import { useDouit } from "../../providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
 import { triggerBudgetAlertCheck } from "@/app/actions/savings-alert";
 import { BankLogo } from "@/app/components/BankLogo";
+import { CategoryIcon } from "@/app/components/CategoryIcon";
 
 type Message = { id: string; role: "user" | "assistant"; content: string; message_kind: string; action_draft_id: string | null; created_at: string };
 type ActionDraft = { id: string; action_type: string; status: "pending" | "approved" | "rejected" | "failed"; preview: Record<string, unknown>; executed_entity_id?: string | null };
@@ -57,22 +46,6 @@ const PROMPT_SUGGESTIONS = [
 const money = (value: unknown) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value ?? 0));
 const messageTime = (value: string) => new Date(value).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }).replace(".", ":");
 const sessionTime = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: new Date(value).getFullYear() === new Date().getFullYear() ? undefined : "numeric", timeZone: "Asia/Jakarta" });
-
-function CategoryIcon({ category, size = 14 }: { category: string; size?: number }) {
-  const normalized = (category || "").toLocaleLowerCase("id-ID");
-  if (normalized.includes("makanan") || normalized.includes("minuman")) return <Utensils size={size} />;
-  if (normalized.includes("transport")) return <CarFront size={size} />;
-  if (normalized.includes("belanja")) return <ShoppingBag size={size} />;
-  if (normalized.includes("tagihan") || normalized.includes("biaya admin")) return <ReceiptText size={size} />;
-  if (normalized.includes("barang digital")) return <MonitorSmartphone size={size} />;
-  if (normalized.includes("hiburan")) return <Ticket size={size} />;
-  if (normalized.includes("transfer")) return <ArrowLeftRight size={size} />;
-  if (normalized.includes("jasa")) return <BriefcaseBusiness size={size} />;
-  if (normalized.includes("gaji")) return <BadgeDollarSign size={size} />;
-  if (normalized.includes("bonus")) return <Gift size={size} />;
-  if (normalized.includes("nabung")) return <PiggyBank size={size} />;
-  return <LayoutGrid size={size} />;
-}
 
 export default function ChatPage() {
   const router = useRouter();

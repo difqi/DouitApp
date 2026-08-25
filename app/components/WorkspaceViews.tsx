@@ -2,34 +2,22 @@
 
 import {
   ArrowLeft,
-  ArrowLeftRight,
   CalendarDays,
-  BadgeDollarSign,
-  BriefcaseBusiness,
-  CarFront,
   ChevronRight,
   CircleDollarSign,
   Download,
   Filter,
-  Gift,
-  LayoutGrid,
   Mail,
-  MonitorSmartphone,
   MoreHorizontal,
-  PiggyBank,
   PencilLine,
   Plus,
-  ReceiptText,
   Search,
   CheckCircle2,
   CircleAlert,
   Bot,
-  ShoppingBag,
-  Utensils,
   Wallet,
   CreditCard,
   Smartphone,
-  Ticket,
   X
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -42,6 +30,7 @@ import { BankLogo } from "@/app/components/BankLogo";
 import { exportCsv } from "@/lib/report-export-utils";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
 import { CustomDatePicker } from "@/app/components/ui/CustomDatePicker";
+import { CategoryIcon } from "@/app/components/CategoryIcon";
 
 const formatMoney = (value: number | string) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value));
 const formatDate = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" });
@@ -50,22 +39,6 @@ const formatTransactionDay = (value: string) => new Date(value).toLocaleDateStri
 const cleanTransactionNotes = (notes?: string | null) => notes?.replace(/\[NO_TIME\]/g, '').replace(/\[UNMATCHED_BANK:[^\]]+\]/g, '').trim() || '';
 const getTransactionSourceLabel = (source: Transaction['source']) => source === 'AUTOMATIC_EMAIL' ? 'Email Bank' : source === 'MANUAL_CHAT' ? 'AI Chat' : 'Manual';
 const getTransactionDateTimeLabel = (row: Pick<Transaction, 'date' | 'source' | 'notes'>) => `${formatDate(row.date)}${shouldDisplayTransactionTime(row) ? ` · ${formatTime(row.date).replace(' WIB', '')}` : ''}`;
-
-function CategoryIcon({ category, size = 12 }: { category: string; size?: number }) {
-  const normalized = (category || '').toLocaleLowerCase('id-ID');
-  if (normalized.includes('makanan') || normalized.includes('minuman')) return <Utensils size={size} />;
-  if (normalized.includes('transport')) return <CarFront size={size} />;
-  if (normalized.includes('belanja')) return <ShoppingBag size={size} />;
-  if (normalized.includes('tagihan') || normalized.includes('biaya admin')) return <ReceiptText size={size} />;
-  if (normalized.includes('barang digital')) return <MonitorSmartphone size={size} />;
-  if (normalized.includes('hiburan')) return <Ticket size={size} />;
-  if (normalized.includes('transfer')) return <ArrowLeftRight size={size} />;
-  if (normalized.includes('jasa')) return <BriefcaseBusiness size={size} />;
-  if (normalized.includes('gaji')) return <BadgeDollarSign size={size} />;
-  if (normalized.includes('bonus')) return <Gift size={size} />;
-  if (normalized.includes('nabung')) return <PiggyBank size={size} />;
-  return <LayoutGrid size={size} />;
-}
 
 function TransactionSourceIcon({ source, size = 13 }: { source: Transaction['source']; size?: number }) {
   if (source === 'AUTOMATIC_EMAIL') return <Mail size={size} />;
