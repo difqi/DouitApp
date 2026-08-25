@@ -3,8 +3,11 @@
 import {
   ArrowRight,
   Bot,
+  CalendarDays,
   Check,
+  CircleAlert,
   CircleCheck,
+  LayoutGrid,
   FileText,
   History,
   MoreVertical,
@@ -16,20 +19,33 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
-  UserRound,
+  Utensils,
+  CarFront,
+  ShoppingBag,
+  ReceiptText,
+  MonitorSmartphone,
+  Ticket,
+  ArrowLeftRight,
+  BriefcaseBusiness,
+  BadgeDollarSign,
+  Gift,
+  PiggyBank,
   X
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import * as Popover from "@radix-ui/react-popover";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useDouit } from "../../providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
 import { triggerBudgetAlertCheck } from "@/app/actions/savings-alert";
+import { BankLogo } from "@/app/components/BankLogo";
 
 type Message = { id: string; role: "user" | "assistant"; content: string; message_kind: string; action_draft_id: string | null; created_at: string };
 type ActionDraft = { id: string; action_type: string; status: "pending" | "approved" | "rejected" | "failed"; preview: Record<string, unknown>; executed_entity_id?: string | null };
 type ChatSession = { id: string; title: string; created_at: string; is_pinned?: boolean };
 
 const WELCOME_MESSAGE = "Halo! Saya Douit AI, asisten keuangan pribadimu. Ceritakan transaksi dengan tanggal, jam, nominal, dan rekening yang digunakan. Contoh: 'Hari ini jam 7 malam beli bensin 30k pakai BRI'.";
+const PENDING_TRANSACTION_MESSAGE = "Aku sudah menyiapkan transaksi ini. Periksa detailnya lalu setujui untuk menyimpannya.";
 
 const PROMPT_SUGGESTIONS = [
   "Hari ini jam 7 malam beli bensin 30k pakai BRI",
@@ -39,6 +55,24 @@ const PROMPT_SUGGESTIONS = [
 ];
 
 const money = (value: unknown) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value ?? 0));
+const messageTime = (value: string) => new Date(value).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }).replace(".", ":");
+const sessionTime = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: new Date(value).getFullYear() === new Date().getFullYear() ? undefined : "numeric", timeZone: "Asia/Jakarta" });
+
+function CategoryIcon({ category, size = 14 }: { category: string; size?: number }) {
+  const normalized = (category || "").toLocaleLowerCase("id-ID");
+  if (normalized.includes("makanan") || normalized.includes("minuman")) return <Utensils size={size} />;
+  if (normalized.includes("transport")) return <CarFront size={size} />;
+  if (normalized.includes("belanja")) return <ShoppingBag size={size} />;
+  if (normalized.includes("tagihan") || normalized.includes("biaya admin")) return <ReceiptText size={size} />;
+  if (normalized.includes("barang digital")) return <MonitorSmartphone size={size} />;
+  if (normalized.includes("hiburan")) return <Ticket size={size} />;
+  if (normalized.includes("transfer")) return <ArrowLeftRight size={size} />;
+  if (normalized.includes("jasa")) return <BriefcaseBusiness size={size} />;
+  if (normalized.includes("gaji")) return <BadgeDollarSign size={size} />;
+  if (normalized.includes("bonus")) return <Gift size={size} />;
+  if (normalized.includes("nabung")) return <PiggyBank size={size} />;
+  return <LayoutGrid size={size} />;
+}
 
 export default function ChatPage() {
   const router = useRouter();
@@ -50,13 +84,15 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [editingDraft, setEditingDraft] = useState<ActionDraft | null>(null);
 
   // Chat history action state
   const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editTitleInput, setEditTitleInput] = useState("");
 
-  const composerInput = useRef<HTMLInputElement>(null);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
+  const messagesEnd = useRef<HTMLDivElement>(null);
 
   const fetchSessions = async () => {
     const supabase = createClient();
@@ -99,6 +135,17 @@ export default function ChatPage() {
     }
   }, [activeSessionId]);
 
+  useEffect(() => {
+    const textarea = composerInput.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 112)}px`;
+  }, [input]);
+
+  useEffect(() => {
+    messagesEnd.current?.scrollIntoView({ block: "end", behavior: sending ? "smooth" : "auto" });
+  }, [drafts, messages, sending]);
+
   // Click-outside listener for action dropdown
   useEffect(() => {
     if (!menuSessionId) return;
@@ -129,6 +176,7 @@ export default function ChatPage() {
     setHistoryOpen(false);
     setMenuSessionId(null);
     setEditingSessionId(null);
+    setEditingDraft(null);
     const supabase = createClient();
     const { data } = await supabase.from('chat_messages').select('*').eq('session_id', sessionId).order('created_at', { ascending: true });
     if (data) {
@@ -162,6 +210,7 @@ export default function ChatPage() {
     setHistoryOpen(false);
     setMenuSessionId(null);
     setEditingSessionId(null);
+    setEditingDraft(null);
     setMessages([
       { id: "msg-0", role: "assistant", content: WELCOME_MESSAGE, message_kind: "text", action_draft_id: null, created_at: new Date().toISOString() }
     ]);
@@ -231,7 +280,7 @@ export default function ChatPage() {
     const text = input.trim();
     if (!text || !business || sending) return;
 
-    setSending(true); setInput("");
+    setSending(true); setInput(""); setEditingDraft(null);
 
     const userMsg: Message = { id: `local-${Date.now()}`, role: "user", content: text, message_kind: "text", action_draft_id: null, created_at: new Date().toISOString() };
     setMessages(current => [...current, userMsg]);
@@ -262,7 +311,8 @@ export default function ChatPage() {
         }));
         newMsg = { id: `ai-${Date.now()}`, role: "assistant", content: data.reply || "Saya siapkan draft transaksinya.", message_kind: "text", action_draft_id: data.draftId, created_at: new Date().toISOString() };
       } else {
-        newMsg = { id: `ai-${Date.now()}`, role: "assistant", content: data.reply || "Maaf, saya tidak mengerti.", message_kind: "text", action_draft_id: null, created_at: new Date().toISOString() };
+        const requestFailed = !res.ok || Boolean(data.error);
+        newMsg = { id: `${requestFailed ? "err" : "ai"}-${Date.now()}`, role: "assistant", content: requestFailed ? "Douit sedang mengalami kendala. Pesanmu belum dapat diproses, silakan coba lagi." : data.reply || "Maaf, saya tidak mengerti.", message_kind: requestFailed ? "error" : "text", action_draft_id: null, created_at: new Date().toISOString() };
       }
       setMessages(current => [...current, newMsg]);
     } catch (err) {
@@ -277,11 +327,12 @@ export default function ChatPage() {
     const supabase = createClient();
     const draft = drafts[actionId];
 
-    // Optimistic Update
-    setDrafts(prev => ({
-      ...prev,
-      [actionId]: { ...prev[actionId], status: decision === 'approve' ? 'approved' : 'rejected' }
-    }));
+    if (decision === "reject") {
+      setDrafts(prev => ({
+        ...prev,
+        [actionId]: { ...prev[actionId], status: "rejected" }
+      }));
+    }
 
     if (decision === 'approve') {
       const txPayload: any = {
@@ -318,12 +369,15 @@ export default function ChatPage() {
 
         if (insertError) {
           console.error("Supabase Insert Error:", insertError);
-          // Rollback optimistic update on failure
           setDrafts(prev => ({
             ...prev,
-            [actionId]: { ...prev[actionId], status: 'pending' }
+            [actionId]: { ...prev[actionId], status: "failed" }
           }));
         } else {
+          setDrafts(prev => ({
+            ...prev,
+            [actionId]: { ...prev[actionId], status: "approved" }
+          }));
           if (txPayload.type === 'EXPENSE') {
             triggerBudgetAlertCheck(user.id).catch(console.error);
           }
@@ -364,6 +418,7 @@ export default function ChatPage() {
 
   function editAction(draft: ActionDraft) {
     const prompt = `Ubah jumlah pengeluaran ini menjadi: `;
+    setEditingDraft(draft);
     setInput(prompt);
     window.requestAnimationFrame(() => {
       composerInput.current?.focus();
@@ -440,61 +495,70 @@ export default function ChatPage() {
     return (
       <div
         key={s.id}
-        className={`group relative flex items-center justify-between w-full min-h-[38px] px-2.5 py-1.5 rounded-xl cursor-pointer transition-all duration-150 ${s.id === activeSessionId
-            ? "bg-white text-slate-900 shadow-xs border border-slate-200/80 font-semibold"
+        className={`history-session-item group relative flex items-center justify-between w-full min-h-[38px] px-2.5 py-1.5 rounded-xl cursor-pointer transition-all duration-150 ${s.id === activeSessionId
+            ? "active bg-white text-slate-900 shadow-xs border border-slate-200/80 font-semibold"
             : "text-slate-600 hover:bg-slate-200/60 hover:text-slate-900 border border-transparent"
-          }`}
-        onClick={() => loadSession(s.id)}
+        }`}
       >
-        <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-1">
+        <button
+          type="button"
+          className="history-session-button"
+          aria-current={s.id === activeSessionId ? "true" : undefined}
+          onClick={() => void loadSession(s.id)}
+        >
           {s.is_pinned && (
             <Pin size={12} className="text-emerald-600 shrink-0 fill-emerald-600/30" />
           )}
-          <span className="truncate text-xs font-medium text-left block w-full">
-            {s.title}
+          <span className="history-session-copy">
+            <b>{s.title}</b>
+            <small>{sessionTime(s.created_at)}</small>
           </span>
-        </div>
+        </button>
 
-        {/* 3-Dots Action Container */}
-        <div
-          data-chat-menu
-          className="relative shrink-0"
-          onClick={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
+        <Popover.Root
+          open={menuSessionId === s.id}
+          onOpenChange={(open) => setMenuSessionId(open ? s.id : null)}
         >
-          <button
-            type="button"
-            aria-label="Menu percakapan"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              setMenuSessionId(prev => (prev === s.id ? null : s.id));
-            }}
-            className={`p-1 rounded-md cursor-pointer transition-all active:scale-95 ${menuSessionId === s.id
-                ? "opacity-100 bg-slate-200 text-slate-700"
-                : "opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-700 hover:bg-slate-200/70"
-              }`}
-          >
-            <MoreVertical size={14} />
-          </button>
+          <Popover.Trigger asChild>
+            <button
+              type="button"
+              data-chat-menu
+              aria-label="Menu percakapan"
+              aria-haspopup="menu"
+              onMouseDown={(event) => event.stopPropagation()}
+              className={`history-item-menu-button p-1 rounded-md cursor-pointer transition-all active:scale-95 ${menuSessionId === s.id
+                  ? "opacity-100 bg-slate-200 text-slate-700"
+                  : "opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-700 hover:bg-slate-200/70"
+                }`}
+            >
+              <MoreVertical size={14} />
+            </button>
+          </Popover.Trigger>
 
-          {/* Action Menu Dropdown */}
-          {menuSessionId === s.id && (
-            <div
-              className="absolute right-0 top-full mt-1 w-44 rounded-xl bg-white p-1.5 shadow-xl border border-slate-100 z-50 animate-in fade-in zoom-in-95 duration-100"
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
+          <Popover.Portal>
+            <Popover.Content
+              data-chat-menu
+              className="history-item-menu rounded-xl bg-white p-1.5 shadow-xl border border-slate-100 z-[60]"
+              role="menu"
+              side="bottom"
+              align="end"
+              sideOffset={6}
+              collisionPadding={12}
+              avoidCollisions
+              sticky="always"
+              updatePositionStrategy="always"
             >
               {/* Pin Option */}
               <button
                 type="button"
+                role="menuitem"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
                   handleTogglePin(s.id);
                   setMenuSessionId(null);
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
+                className="history-menu-action w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
               >
                 {s.is_pinned ? (
                   <>
@@ -512,13 +576,14 @@ export default function ChatPage() {
               {/* Rename Option */}
               <button
                 type="button"
+                role="menuitem"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
                   handleStartRename(s.id);
                   setMenuSessionId(null);
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
+                className="history-menu-action w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
               >
                 <PencilLine className="w-4 h-4 text-slate-500 shrink-0" />
                 <span>Ganti nama</span>
@@ -529,30 +594,31 @@ export default function ChatPage() {
               {/* Delete Option */}
               <button
                 type="button"
+                role="menuitem"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
                   handleDeleteSession(s.id);
                   setMenuSessionId(null);
                 }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors"
+                className="history-menu-action danger w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors"
               >
                 <Trash2 className="w-4 h-4 text-rose-500 shrink-0" />
                 <span>Hapus</span>
               </button>
-            </div>
-          )}
-        </div>
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
       </div>
     );
   };
 
   return (
     <div className="chat-layout">
-      <aside className={`chat-history ${historyOpen ? "open" : ""}`}>
+      <aside className={`chat-history ${historyOpen ? "open" : ""}`} role="dialog" aria-modal="true" aria-label="Riwayat percakapan" aria-hidden={!historyOpen}>
         <div className="history-heading">
           <span><History size={16} /> Riwayat percakapan</span>
-          <button aria-label="Tutup riwayat" onClick={() => setHistoryOpen(false)}><X size={17} /></button>
+          <button aria-label="Tutup riwayat" onClick={() => setHistoryOpen(false)}><X size={18} /></button>
         </div>
         <button className="new-chat-button" onClick={newSession}>
           <Sparkles size={16} /> Percakapan baru
@@ -592,39 +658,57 @@ export default function ChatPage() {
       <section className="chat-workspace">
         <header className="chat-header">
           <button className="history-toggle" onClick={() => setHistoryOpen(true)} aria-label="Buka riwayat"><History size={18} /></button>
-          <div className="ai-avatar"><Sparkles size={19} /></div>
+          <div className="ai-avatar"><Sparkles size={17} /></div>
           <div><h1>Douit AI</h1><p><i /> Asisten keuangan pribadimu</p></div>
           <div className="safe-mode"><ShieldCheck size={15} /> Setiap transaksi butuh persetujuan</div>
         </header>
 
-        <div className="messages" aria-live="polite">
+        <div className="messages" aria-live="polite" aria-busy={sending}>
           {messages.map(message => {
             const draft = message.action_draft_id ? drafts[message.action_draft_id] : null;
+            const showDraftPrompt = draft && (draft.status === "pending" || draft.status === "failed");
+            const displayedContent = showDraftPrompt ? PENDING_TRANSACTION_MESSAGE : message.content;
             return (
-              <div className={`message-row ${message.role === "user" ? "user-message" : "assistant-message"}`} key={message.id}>
+              <div className={`message-row ${message.role === "user" ? "user-message" : "assistant-message"} ${message.message_kind === "error" || message.id.startsWith("err-") ? "error-message" : ""}`} key={message.id}>
                 {message.role === "assistant" && <div className="small-avatar ai"><Bot size={16} /></div>}
                 <div className={`assistant-stack ${draft ? "wide" : ""}`}>
-                  <div className={`message-bubble ${message.role === "assistant" ? "rich" : ""}`}><p>{message.content}</p></div>
+                  {(!draft || showDraftPrompt) && <div className={`message-bubble ${message.role === "assistant" ? "rich" : ""}`}><p>{displayedContent}</p></div>}
                   {draft && <DraftCard draft={draft} onDecision={reviewAction} onEdit={editAction} onOpenSaved={openSavedData} />}
+                  <span className="message-meta">{message.role === "assistant" ? "Douit AI" : "Kamu"} · {messageTime(message.created_at)}</span>
                 </div>
-                {message.role === "user" && <div className="small-avatar"><UserRound size={15} /></div>}
               </div>
             );
           })}
-          {sending && <div className="message-row assistant-message"><div className="small-avatar ai"><Bot size={16} /></div><div className="message-bubble">Menganalisis...</div></div>}
+          {sending && (
+            <div className="message-row assistant-message activity-message" role="status">
+              <div className="small-avatar ai"><Bot size={16} /></div>
+              <div className="activity-bubble"><span className="activity-dots" aria-hidden="true"><i /><i /><i /></span><span>Douit sedang memahami transaksi...</span></div>
+            </div>
+          )}
+          <div ref={messagesEnd} className="messages-end" aria-hidden="true" />
         </div>
 
         <footer className="composer-area">
-          <div className="prompt-chips flex gap-2 mb-2 overflow-x-auto scrollbar-none py-1">
+          {editingDraft && (
+            <div className="edit-context" role="status">
+              <PencilLine size={14} />
+              <span>Mengedit transaksi: <b>{String(editingDraft.preview.merchant ?? editingDraft.preview.name ?? "Transaksi")} · {money(editingDraft.preview.amount)}</b></span>
+              <button type="button" aria-label="Tutup konteks edit" onClick={() => setEditingDraft(null)}><X size={15} /></button>
+            </div>
+          )}
+          <div className="prompt-chips">
             {PROMPT_SUGGESTIONS.map((suggestion, index) => (
               <button
                 key={index}
                 type="button"
                 onClick={() => {
+                  setEditingDraft(null);
                   setInput(suggestion);
                   composerInput.current?.focus();
                 }}
-                className="shrink-0 px-3 py-1.5 rounded-full text-xs bg-[#f4f7f4] hover:bg-[#e9efe8] text-slate-700 border border-slate-200/80 transition-all hover:border-emerald-300 active:scale-95 cursor-pointer whitespace-nowrap"
+                title={suggestion}
+                aria-pressed={input === suggestion}
+                className="prompt-chip"
               >
                 {suggestion}
               </button>
@@ -632,15 +716,24 @@ export default function ChatPage() {
           </div>
           <form className="composer" onSubmit={submitMessage}>
             <button type="button" aria-label="Lampirkan file"><Paperclip size={18} /></button>
-            <input
+            <textarea
               ref={composerInput}
               value={input}
               onChange={event => setInput(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              rows={1}
               placeholder="Catat pengeluaran atau tanya keuangan..."
               aria-label="Pesan untuk Douit AI"
+              disabled={sending}
+              onFocus={() => window.requestAnimationFrame(() => messagesEnd.current?.scrollIntoView({ block: "end" }))}
             />
             <span className="composer-hint">Enter untuk kirim</span>
-            <button className="send-button" type="submit" aria-label="Kirim pesan" disabled={sending}><Send size={17} /></button>
+            <button className="send-button" type="submit" aria-label={sending ? "Sedang mengirim pesan" : "Kirim pesan"} disabled={sending || !input.trim()}><Send size={17} /></button>
           </form>
           <p>Douit dapat membuat kesalahan. Selalu periksa detail keuangan sebelum menyetujui.</p>
         </footer>
@@ -654,46 +747,79 @@ function DraftCard({ draft, onDecision, onEdit, onOpenSaved }: { draft: ActionDr
 
   const handleDecision = async (id: string, decision: "approve" | "reject") => {
     setLoading(true);
-    await onDecision(id, decision);
-    setLoading(false);
+    try {
+      await onDecision(id, decision);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  if (draft.status === "approved") return <div className="success-card"><span className="success-icon"><CircleCheck size={23} /></span><div><h3>Transaksi berhasil disimpan!</h3><p>Transaksi sudah masuk ke catatan keuanganmu.</p></div><button type="button" onClick={onOpenSaved}>Lihat Transaksi <ArrowRight size={14} /></button></div>;
-  if (draft.status === "rejected") return <div className="rejected-card"><Trash2 size={20} /><div><h3>Draft ditolak</h3><p>Tidak ada data yang dibuat atau diubah.</p></div></div>;
-
   const preview = draft.preview ?? {};
+  const merchant = String(preview.merchant ?? preview.name ?? "Transaksi");
+  const category = String(preview.category ?? "Lain-lain");
+  const account = String(preview.sumber_dana ?? "Tunai");
+  const transactionType = String(preview.type).toUpperCase() === "INCOME" ? "Pemasukan" : "Pengeluaran";
+  const transactionDate = preview.transaction_date
+    ? new Date(String(preview.transaction_date)).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" })
+    : null;
+
+  if (draft.status === "approved") return (
+    <div className="success-card">
+      <span className="success-icon"><CircleCheck size={18} /></span>
+      <div><h3>Transaksi berhasil disimpan</h3><p>{merchant} · {money(preview.amount)}</p></div>
+      <button type="button" onClick={onOpenSaved}>Lihat transaksi <ArrowRight size={14} /></button>
+    </div>
+  );
+  if (draft.status === "rejected") return (
+    <div className="rejected-card">
+      <span><X size={17} /></span>
+      <div><h3>Transaksi ditolak</h3><p>{merchant} tidak disimpan.</p></div>
+    </div>
+  );
 
   return (
-    <article className="draft-card">
+    <article className={`draft-card ${draft.status === "failed" ? "failed" : ""}`}>
       <div className="draft-card-header">
         <div>
           <span className="draft-icon"><FileText size={19} /></span>
-          <span><small>PRATINJAU TINDAKAN</small><h2>Transaksi baru</h2></span>
+          <span><small>TRANSAKSI BARU</small><h2>{draft.status === "failed" ? "Perlu dicoba lagi" : "Menunggu persetujuan"}</h2></span>
         </div>
-        <span className="draft-badge">DRAFT · BELUM DISIMPAN</span>
+        <span className="draft-badge">Belum disimpan</span>
       </div>
 
-      <div className="draft-party-row">
-        <div><small>TRANSAKSI</small><b>{String(preview.merchant ?? preview.name ?? "")}</b><span>Kategori: {String(preview.category ?? "")}</span></div>
-        <div>
-          <small>JUMLAH</small>
-          <b style={{ fontSize: '18px', color: 'var(--slate-900)' }}>{money(preview.amount)}</b>
+      <div className="draft-summary">
+        <div className="draft-merchant"><small>{transactionType}</small><b>{merchant}</b></div>
+        <div className="draft-amount">
+          <b>{money(preview.amount)}</b>
           {Boolean(preview.admin_fee) && Number(preview.admin_fee) > 0 && (
-            <span style={{ display: 'block', fontSize: '12px', color: 'var(--slate-500)', marginTop: '4px' }}>
-              + {money(preview.admin_fee)} (Biaya Admin)
-            </span>
+            <span>+ {money(preview.admin_fee)} biaya admin</span>
           )}
         </div>
       </div>
 
-      <div className="draft-safety"><ShieldCheck size={15} /><span><b>Menunggu persetujuanmu</b> — Douit belum menyimpan transaksi.</span></div>
+      <div className="draft-details">
+        <div><span className="draft-detail-icon"><CategoryIcon category={category} /></span><span><small>Kategori</small><b>{category}</b></span></div>
+        <div><span className="draft-account-logo"><BankLogo bankName={account} className="draft-bank-logo" /></span><span><small>Rekening / sumber dana</small><b>{account}</b></span></div>
+      </div>
+
+      <div className="draft-meta">
+        <span><Bot size={13} /> Dibuat dari percakapan AI</span>
+        {transactionDate && <span><CalendarDays size={13} /> {transactionDate}</span>}
+      </div>
+
+      {draft.status === "failed" && (
+        <div className="draft-safety warning">
+          <CircleAlert size={15} />
+          <span><b>Transaksi gagal disimpan.</b> Periksa koneksi lalu coba lagi.</span>
+        </div>
+      )}
 
       <div className="draft-actions">
         <button className="button primary" disabled={loading} onClick={() => void handleDecision(draft.id, "approve")}>
-          {loading ? "Menyimpan..." : <><Check size={16} /> Setujui &amp; simpan</>}
+          {loading ? <><span className="button-spinner" aria-hidden="true" /> Menyimpan...</> : <><Check size={16} /> {draft.status === "failed" ? "Coba simpan lagi" : "Setujui & simpan"}</>}
         </button>
-        <button className="button secondary" type="button" disabled={loading} onClick={() => onEdit(draft)}><PencilLine size={15} /> Edit lewat chat</button>
-        <button className="button quiet-danger" disabled={loading} onClick={() => void handleDecision(draft.id, "reject")}><Trash2 size={15} /> Tolak</button>
+        <button className="button secondary" type="button" disabled={loading} onClick={() => onEdit(draft)}><PencilLine size={15} /><span className="desktop-action-copy">Edit lewat chat</span><span className="mobile-action-copy">Edit</span></button>
+        <button className="button quiet-danger" type="button" disabled={loading} onClick={() => void handleDecision(draft.id, "reject")}><Trash2 size={15} /> Tolak</button>
       </div>
     </article>
   );
