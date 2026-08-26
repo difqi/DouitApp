@@ -167,7 +167,7 @@ export function NotificationBell() {
     if (n.metadata?.suggested_action === "CREATE_ACCOUNT" && n.metadata?.bank_keyword) {
       setOpen(false);
       markAsRead(n.id);
-      router.push(`/settings?action=add_account&bankName=${encodeURIComponent(n.metadata.bank_keyword)}`);
+      router.push(`/dompet?action=add_account&bankName=${encodeURIComponent(n.metadata.bank_keyword)}`);
     }
   };
 

@@ -15,6 +15,7 @@ import {
   LogOut,
   BarChart3,
   PiggyBank,
+  WalletCards,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -25,11 +26,12 @@ import { NotificationBell } from "./NotificationBell";
 import { DouitLogo } from "./icons/DouitLogo";
 import { WorkspaceLoading } from "@/components/ui/WorkspaceLoading";
 
-type ActivePage = "dashboard" | "chat" | "transactions" | "settings" | "laporan" | "nabung";
+type ActivePage = "dashboard" | "chat" | "transactions" | "wallet" | "settings" | "laporan" | "nabung";
 
 const nav = [
   { id: "dashboard", label: "Ringkasan", href: "/", icon: LayoutDashboard },
   { id: "transactions", label: "Transaksi", href: "/transactions", icon: ArrowLeftRight },
+  { id: "wallet", label: "Dompet", href: "/dompet", icon: WalletCards },
   { id: "laporan", label: "Laporan", href: "/laporan", icon: BarChart3 },
   { id: "nabung", label: "Nabung", href: "/nabung", icon: PiggyBank, isNew: true },
 ];
@@ -38,6 +40,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   let active: ActivePage = "dashboard";
   if (pathname.includes("/transactions")) active = "transactions";
+  else if (pathname.includes("/dompet")) active = "wallet";
   else if (pathname.includes("/chat")) active = "chat";
   else if (pathname.includes("/settings")) active = "settings";
   else if (pathname.includes("/laporan")) active = "laporan";

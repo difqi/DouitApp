@@ -1,23 +1,21 @@
 "use client";
 
-import { AlertCircle, AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronRight, Circle, CircleDashed, Clock, Copy, Edit2, Mail, MoreHorizontal, Plus, RefreshCw, RotateCcw, Settings, Shield, ShieldAlert, Tags, Trash2, User, Wallet, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronRight, Circle, CircleDashed, Clock, Copy, Edit2, Mail, Plus, RefreshCw, RotateCcw, Settings, Shield, ShieldAlert, Tags, Trash2, User, X } from "lucide-react";
 import { useState, useEffect, useSyncExternalStore } from "react";
 import { useDouit } from "../../providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/app/components/ui/ConfirmDialog";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
-import { BankLogo } from "@/app/components/BankLogo";
 import { CATEGORY_ICON_OPTIONS, CategoryIcon, resolveCategoryColor } from "@/app/components/CategoryIcon";
 
-type SettingsTab = 'email' | 'profile' | 'rules' | 'accounts';
+type SettingsTab = 'email' | 'profile' | 'rules';
 
 const SETTINGS_NAV: { id: SettingsTab; label: string; description: string; icon: typeof Mail }[] = [
   { id: 'email', label: 'Email otomatis', description: 'Pencatatan dari notifikasi bank', icon: Mail },
   { id: 'profile', label: 'Profil & preferensi', description: 'Nama, email, dan keamanan', icon: User },
   { id: 'rules', label: 'Kategori & akun', description: 'Kategori dan aturan merchant', icon: Tags },
-  { id: 'accounts', label: 'Rekening & saldo', description: 'Sumber dana dan saldo awal', icon: Wallet },
 ];
 
 const CATEGORY_COLOR_OPTIONS = [
@@ -48,7 +46,6 @@ const getSettingsServerSnapshot = () => false;
 export default function SettingsPage() {
   const { user, business, refresh } = useDouit();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const isMobileViewport = useSyncExternalStore(
     subscribeSettingsViewport,
     getSettingsMobileSnapshot,
@@ -58,32 +55,13 @@ export default function SettingsPage() {
   // Confirmation Dialog States
   const [confirmDeleteCatId, setConfirmDeleteCatId] = useState<string | null>(null);
   const [confirmDeleteRuleId, setConfirmDeleteRuleId] = useState<string | null>(null);
-  const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<string | null>(null);
   const [confirmRegenerateOpen, setConfirmRegenerateOpen] = useState(false);
   const [confirmResetDataOpen, setConfirmResetDataOpen] = useState(false);
   const [confirmDeleteAccountOpen, setConfirmDeleteAccountOpen] = useState(false);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [addCategoryOpen, setAddCategoryOpen] = useState(false);
   const [categoryIconPickerOpen, setCategoryIconPickerOpen] = useState(false);
-  const [openAccountMenuId, setOpenAccountMenuId] = useState<string | null>(null);
-
   const [passwordError, setPasswordError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const action = searchParams?.get('action');
-    const bankName = searchParams?.get('bankName');
-    
-    if (action === 'add_account') {
-      setActiveTab('accounts');
-      setMobileDetailOpen(true);
-      setEditAccountId(null);
-      setAccName(bankName || "");
-      setAccType("bank");
-      setAccBalance("");
-      setAccIsPrimary(false);
-      setAccountModalOpen(true);
-    }
-  }, [searchParams]);
 
   useEffect(() => {
     if (!addCategoryOpen) return;
@@ -140,18 +118,6 @@ export default function SettingsPage() {
 
   // OAuth Check
   const [isOAuthUser, setIsOAuthUser] = useState(false);
-
-  // Tab 4 State (Accounts)
-  const [accounts, setAccounts] = useState<any[]>([]);
-  const [isFetchingAccounts, setIsFetchingAccounts] = useState(false);
-  const [accountModalOpen, setAccountModalOpen] = useState(false);
-  const [editAccountId, setEditAccountId] = useState<string | null>(null);
-  
-  // Account Form State
-  const [accName, setAccName] = useState("");
-  const [accType, setAccType] = useState("bank");
-  const [accBalance, setAccBalance] = useState<string | number>("");
-  const [accIsPrimary, setAccIsPrimary] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -231,20 +197,6 @@ export default function SettingsPage() {
       setEmailStatus('UNLINKED');
     }
     setIsFetchingEmailStatus(false);
-  };
-
-  useEffect(() => {
-    if (user && activeTab === 'accounts') {
-      fetchAccounts();
-    }
-  }, [user, activeTab]);
-
-  const fetchAccounts = async () => {
-    setIsFetchingAccounts(true);
-    const supabase = createClient();
-    const { data } = await supabase.from('payment_accounts').select('*').eq('user_id', user?.id).order('created_at', { ascending: true });
-    if (data) setAccounts(data);
-    setIsFetchingAccounts(false);
   };
 
   const fetchRulesAndCategories = async () => {
@@ -384,118 +336,6 @@ export default function SettingsPage() {
     fetchRulesAndCategories();
   };
 
-  const handleSaveAccount = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !accName) return;
-    const supabase = createClient();
-    
-    if (accIsPrimary) {
-      await supabase.from('payment_accounts').update({ is_primary: false }).eq('user_id', user.id);
-    }
-    
-    if (editAccountId) {
-      const { error } = await supabase.from('payment_accounts').update({
-        name: accName,
-        type: accType,
-        initial_balance: Number(accBalance) || 0,
-        is_primary: accIsPrimary
-      }).eq('id', editAccountId);
-      if (error) {
-        toast.error("Gagal menyimpan rekening: " + error.message);
-        return;
-      }
-    } else {
-      const { data: newAccounts, error } = await supabase.from('payment_accounts').insert({
-        user_id: user.id,
-        name: accName,
-        type: accType,
-        initial_balance: Number(accBalance) || 0,
-        is_primary: accIsPrimary
-      }).select();
-
-      if (error) {
-        toast.error("Gagal menambahkan rekening: " + error.message);
-        return;
-      }
-
-      if (newAccounts && newAccounts.length > 0) {
-        const newAccount = newAccounts[0];
-        const keyword = accName.replace(/bank\s+/i, '').trim();
-        
-        // Relink transactions
-        const { data: txsToUpdate } = await supabase
-          .from('transactions')
-          .select('id, notes')
-          .eq('user_id', user.id);
-          
-        if (txsToUpdate && txsToUpdate.length > 0) {
-          const tag = `[UNMATCHED_BANK:${keyword.toLowerCase()}]`;
-          const matchedTxs = txsToUpdate.filter((tx: any) => 
-             tx.notes && tx.notes.toLowerCase().includes(tag)
-          );
-          
-          if (matchedTxs.length > 0) {
-            const updatePromises = matchedTxs.map(async (tx: any) => {
-               const regex = new RegExp(`\\[UNMATCHED_BANK:${keyword}\\]`, 'i');
-               const newNotes = tx.notes.replace(regex, '').trim();
-               
-               await supabase.from('transactions')
-                 .update({ 
-                   sumber_dana: newAccount.name, // Link to new account name
-                   notes: newNotes || null
-                 })
-                 .eq('id', tx.id);
-            });
-            await Promise.all(updatePromises);
-            console.log(`✅ Relinked ${matchedTxs.length} historical ${keyword} transactions to account ${newAccount.id}`);
-          }
-        }
-      }
-    }
-    
-    setAccountModalOpen(false);
-    setOpenAccountMenuId(null);
-    toast.success(editAccountId ? "Perubahan rekening tersimpan." : "Rekening berhasil ditambahkan.");
-    fetchAccounts();
-  };
-
-  const handleDeletePaymentAccount = (id: string) => {
-    setOpenAccountMenuId(null);
-    setConfirmDeleteAccountId(id);
-  };
-
-  const executeDeletePaymentAccount = async () => {
-    if (!confirmDeleteAccountId) return;
-    const supabase = createClient();
-    const { error } = await supabase.from('payment_accounts').delete().eq('id', confirmDeleteAccountId);
-    setConfirmDeleteAccountId(null);
-    if (error) {
-      toast.error("Gagal menghapus rekening: " + error.message);
-      return;
-    }
-    toast.success("Rekening berhasil dihapus.");
-    fetchAccounts();
-  };
-
-  const openAddAccount = () => {
-    setEditAccountId(null);
-    setAccName("");
-    setAccType("bank");
-    setAccBalance("");
-    setAccIsPrimary(false);
-    setAccountModalOpen(true);
-  };
-
-  const openEditAccount = (acc: any) => {
-    setOpenAccountMenuId(null);
-    setEditAccountId(acc.id);
-    setAccName(acc.name);
-    setAccType(acc.type);
-    setAccBalance(acc.initial_balance ? acc.initial_balance.toString() : "");
-    setAccIsPrimary(acc.is_primary);
-    setAccountModalOpen(true);
-  };
-
   const rawAlias = business?.default_notes || "";
   const emailDomain = process.env.NEXT_PUBLIC_INBOUND_EMAIL_DOMAIN || 'astiizilaz.resend.app';
   const inboundEmailAlias = rawAlias ? `${rawAlias.split('@')[0]}@${emailDomain}` : "";
@@ -630,7 +470,7 @@ export default function SettingsPage() {
         <div>
           <span className="workspace-eyebrow"><Settings size={14} /> Pengaturan</span>
           <h1>Pengaturan</h1>
-          <p>Kelola profil, kategori, rekening, dan preferensi Douit.</p>
+          <p>Kelola profil, kategori, dan preferensi Douit.</p>
         </div>
       </div>
       )}
@@ -849,56 +689,9 @@ export default function SettingsPage() {
           </div>
         )}
         
-        {/* TAB 4: REKENING & SALDO AWAL */}
-        {activeTab === 'accounts' && (
-          <div className="settings-section-stack">
-            <section className="settings-surface">
-              <div className="settings-section-intro settings-section-intro-action"><span className="settings-section-icon"><Wallet size={20} /></span><div><h2>Rekening & sumber dana</h2><p>Kelola rekening, dompet, dan saldo awalmu.</p></div><button type="button" onClick={openAddAccount} className="button primary settings-add-button"><Plus size={16} /> Tambah rekening</button></div>
-              {isFetchingAccounts ? <p className="settings-empty-state">Memuat rekening...</p> : accounts.length === 0 ? <div className="settings-empty-state"><p>Belum ada rekening atau sumber dana.</p><button type="button" onClick={openAddAccount}>+ Tambah rekening</button></div> : <div className="settings-account-list">{accounts.map((account) => <div className={`settings-account-row ${account.is_primary ? 'primary' : ''}`} key={account.id}>
-                <span className="settings-account-logo"><BankLogo bankName={account.name} className="settings-bank-logo" /></span>
-                <span className="settings-list-copy"><span className="settings-account-name"><b>{account.name}</b>{account.is_primary && <em>Utama</em>}</span><small>Saldo awal · {formatRupiah(account.initial_balance)}</small></span>
-                <div className="settings-overflow"><button type="button" className="settings-overflow-trigger" onClick={() => setOpenAccountMenuId((id) => id === account.id ? null : account.id)} aria-label={`Tindakan untuk ${account.name}`} aria-expanded={openAccountMenuId === account.id}><MoreHorizontal size={19} /></button>{openAccountMenuId === account.id && <div className="settings-overflow-menu"><button type="button" onClick={() => openEditAccount(account)}><Edit2 size={15} /> Edit</button><button type="button" className="danger" onClick={() => handleDeletePaymentAccount(account.id)}><Trash2 size={15} /> Hapus</button></div>}</div>
-              </div>)}</div>}
-            </section>
-          </div>
-        )}
-
         </div>
         )}
         
-        {/* ACCOUNT MODAL */}
-        {accountModalOpen && (
-          <div className="settings-modal-scrim" onClick={() => setAccountModalOpen(false)}>
-            <div className="settings-modal-dialog" onClick={e => e.stopPropagation()}>
-              <div className="settings-modal-header"><div><h3>{editAccountId ? "Edit rekening" : "Tambah rekening"}</h3><p>Atur sumber dana dan saldo awal.</p></div><button type="button" onClick={() => setAccountModalOpen(false)} aria-label="Tutup"><X size={19} /></button></div>
-              <form onSubmit={handleSaveAccount}>
-                <div className="settings-modal-body">
-                  <label className="settings-field"><span>Nama rekening / bank</span><input type="text" value={accName} onChange={e => setAccName(e.target.value)} required placeholder="Contoh: Bank BRI" /></label>
-                  <label className="settings-field"><span>Tipe rekening</span>
-                    <CustomSelect
-                      value={accType}
-                      onChange={setAccType}
-                      responsiveOverlay
-                      selectionTitle="Pilih tipe rekening"
-                      options={[
-                        { value: "bank", label: "Bank" },
-                        { value: "wallet", label: "E-Wallet" },
-                        { value: "cash", label: "Tunai" }
-                      ]}
-                    />
-                  </label>
-                  <label className="settings-field"><span>Saldo awal (Rp)</span><input type="number" value={accBalance === 0 ? "" : accBalance} onChange={e => setAccBalance(e.target.value)} required placeholder="Contoh: 100000" /></label>
-                  <label className="settings-checkbox"><input type="checkbox" checked={accIsPrimary} onChange={e => setAccIsPrimary(e.target.checked)} /><span>Jadikan rekening utama</span></label>
-                </div>
-                <div className="settings-modal-actions">
-                  <button type="button" className="button secondary" onClick={() => setAccountModalOpen(false)}>Batal</button>
-                  <button type="submit" className="button primary">Simpan perubahan</button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
         {/* EDIT CATEGORY MODAL */}
         {editCatModalOpen && (
           <div className="settings-modal-scrim" onClick={() => setEditCatModalOpen(false)}>
@@ -933,16 +726,6 @@ export default function SettingsPage() {
           title="Hapus Aturan Merchant"
           description="Hapus aturan merchant ini?"
           confirmLabel="Hapus Aturan"
-          variant="danger"
-        />
-
-        <ConfirmDialog
-          isOpen={!!confirmDeleteAccountId}
-          onClose={() => setConfirmDeleteAccountId(null)}
-          onConfirm={executeDeletePaymentAccount}
-          title="Hapus Rekening"
-          description="Hapus rekening ini? Transaksi terkait tetap tersimpan, tetapi tidak lagi terhubung ke rekening tersebut."
-          confirmLabel="Hapus Rekening"
           variant="danger"
         />
 
