@@ -505,7 +505,10 @@ export default function DompetPage() {
               >
                 <div className="wallet-card-topline">
                   <AccountLogo bankName={selectedAccount.name} variant="hero" />
-                  <span><AccountTypeIcon type={selectedAccount.type} />{accountTypeLabel(selectedAccount.type)}</span>
+                  <div className="wallet-card-actions">
+                    <span className="wallet-card-type"><AccountTypeIcon type={selectedAccount.type} /><span>{accountTypeLabel(selectedAccount.type)}</span></span>
+                    {accounts.length > 1 && <button type="button" className="wallet-cycle-button" onClick={showNextAccount} aria-label="Lihat dompet berikutnya"><RefreshCw size={17} /></button>}
+                  </div>
                 </div>
                 <div className="wallet-card-identity">
                   <h2>{selectedAccount.name}</h2>
@@ -514,14 +517,13 @@ export default function DompetPage() {
                 <div className="wallet-card-balance"><span>Saldo saat ini</span><strong>{balanceText(accountBalances.get(selectedAccount.id) || 0)}</strong></div>
                 <div className="wallet-card-mark" aria-hidden="true"><WalletCards /></div>
               </div>
-              <div className="wallet-explorer-controls">
-                {accounts.length > 1 && (
+              {accounts.length > 1 && (
+                <div className="wallet-explorer-controls">
                   <div className="wallet-page-indicators" aria-label={`Dompet ${selectedIndex + 1} dari ${accounts.length}`}>
                     {accounts.map((account, index) => <button key={account.id} type="button" className={index === selectedIndex ? "active" : ""} onClick={() => selectAccountAt(index)} aria-label={`Lihat ${account.name}`} aria-current={index === selectedIndex ? "true" : undefined} />)}
                   </div>
-                )}
-                {accounts.length > 1 && <button type="button" className="wallet-cycle-button" onClick={showNextAccount} aria-label="Lihat dompet berikutnya"><RefreshCw size={17} /></button>}
-              </div>
+                </div>
+              )}
               <button type="button" className="button primary wallet-mobile-add" onClick={openAddAccount}><Plus size={17} /> Tambah rekening</button>
             </section>
           )}
