@@ -29,7 +29,7 @@ import { useDouit } from "../providers/DouitProvider";
 import { Transaction } from "../../types";
 import { MiniSparkline } from "../components/MiniSparkline";
 import { BankLogo } from "../components/BankLogo";
-import { useWalletSwipe } from "../components/useWalletSwipe";
+import { useWalletCarousel } from "../components/useWalletSwipe";
 
 import { getAccountCurrentBalance, getTotalCurrentBalance, PaymentAccount } from "@/lib/account-balance";
 import { createClient } from "@/lib/supabase/client";
@@ -319,26 +319,28 @@ export default function DashboardPage() {
     setSelectedAccount(account);
   }, [accounts]);
   const {
-    dragOffset,
-    handlePointerDown,
-    handlePointerMove,
-    finishPointerGesture,
-  } = useWalletSwipe({ itemCount: accounts.length, selectedIndex, onSelect: selectAccountAt });
+    carouselRef,
+    handleScroll: handleCarouselScroll,
+    beginUserInteraction,
+    scrollToIndex,
+  } = useWalletCarousel({ itemCount: accounts.length, selectedIndex, onSelect: selectAccountAt });
   const totalBalance = React.useMemo(
     () => getTotalCurrentBalance(accounts, transactions),
     [accounts, transactions],
   );
-  const selectedBalance = React.useMemo(
-    () => selectedAccount ? getAccountCurrentBalance(selectedAccount, transactions) : summary.net_balance,
-    [selectedAccount, summary.net_balance, transactions],
-  );
+  const accountBalances = React.useMemo(() => new Map(
+    accounts.map((account) => [account.id, getAccountCurrentBalance(account, transactions)]),
+  ), [accounts, transactions]);
   const balanceText = (value: number | string) => balanceVisible ? money(value) : maskedMoney;
   const selectedAccountName = selectedAccount?.name || "Total rekening";
-  const selectedAccountType = selectedAccount ? accountTypeLabel(selectedAccount.type) : "Semua sumber dana";
   const recentTransactions = transactions.slice(0, 5) as DashboardTransaction[];
+  const showAccountAt = (index: number) => {
+    selectAccountAt(index);
+    scrollToIndex(index);
+  };
   const showNextAccount = () => {
     if (accounts.length < 2) return;
-    selectAccountAt((selectedIndex + 1) % accounts.length);
+    showAccountAt((selectedIndex + 1) % accounts.length);
   };
 
   return (
@@ -376,45 +378,65 @@ export default function DashboardPage() {
         </section>
 
         <section className="dashboard-wallet-explorer" aria-label="Rekening aktif">
-          <div
-            key={selectedAccount?.id || "all-accounts"}
-            className="dashboard-wallet-card"
-            data-variant={selectedIndex % 4}
-            style={{
-              transform: `translate3d(${dragOffset}px, 0, 0) rotate(${dragOffset / 95}deg)`,
-              transition: dragOffset ? "none" : undefined,
-            }}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={finishPointerGesture}
-            onPointerCancel={finishPointerGesture}
-          >
-            <div className="dashboard-wallet-topline">
-              <span className="dashboard-wallet-logo" aria-hidden="true">
-                <BankLogo bankName={selectedAccountName} className="h-full w-full max-w-full shrink-0 overflow-hidden" />
-              </span>
-              <div className="dashboard-wallet-actions">
-                <span className="dashboard-wallet-type">
-                  <AccountTypeIcon type={selectedAccount?.type || "cash"} />
-                  {selectedAccountType}
-                </span>
-                {accounts.length > 1 && (
-                  <button type="button" className="dashboard-wallet-cycle" onClick={showNextAccount} aria-label="Lihat rekening berikutnya">
-                    <RefreshCw size={17} />
-                  </button>
-                )}
+          {accounts.length > 0 ? (
+            <div
+              ref={carouselRef}
+              className={`dashboard-wallet-track ${accounts.length === 1 ? "single" : ""}`}
+              onScroll={handleCarouselScroll}
+              onPointerDown={beginUserInteraction}
+              onWheel={beginUserInteraction}
+            >
+              {accounts.map((account, index) => {
+                const accountType = accountTypeLabel(account.type);
+                return (
+                  <article
+                    key={account.id}
+                    className={`dashboard-wallet-card ${index === selectedIndex ? "active" : ""}`}
+                    data-variant={index % 4}
+                    role="group"
+                    aria-label={`Rekening ${index + 1} dari ${accounts.length}: ${account.name}`}
+                    aria-current={index === selectedIndex ? "true" : undefined}
+                  >
+                    <div className="dashboard-wallet-topline">
+                      <span className="dashboard-wallet-logo" aria-hidden="true">
+                        <BankLogo bankName={account.name} className="h-full w-full max-w-full shrink-0 overflow-hidden" />
+                      </span>
+                      <div className="dashboard-wallet-actions">
+                        <span className="dashboard-wallet-type">
+                          <AccountTypeIcon type={account.type} />
+                          {accountType}
+                        </span>
+                        {accounts.length > 1 && index === selectedIndex && (
+                          <button type="button" className="dashboard-wallet-cycle" onClick={showNextAccount} aria-label="Lihat rekening berikutnya">
+                            <RefreshCw size={17} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="dashboard-wallet-identity">
+                      <h2>{account.name}</h2>
+                      <p>{account.is_primary ? "Rekening utama" : accountType}</p>
+                    </div>
+                    <div className="dashboard-wallet-balance">
+                      <span>Saldo saat ini</span>
+                      <strong>{balanceText(accountBalances.get(account.id) || 0)}</strong>
+                    </div>
+                    <Wallet className="dashboard-wallet-mark" aria-hidden="true" />
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="dashboard-wallet-card active single" data-variant="0">
+              <div className="dashboard-wallet-topline">
+                <span className="dashboard-wallet-logo" aria-hidden="true"><Wallet size={28} /></span>
+                <span className="dashboard-wallet-type"><Wallet size={15} /> Sumber dana</span>
               </div>
+              <div className="dashboard-wallet-identity"><h2>Belum ada rekening</h2><p>Tambahkan sumber dana dari halaman Dompet</p></div>
+              <div className="dashboard-wallet-balance"><span>Saldo saat ini</span><strong>{balanceText(totalBalance)}</strong></div>
+              <Wallet className="dashboard-wallet-mark" aria-hidden="true" />
             </div>
-            <div className="dashboard-wallet-identity">
-              <h2>{selectedAccountName}</h2>
-              <p>{selectedAccount?.is_primary ? "Rekening utama" : selectedAccountType}</p>
-            </div>
-            <div className="dashboard-wallet-balance">
-              <span>Saldo saat ini</span>
-              <strong>{balanceText(selectedBalance)}</strong>
-            </div>
-            <Wallet className="dashboard-wallet-mark" aria-hidden="true" />
-          </div>
+          )}
           {accounts.length > 1 && (
             <div className="dashboard-wallet-indicators" aria-label={`Rekening ${selectedIndex + 1} dari ${accounts.length}`}>
               {accounts.map((account, index) => (
@@ -422,7 +444,7 @@ export default function DashboardPage() {
                   key={account.id}
                   type="button"
                   className={index === selectedIndex ? "active" : ""}
-                  onClick={() => selectAccountAt(index)}
+                  onClick={() => showAccountAt(index)}
                   aria-label={`Lihat ${account.name}`}
                   aria-current={index === selectedIndex ? "true" : undefined}
                 />
@@ -457,16 +479,20 @@ export default function DashboardPage() {
 
         <section className="dashboard-flow-card" aria-label={`${period}: pemasukan dan pengeluaran`}>
           <article className="dashboard-flow-metric income">
-            <span className="dashboard-flow-icon"><ArrowDownLeft size={18} /></span>
-            <strong>{balanceText(periodSummary.income)}</strong>
-            <span className="dashboard-flow-label">Pemasukan</span>
-            <small>{periodSummary.incomeCount} transaksi</small>
+            <span className="dashboard-flow-icon"><ArrowUpRight size={16} /></span>
+            <div className="dashboard-flow-copy">
+              <strong>{balanceText(periodSummary.income)}</strong>
+              <span className="dashboard-flow-label">Pemasukan</span>
+              <small>{periodSummary.incomeCount} transaksi</small>
+            </div>
           </article>
           <article className="dashboard-flow-metric expense">
-            <span className="dashboard-flow-icon"><ArrowUpRight size={18} /></span>
-            <strong>{balanceText(periodSummary.expense)}</strong>
-            <span className="dashboard-flow-label">Pengeluaran</span>
-            <small>{periodSummary.expenseCount} transaksi</small>
+            <span className="dashboard-flow-icon"><ArrowDownRight size={16} /></span>
+            <div className="dashboard-flow-copy">
+              <strong>{balanceText(periodSummary.expense)}</strong>
+              <span className="dashboard-flow-label">Pengeluaran</span>
+              <small>{periodSummary.expenseCount} transaksi</small>
+            </div>
           </article>
         </section>
 
@@ -494,7 +520,7 @@ export default function DashboardPage() {
               areaOpacity={0.1}
               verticalPadding={18}
               className="dashboard-analysis-sparkline"
-              height={112}
+              height={104}
             />
           </div>
           <div className={`dashboard-balance-condition ${periodSummary.net > 0 ? "positive" : periodSummary.net < 0 ? "negative" : "neutral"}`}>
