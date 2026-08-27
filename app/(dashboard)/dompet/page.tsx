@@ -17,13 +17,12 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { FormEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
 import { BankLogo } from "@/app/components/BankLogo";
-import { useWalletSwipe } from "@/app/components/useWalletSwipe";
 import { ConfirmDialog } from "@/app/components/ui/ConfirmDialog";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
 import { useDouit } from "@/app/providers/DouitProvider";
@@ -91,6 +90,12 @@ function AccountLogo({ bankName, variant }: { bankName: string; variant: "hero" 
 }
 
 type MenuPosition = { top: number; left: number };
+type GestureState = {
+  startX: number;
+  startY: number;
+  axis: "horizontal" | "vertical" | null;
+};
+
 export default function DompetPage() {
   const { user } = useDouit();
   const searchParams = useSearchParams();
@@ -107,6 +112,7 @@ export default function DompetPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState(0);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [editAccountId, setEditAccountId] = useState<string | null>(null);
   const [confirmDeleteAccountId, setConfirmDeleteAccountId] = useState<string | null>(null);
@@ -117,6 +123,7 @@ export default function DompetPage() {
   const [accType, setAccType] = useState("bank");
   const [accBalance, setAccBalance] = useState("");
   const [accIsPrimary, setAccIsPrimary] = useState(false);
+  const gestureRef = useRef<GestureState | null>(null);
   const walletHeroRef = useRef<HTMLDivElement>(null);
 
   const fetchWalletData = useCallback(async () => {
@@ -187,16 +194,6 @@ export default function DompetPage() {
   const selectedIndex = Math.max(0, accounts.findIndex((account) => account.id === selectedAccountId));
   const selectedAccount = accounts[selectedIndex] || null;
   const actionAccount = accounts.find((account) => account.id === actionAccountId) || null;
-  const selectAccountAt = useCallback((index: number) => {
-    const account = accounts[index];
-    if (account) setSelectedAccountId(account.id);
-  }, [accounts]);
-  const {
-    dragOffset,
-    handlePointerDown,
-    handlePointerMove,
-    finishPointerGesture,
-  } = useWalletSwipe({ itemCount: accounts.length, selectedIndex, onSelect: selectAccountAt });
 
   const openAddAccount = () => {
     setEditAccountId(null);
@@ -359,9 +356,56 @@ export default function DompetPage() {
     setActionAccountId(accountId);
   };
 
+  const selectAccountAt = (index: number) => {
+    const account = accounts[index];
+    if (account) setSelectedAccountId(account.id);
+  };
+
   const showNextAccount = () => {
     if (accounts.length < 2) return;
     selectAccountAt((selectedIndex + 1) % accounts.length);
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (accounts.length < 2 || (event.target as HTMLElement).closest("button")) return;
+    gestureRef.current = { startX: event.clientX, startY: event.clientY, axis: null };
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const gesture = gestureRef.current;
+    if (!gesture) return;
+    const deltaX = event.clientX - gesture.startX;
+    const deltaY = event.clientY - gesture.startY;
+    const horizontalDistance = Math.abs(deltaX);
+    const verticalDistance = Math.abs(deltaY);
+
+    if (!gesture.axis && Math.max(horizontalDistance, verticalDistance) > 8) {
+      if (verticalDistance > horizontalDistance) {
+        gesture.axis = "vertical";
+      } else if (horizontalDistance > verticalDistance * 1.2) {
+        gesture.axis = "horizontal";
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
+    }
+
+    if (gesture.axis === "horizontal") {
+      event.preventDefault();
+      const isAtStart = selectedIndex === 0 && deltaX > 0;
+      const isAtEnd = selectedIndex === accounts.length - 1 && deltaX < 0;
+      setDragOffset((isAtStart || isAtEnd) ? deltaX * 0.28 : deltaX);
+    }
+  };
+
+  const finishPointerGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const gesture = gestureRef.current;
+    if (!gesture) return;
+    if (gesture.axis === "horizontal") {
+      const deltaX = event.clientX - gesture.startX;
+      if (deltaX <= -52 && selectedIndex < accounts.length - 1) selectAccountAt(selectedIndex + 1);
+      if (deltaX >= 52 && selectedIndex > 0) selectAccountAt(selectedIndex - 1);
+    }
+    gestureRef.current = null;
+    setDragOffset(0);
   };
 
   const selectFromList = (account: PaymentAccount) => {
