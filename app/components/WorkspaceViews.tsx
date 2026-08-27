@@ -1,13 +1,17 @@
 "use client";
 
 import {
+  ArrowDownLeft,
   ArrowLeft,
+  ArrowUpRight,
   CalendarDays,
+  ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   Download,
   Filter,
   Mail,
+  List,
   MoreHorizontal,
   PencilLine,
   Plus,
@@ -16,8 +20,6 @@ import {
   CircleAlert,
   Bot,
   Wallet,
-  CreditCard,
-  Smartphone,
   X
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -36,6 +38,16 @@ const formatMoney = (value: number | string) => new Intl.NumberFormat("id-ID", {
 const formatDate = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" });
 const formatTime = (value: string) => new Date(value).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }).replace('.', ':') + " WIB";
 const formatTransactionDay = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta" });
+const getJakartaDateKey = (value: string | Date) => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Jakarta",
+  }).formatToParts(new Date(value));
+  const getPart = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value || "";
+  return `${getPart("year")}-${getPart("month")}-${getPart("day")}`;
+};
 const cleanTransactionNotes = (notes?: string | null) => notes?.replace(/\[NO_TIME\]/g, '').replace(/\[UNMATCHED_BANK:[^\]]+\]/g, '').trim() || '';
 const getTransactionSourceLabel = (source: Transaction['source']) => source === 'AUTOMATIC_EMAIL' ? 'Email Bank' : source === 'MANUAL_CHAT' ? 'AI Chat' : 'Manual';
 const getTransactionDateTimeLabel = (row: Pick<Transaction, 'date' | 'source' | 'notes'>) => `${formatDate(row.date)}${shouldDisplayTransactionTime(row) ? ` · ${formatTime(row.date).replace(' WIB', '')}` : ''}`;
@@ -55,6 +67,138 @@ function TransactionBankLogo({ bankName, className = "" }: { bankName: string; c
 }
 
 type DisplayTransaction = Transaction & { sumber_dana?: string; category_id?: string };
+type TransactionViewMode = "list" | "calendar";
+type CalendarMonth = { year: number; month: number };
+
+const calendarWeekdays = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
+const calendarMonthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+const padCalendarPart = (value: number) => String(value).padStart(2, "0");
+const getCalendarDateKey = (year: number, month: number, day: number) => `${year}-${padCalendarPart(month + 1)}-${padCalendarPart(day)}`;
+const formatCompactMoney = (value: number) => {
+  const absoluteValue = Math.abs(value);
+  if (absoluteValue >= 1_000_000_000) return `${(absoluteValue / 1_000_000_000).toLocaleString("id-ID", { maximumFractionDigits: 1 })}M`;
+  if (absoluteValue >= 1_000_000) return `${(absoluteValue / 1_000_000).toLocaleString("id-ID", { maximumFractionDigits: 1 })}jt`;
+  if (absoluteValue >= 1_000) return `${Math.round(absoluteValue / 1_000)}k`;
+  return absoluteValue.toLocaleString("id-ID");
+};
+const formatSelectedCalendarDate = (dateKey: string) => {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, day)));
+};
+
+function TransactionFeedRow({ row, onSelect }: { row: DisplayTransaction; onSelect: (row: DisplayTransaction) => void }) {
+  return (
+    <button type="button" className="transaction-feed-item" onClick={() => onSelect(row)} aria-label={`Lihat detail transaksi ${row.merchant}`}>
+      <TransactionBankLogo bankName={row.sumber_dana || "Tunai"} className="transaction-feed-logo" />
+      <span className="transaction-feed-copy">
+        <strong>{row.merchant}</strong>
+        <small>{getTransactionDateTimeLabel(row)}</small>
+        <span className="transaction-feed-secondary">
+          <span>{row.category}</span>
+          {row.status === "PENDING_APPROVAL" && <span className="transaction-feed-pending">Menunggu</span>}
+        </span>
+      </span>
+      <span className={`transaction-feed-amount ${row.type === "INCOME" ? "income" : "expense"}`}>{row.type === "INCOME" ? "+" : "−"}{formatMoney(row.amount)}</span>
+      <ChevronRight className="transaction-feed-chevron" size={18} aria-hidden="true" />
+    </button>
+  );
+}
+
+function TransactionCalendar({
+  rows,
+  month,
+  selectedDateKey,
+  todayKey,
+  onPreviousMonth,
+  onNextMonth,
+  onSelectDate,
+  onSelectTransaction,
+}: {
+  rows: DisplayTransaction[];
+  month: CalendarMonth;
+  selectedDateKey: string;
+  todayKey: string;
+  onPreviousMonth: () => void;
+  onNextMonth: () => void;
+  onSelectDate: (dateKey: string, dateMonth: CalendarMonth) => void;
+  onSelectTransaction: (row: DisplayTransaction) => void;
+}) {
+  const rowsByDate = rows.reduce((dates, row) => {
+    const key = getJakartaDateKey(row.date);
+    const dateRows = dates.get(key);
+    if (dateRows) dateRows.push(row);
+    else dates.set(key, [row]);
+    return dates;
+  }, new Map<string, DisplayTransaction[]>());
+  const firstDay = new Date(Date.UTC(month.year, month.month, 1));
+  const leadingDays = (firstDay.getUTCDay() + 6) % 7;
+  const calendarStart = new Date(Date.UTC(month.year, month.month, 1 - leadingDays));
+  const calendarDays = Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(calendarStart);
+    date.setUTCDate(calendarStart.getUTCDate() + index);
+    return date;
+  });
+  const selectedRows = rowsByDate.get(selectedDateKey) || [];
+
+  return (
+    <div className="transactions-calendar-layout">
+      <section className="transactions-calendar" aria-label={`Kalender transaksi ${calendarMonthNames[month.month]} ${month.year}`}>
+        <header className="transactions-calendar-header">
+          <button type="button" onClick={onPreviousMonth} aria-label="Bulan sebelumnya"><ChevronLeft size={18} /></button>
+          <h2>{calendarMonthNames[month.month]} {month.year}</h2>
+          <button type="button" onClick={onNextMonth} aria-label="Bulan berikutnya"><ChevronRight size={18} /></button>
+        </header>
+        <div className="transactions-calendar-weekdays" aria-hidden="true">
+          {calendarWeekdays.map(day => <span key={day}>{day}</span>)}
+        </div>
+        <div className="transactions-calendar-grid">
+          {calendarDays.map(date => {
+            const dateMonth = { year: date.getUTCFullYear(), month: date.getUTCMonth() };
+            const dateKey = getCalendarDateKey(dateMonth.year, dateMonth.month, date.getUTCDate());
+            const dateRows = rowsByDate.get(dateKey) || [];
+            const incomeTotal = dateRows.filter(row => row.type === "INCOME").reduce((sum, row) => sum + Number(row.amount), 0);
+            const expenseTotal = dateRows.filter(row => row.type === "EXPENSE").reduce((sum, row) => sum + Number(row.amount), 0);
+            const outsideMonth = dateMonth.year !== month.year || dateMonth.month !== month.month;
+            const flowClass = incomeTotal > 0 && expenseTotal > 0 ? "mixed" : incomeTotal > 0 ? "income" : expenseTotal > 0 ? "expense" : "";
+            const amountLabel = incomeTotal > 0 && expenseTotal > 0
+              ? `${dateRows.length} trx`
+              : incomeTotal > 0
+                ? `+${formatCompactMoney(incomeTotal)}`
+                : expenseTotal > 0
+                  ? `−${formatCompactMoney(expenseTotal)}`
+                  : "";
+            return (
+              <button
+                type="button"
+                className={`transactions-calendar-day ${outsideMonth ? "outside" : ""} ${selectedDateKey === dateKey ? "selected" : ""} ${todayKey === dateKey ? "today" : ""} ${dateRows.length ? "has-transactions" : ""}`}
+                key={dateKey}
+                aria-label={`${date.getUTCDate()} ${calendarMonthNames[dateMonth.month]} ${dateMonth.year}${dateRows.length ? `, ${dateRows.length} transaksi` : ", tidak ada transaksi"}`}
+                aria-pressed={selectedDateKey === dateKey}
+                onClick={() => onSelectDate(dateKey, dateMonth)}
+              >
+                <span className="transactions-calendar-day-number">{date.getUTCDate()}</span>
+                {amountLabel && <span className={`transactions-calendar-day-value ${flowClass}`}>{amountLabel}</span>}
+                {flowClass === "mixed" && <span className="transactions-calendar-flow-dots" aria-hidden="true"><i /><i /></span>}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <aside className="transactions-selected-day" aria-live="polite">
+        <header>
+          <h2>{formatSelectedCalendarDate(selectedDateKey)}</h2>
+          <span>{selectedRows.length} transaksi</span>
+        </header>
+        {selectedRows.length > 0 ? (
+          <div className="transactions-selected-day-feed">
+            {selectedRows.map(row => <TransactionFeedRow key={row.id} row={row} onSelect={onSelectTransaction} />)}
+          </div>
+        ) : <p className="transactions-calendar-empty">Belum ada transaksi pada tanggal ini.</p>}
+      </aside>
+    </div>
+  );
+}
 
 const subscribeMobileViewport = (onStoreChange: () => void) => {
   const mediaQuery = window.matchMedia("(max-width: 760px)");
@@ -158,8 +302,8 @@ import { createClient } from "@/lib/supabase/client";
 import { isAccountMatch } from "../../utils/bankAliases";
 
 let cachedWorkspaceTx: any[] = [];
+let cachedWorkspaceTodayTx: any[] = [];
 let cachedCategories: {id: string, name: string}[] = [];
-let cachedAccounts: any[] = [];
 let cachedPrimaryAccount: any = null;
 
 const toLocalYYYYMMDD = (d: Date) => {
@@ -208,6 +352,12 @@ export function TransactionsView() {
   const [addOpen, setAddOpen] = useState(false);
   const [editRow, setEditRow] = useState<Transaction & { category_id: string } | null>(null);
   const [detailRow, setDetailRow] = useState<DisplayTransaction | null>(null);
+  const [viewMode, setViewMode] = useState<TransactionViewMode>("list");
+  const [selectedDateKey, setSelectedDateKey] = useState(() => getJakartaDateKey(new Date()));
+  const [calendarMonth, setCalendarMonth] = useState<CalendarMonth>(() => {
+    const [year, month] = getJakartaDateKey(new Date()).split("-").map(Number);
+    return { year, month: month - 1 };
+  });
   const isMobileViewport = useSyncExternalStore(
     subscribeMobileViewport,
     getMobileViewportSnapshot,
@@ -235,12 +385,12 @@ export function TransactionsView() {
   const [editSumberDana, setEditSumberDana] = useState("Tunai");
   
   const [rows, setRows] = useState<Transaction[]>(cachedWorkspaceTx);
+  const [todayActivityRows, setTodayActivityRows] = useState<Transaction[]>(cachedWorkspaceTodayTx);
   const [isLoading, setIsLoading] = useState(cachedWorkspaceTx.length === 0);
   const [loadError, setLoadError] = useState(false);
   const [categories, setCategories] = useState<{id: string, name: string}[]>(cachedCategories);
-  const [accounts, setAccounts] = useState<any[]>(cachedAccounts);
   const [primaryAccount, setPrimaryAccount] = useState<any>(cachedPrimaryAccount);
-  const { user, business } = useDouit();
+  const { user } = useDouit();
   const listScrollPositionRef = useRef(0);
   const advancedOptionRef = useRef<HTMLLabelElement>(null);
 
@@ -253,6 +403,14 @@ export function TransactionsView() {
   }, [saveRule]);
 
   useEffect(() => {
+    if (viewMode !== "calendar" || !dateFilter.start) return;
+    const [year, month] = dateFilter.start.split("-").map(Number);
+    if (!year || !month) return;
+    setCalendarMonth({ year, month: month - 1 });
+    setSelectedDateKey(dateFilter.start);
+  }, [dateFilter.start, viewMode]);
+
+  useEffect(() => {
     if (!user) return;
     const supabase = createClient();
     
@@ -261,9 +419,7 @@ export function TransactionsView() {
       setLoadError(false);
       const { data: accData } = await supabase.from('payment_accounts').select('*').eq('user_id', user.id);
       if (accData) {
-        cachedAccounts = accData;
         cachedPrimaryAccount = accData.find(a => a.is_primary) || null;
-        setAccounts(accData);
         setPrimaryAccount(cachedPrimaryAccount);
       }
 
@@ -299,6 +455,11 @@ export function TransactionsView() {
         })) as any as (Transaction & { category_id: string, sumber_dana: string })[];
         cachedWorkspaceTx = mapped as any;
         setRows(mapped);
+        const mappedTodayRows = mapped.filter(row => getJakartaDateKey(row.date) === getJakartaDateKey(new Date()));
+        if ((dateFilter.mode === "preset" && dateFilter.preset === "Semua") || mappedTodayRows.length > 0) {
+          cachedWorkspaceTodayTx = mappedTodayRows;
+          setTodayActivityRows(mappedTodayRows);
+        }
       }
       setLoadError(Boolean(error));
       setIsLoading(false);
@@ -340,19 +501,26 @@ export function TransactionsView() {
     return true;
   });
 
-  let initBal = 0;
   let relevantRows = filteredRows.filter(row => row.status === 'APPROVED');
   
   if (primaryAccount) {
     relevantRows = relevantRows.filter((row: any) => isAccountMatch(primaryAccount.name, row.sumber_dana));
-    initBal = Number(primaryAccount.initial_balance) || 0;
-  } else {
-    initBal = accounts.reduce((sum, a) => sum + (Number(a.initial_balance) || 0), 0);
   }
 
   const income = relevantRows.filter(row => row.type === "INCOME").reduce((sum, row) => sum + Number(row.amount), 0);
   const expense = relevantRows.filter(row => row.type === "EXPENSE").reduce((sum, row) => sum + Number(row.amount), 0);
-  const net_balance = initBal + income - expense;
+  const incomeCount = relevantRows.filter(row => row.type === "INCOME").length;
+  const expenseCount = relevantRows.filter(row => row.type === "EXPENSE").length;
+  const todayKey = getJakartaDateKey(new Date());
+  const todayRows = todayActivityRows;
+  const todaySourceBreakdown = Array.from(todayRows.reduce((sources, row) => {
+    const sourceName = (row as DisplayTransaction).sumber_dana?.trim() || "Tunai";
+    const key = sourceName.toLocaleLowerCase("id-ID");
+    const source = sources.get(key);
+    if (source) source.count += 1;
+    else sources.set(key, { name: sourceName, count: 1 });
+    return sources;
+  }, new Map<string, { name: string; count: number }>()).values());
 
   async function createTransaction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -539,6 +707,18 @@ export function TransactionsView() {
     restoreTransactionListPosition();
   };
 
+  const moveCalendarMonth = (offset: number) => {
+    const nextMonth = new Date(Date.UTC(calendarMonth.year, calendarMonth.month + offset, 1));
+    const next = { year: nextMonth.getUTCFullYear(), month: nextMonth.getUTCMonth() };
+    setCalendarMonth(next);
+    setSelectedDateKey(getCalendarDateKey(next.year, next.month, 1));
+  };
+
+  const selectCalendarDate = (dateKey: string, dateMonth: CalendarMonth) => {
+    setSelectedDateKey(dateKey);
+    if (dateMonth.year !== calendarMonth.year || dateMonth.month !== calendarMonth.month) setCalendarMonth(dateMonth);
+  };
+
   const typeOptions = [
     { value: "EXPENSE", label: "Pengeluaran" },
     { value: "INCOME", label: "Pemasukan" }
@@ -645,43 +825,47 @@ export function TransactionsView() {
 
   return (
     <Shell active="transactions">
-      <WorkspaceHeader 
-        eyebrow="Aktivitas keuangan"
-        title="Transaksi" 
-        description="Pantau semua pemasukan dan pengeluaranmu di satu tempat."
-        actions={
-          <>
-            <button className="button primary transactions-add-button" onClick={openAddModal}><Plus size={16} /> Catat transaksi</button>
-            <button className="button secondary transactions-export-button" onClick={handleExportCSV} aria-label="Ekspor transaksi ke CSV"><Download size={16} /> <span>Ekspor CSV</span></button>
-          </>
-        } 
-      />
-      <section className="balance-card transactions-balance-card" aria-label="Ringkasan saldo transaksi">
-        <div className="transactions-balance-main">
-          <span className="transactions-balance-label">Saldo Bersih</span>
-          <h2>{formatMoney(net_balance)}</h2>
-          <span className="transactions-account-context">
-            {primaryAccount ? (
-              <>{primaryAccount.type === 'bank' ? <CreditCard /> : primaryAccount.type === 'wallet' ? <Smartphone /> : <Wallet />} {primaryAccount.name} · Rekening utama</>
-            ) : (
-              <><Wallet /> Total seluruh rekening</>
-            )}
+      <header className="transactions-hero">
+        <div className="transactions-hero-copy">
+          <h1>Transaksi</h1>
+          <strong>{todayRows.length} transaksi hari ini</strong>
+        </div>
+        <div className="transactions-source-breakdown" aria-label="Sumber dana transaksi hari ini">
+          {todaySourceBreakdown.length > 0 ? todaySourceBreakdown.map(source => (
+            <span className="transactions-source-chip" key={source.name.toLocaleLowerCase("id-ID")}>
+              <BankLogo bankName={source.name} className="transactions-source-logo" />
+              <span>{source.name}</span>
+              <strong>{source.count} transaksi</strong>
+            </span>
+          )) : <span className="transactions-today-empty">Belum ada transaksi hari ini.</span>}
+        </div>
+      </header>
+
+      <section className="transactions-flow-card" aria-label="Ringkasan pemasukan dan pengeluaran">
+        <article className="transactions-flow-metric income">
+          <span className="transactions-flow-icon"><ArrowDownLeft size={16} /></span>
+          <span className="transactions-flow-copy">
+            <span>Pemasukan</span>
+            <strong>{formatMoney(income)}</strong>
+            <small>{incomeCount} transaksi</small>
           </span>
-        </div>
-        <div className="transactions-balance-breakdown">
-          <div className="transactions-balance-metrics">
-            <div><span><i className="income-dot" />Pemasukan</span><strong>{formatMoney(income)}</strong></div>
-            <div><span><i className="expense-dot" />Pengeluaran</span><strong>{formatMoney(expense)}</strong></div>
-          </div>
-          <div className="transactions-comparison-bar" aria-label="Perbandingan pemasukan dan pengeluaran">
-            <i className="income-bar" style={{ width: `${income + expense ? (income / (income + expense)) * 100 : 0}%` }} />
-            <i className="expense-bar" style={{ width: `${income + expense ? (expense / (income + expense)) * 100 : 0}%` }} />
-          </div>
-        </div>
+        </article>
+        <article className="transactions-flow-metric expense">
+          <span className="transactions-flow-icon"><ArrowUpRight size={16} /></span>
+          <span className="transactions-flow-copy">
+            <span>Pengeluaran</span>
+            <strong>{formatMoney(expense)}</strong>
+            <small>{expenseCount} transaksi</small>
+          </span>
+        </article>
       </section>
       
       <section className="workspace-card data-card transactions-data-card">
         <div className="data-toolbar transactions-toolbar">
+          <div className="transactions-view-controls" role="group" aria-label="Mode tampilan transaksi">
+            <button type="button" className={viewMode === "list" ? "active" : ""} aria-pressed={viewMode === "list"} onClick={() => setViewMode("list")}><List size={15} /> List</button>
+            <button type="button" className={viewMode === "calendar" ? "active" : ""} aria-pressed={viewMode === "calendar"} onClick={() => setViewMode("calendar")}><CalendarDays size={15} /> Kalender</button>
+          </div>
           <div className="filter-tabs transactions-type-filter" role="group" aria-label="Filter tipe transaksi">
             {["Semua", "Pemasukan", "Pengeluaran"].map(item => (
               <button key={item} type="button" aria-pressed={kind === item} className={kind === item ? "active" : ""} onClick={() => setKind(item)}>{item}</button>
@@ -713,6 +897,8 @@ export function TransactionsView() {
             <CalendarDays size={15} />
             <span>{activeDateFilterLabel || "Periode"}</span>
           </button>
+          <button className="button secondary transactions-export-button" onClick={handleExportCSV} aria-label="Ekspor transaksi ke CSV"><Download size={15} /> <span>Ekspor CSV</span></button>
+          <button className="transactions-add-button" onClick={openAddModal}><Plus size={16} /> <span>Catat</span></button>
         </div>
         {activeDateFilterLabel && (
           <div className="transactions-active-filter">
@@ -724,13 +910,25 @@ export function TransactionsView() {
         <div className="transactions-list-area">
           {isDefaultDateFilter && (
             <div className="transactions-limit-info">
-              <CircleAlert size={14} /> <span>150 transaksi terbaru ditampilkan. Gunakan filter periode untuk melihat lainnya.</span>
+              <CircleAlert size={14} />
+              <span>{viewMode === "calendar" ? "Kalender menggunakan 150 transaksi terbaru. Gunakan filter periode untuk riwayat lebih lama." : "150 transaksi terbaru ditampilkan. Gunakan filter periode untuk melihat lainnya."}</span>
             </div>
           )}
           {isLoading && rows.length === 0 ? (
             <div className="transactions-state" role="status">Memuat transaksi…</div>
           ) : loadError && rows.length === 0 ? (
             <div className="transactions-state" role="alert"><strong>Transaksi belum dapat dimuat.</strong><span>Coba muat ulang halaman beberapa saat lagi.</span></div>
+          ) : viewMode === "calendar" ? (
+            <TransactionCalendar
+              rows={filteredRows as DisplayTransaction[]}
+              month={calendarMonth}
+              selectedDateKey={selectedDateKey}
+              todayKey={todayKey}
+              onPreviousMonth={() => moveCalendarMonth(-1)}
+              onNextMonth={() => moveCalendarMonth(1)}
+              onSelectDate={selectCalendarDate}
+              onSelectTransaction={openTransactionDetail}
+            />
           ) : filteredRows.length === 0 ? (
             <div className="transactions-state"><strong>{emptyStateMessage}</strong><span>{emptyStateHint}</span></div>
           ) : (
@@ -807,17 +1005,7 @@ export function TransactionsView() {
               <section className="transaction-day-group" key={group.label} aria-labelledby={`transaction-day-${group.rows[0].id}`}>
                 <h3 id={`transaction-day-${group.rows[0].id}`}>{group.label}</h3>
                 <div>
-                  {group.rows.map(row => (
-                    <button type="button" className="transaction-feed-item" key={row.id} onClick={() => openTransactionDetail(row)} aria-label={`Lihat detail transaksi ${row.merchant}`}>
-                      <TransactionBankLogo bankName={(row as any).sumber_dana || 'Tunai'} className="transaction-feed-logo" />
-                      <span className="transaction-feed-copy">
-                        <strong>{row.merchant}</strong>
-                        <small>{getTransactionDateTimeLabel(row)}</small>
-                      </span>
-                      <span className={`transaction-feed-amount ${row.type === "INCOME" ? "income" : "expense"}`}>{row.type === "INCOME" ? "+" : "−"}{formatMoney(row.amount)}</span>
-                      <ChevronRight className="transaction-feed-chevron" size={18} aria-hidden="true" />
-                    </button>
-                  ))}
+                  {group.rows.map(row => <TransactionFeedRow key={row.id} row={row as DisplayTransaction} onSelect={openTransactionDetail} />)}
                 </div>
               </section>
             ))}
