@@ -3,6 +3,7 @@
 import {
   PointerEvent as ReactPointerEvent,
   useCallback,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -70,5 +71,93 @@ export function useWalletSwipe({ itemCount, selectedIndex, onSelect }: WalletSwi
     handlePointerDown,
     handlePointerMove,
     finishPointerGesture,
+  };
+}
+
+type WalletCarouselOptions = WalletSwipeOptions;
+
+export function useWalletCarousel({ itemCount, selectedIndex, onSelect }: WalletCarouselOptions) {
+  const carouselRef = useRef<HTMLDivElement>(null);
+  const scrollFrameRef = useRef<number | null>(null);
+  const programmaticTargetRef = useRef<number | null>(null);
+  const previousItemCountRef = useRef(0);
+
+  const getScrollTarget = useCallback((index: number) => {
+    const carousel = carouselRef.current;
+    const card = carousel?.children.item(index) as HTMLElement | null;
+    if (!carousel || !card) return null;
+
+    const centeredLeft = card.offsetLeft - ((carousel.clientWidth - card.offsetWidth) / 2);
+    return Math.max(0, Math.min(centeredLeft, carousel.scrollWidth - carousel.clientWidth));
+  }, []);
+
+  const scrollToIndex = useCallback((index: number, behavior: ScrollBehavior = "smooth") => {
+    if (index < 0 || index >= itemCount) return;
+    const targetLeft = getScrollTarget(index);
+    if (targetLeft === null || !carouselRef.current) return;
+
+    programmaticTargetRef.current = index;
+    carouselRef.current.scrollTo({ left: targetLeft, behavior });
+  }, [getScrollTarget, itemCount]);
+
+  const handleScroll = useCallback(() => {
+    const carousel = carouselRef.current;
+    if (!carousel || itemCount < 2) return;
+    if (scrollFrameRef.current !== null) window.cancelAnimationFrame(scrollFrameRef.current);
+
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      const programmaticTarget = programmaticTargetRef.current;
+      if (programmaticTarget !== null) {
+        const targetLeft = getScrollTarget(programmaticTarget);
+        if (targetLeft !== null && Math.abs(carousel.scrollLeft - targetLeft) <= 2) {
+          programmaticTargetRef.current = null;
+        }
+        return;
+      }
+
+      const viewportCenter = carousel.scrollLeft + (carousel.clientWidth / 2);
+      let nearestIndex = 0;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+
+      Array.from(carousel.children).forEach((child, index) => {
+        const card = child as HTMLElement;
+        const cardCenter = card.offsetLeft + (card.offsetWidth / 2);
+        const distance = Math.abs(cardCenter - viewportCenter);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestIndex = index;
+        }
+      });
+
+      if (nearestIndex !== selectedIndex) onSelect(nearestIndex);
+    });
+  }, [getScrollTarget, itemCount, onSelect, selectedIndex]);
+
+  const beginUserInteraction = useCallback(() => {
+    programmaticTargetRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (itemCount === previousItemCountRef.current) return;
+    previousItemCountRef.current = itemCount;
+    const frame = window.requestAnimationFrame(() => scrollToIndex(selectedIndex, "auto"));
+    return () => window.cancelAnimationFrame(frame);
+  }, [itemCount, scrollToIndex, selectedIndex]);
+
+  useEffect(() => {
+    const alignSelectedCard = () => scrollToIndex(selectedIndex, "auto");
+    window.addEventListener("resize", alignSelectedCard);
+    return () => window.removeEventListener("resize", alignSelectedCard);
+  }, [scrollToIndex, selectedIndex]);
+
+  useEffect(() => () => {
+    if (scrollFrameRef.current !== null) window.cancelAnimationFrame(scrollFrameRef.current);
+  }, []);
+
+  return {
+    carouselRef,
+    handleScroll,
+    beginUserInteraction,
+    scrollToIndex,
   };
 }
