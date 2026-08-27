@@ -1449,15 +1449,12 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(22,130,93,.35); 
   .dashboard-mobile-total button:active { background: rgba(255,255,255,.15); transform: scale(.96); }
 
   .dashboard-wallet-explorer { position: relative; z-index: 2; min-width: 0; }
-  .dashboard-wallet-track { display: grid; min-width: 0; grid-auto-columns: calc(100% - 30px); grid-auto-flow: column; gap: 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain; scroll-behavior: smooth; scroll-snap-type: x mandatory; scrollbar-width: none; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
-  .dashboard-wallet-track::-webkit-scrollbar { display: none; }
-  .dashboard-wallet-track.single { grid-auto-columns: 100%; overflow-x: hidden; }
-  .dashboard-wallet-card { position: relative; display: flex; min-width: 0; min-height: 176px; flex-direction: column; overflow: hidden; padding: 16px 17px; color: #fffdf5; background: linear-gradient(137deg,#123b2a 0%,#1d5b41 60%,#347661 100%); border: 1px solid rgba(255,255,255,.13); border-radius: 18px; box-shadow: 0 12px 27px rgba(5,29,19,.2); scroll-snap-align: center; user-select: none; opacity: .82; transform: scale(.985); transition: opacity 160ms ease,transform 180ms cubic-bezier(.22,.68,.28,1); }
-  .dashboard-wallet-card.active,.dashboard-wallet-card.single { opacity: 1; transform: none; }
+  .dashboard-wallet-card { position: relative; display: flex; min-width: 0; min-height: 176px; flex-direction: column; overflow: hidden; padding: 16px 17px; color: #fffdf5; background: linear-gradient(137deg,#123b2a 0%,#1d5b41 60%,#347661 100%); border: 1px solid rgba(255,255,255,.13); border-radius: 18px; box-shadow: 0 12px 27px rgba(5,29,19,.2); touch-action: pan-y; user-select: none; transition: transform 190ms cubic-bezier(.22,.68,.28,1); animation: dashboard-wallet-enter 210ms ease-out; }
   .dashboard-wallet-card[data-variant="1"] { background: linear-gradient(137deg,#122f25 0%,#1e5745 60%,#3f7465 100%); }
   .dashboard-wallet-card[data-variant="2"] { background: linear-gradient(137deg,#273128 0%,#465c40 60%,#707b5b 100%); }
   .dashboard-wallet-card[data-variant="3"] { background: linear-gradient(137deg,#102e2a 0%,#1b504b 60%,#426f68 100%); }
   .dashboard-wallet-card::after { position: absolute; right: -58px; bottom: -94px; width: 205px; height: 205px; content: ""; background: radial-gradient(circle,rgba(200,243,107,.13),transparent 68%); border-radius: 50%; pointer-events: none; }
+  @keyframes dashboard-wallet-enter { from { opacity: .86; transform: translateY(3px) scale(.994); } to { opacity: 1; } }
   .dashboard-wallet-topline { position: relative; z-index: 2; display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }
   .dashboard-wallet-logo { display: grid; width: 62px; height: 40px; flex: 0 0 62px; place-items: center; overflow: hidden; background: transparent; border: 0; border-radius: 9px; box-shadow: none; }
   .dashboard-wallet-logo > div > span { font-size: 11px !important; }
@@ -1489,20 +1486,17 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(22,130,93,.35); 
   .quick-action-saving > span { color: #604a12; background: #f1cf67; border-color: #dfbb4e; }
   .quick-action-report > span { color: #f2f7f3; background: #285e5b; border-color: #326c68; }
 
-  .dashboard-flow-card { display: grid; min-width: 0; grid-template-columns: repeat(2,minmax(0,1fr)); margin-top: 12px; overflow: hidden; background: #f7f7f3; border: 1px solid #e1e6df; border-radius: 15px; box-shadow: 0 5px 14px rgba(23,43,34,.055); }
-  .dashboard-flow-metric { display: grid; min-width: 0; min-height: 96px; grid-template-columns: 31px minmax(0,1fr); align-items: center; gap: 9px; padding: 12px 11px; }
-  .dashboard-flow-metric + .dashboard-flow-metric { border-left: 1px solid rgba(64,76,69,.09); }
-  .dashboard-flow-icon { display: grid; width: 31px; height: 31px; flex: 0 0 auto; place-items: center; border: 1px solid currentColor; border-radius: 10px; }
-  .dashboard-flow-copy { min-width: 0; }
-  .dashboard-flow-metric strong { display: block; color: currentColor; font-size: clamp(13px,3.75vw,16px); font-weight: 735; font-variant-numeric: tabular-nums; letter-spacing: -.4px; line-height: 1.15; white-space: nowrap; }
-  .dashboard-flow-label { display: block; margin-top: 5px; color: #47534d; font-size: 10.5px; font-weight: 680; }
-  .dashboard-flow-metric small { display: block; margin-top: 2px; color: #7b8780; font-size: 9.5px; font-weight: 540; }
-  .dashboard-flow-metric.income { color: #17665d; background: #e6f1ed; }
-  .dashboard-flow-metric.income .dashboard-flow-icon { background: rgba(23,102,93,.08); }
-  .dashboard-flow-metric.expense { color: #a1661f; background: #f6ecd8; }
-  .dashboard-flow-metric.expense .dashboard-flow-icon { background: rgba(161,102,31,.08); }
+  .dashboard-flow-card { display: grid; min-width: 0; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin-top: 13px; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+  .dashboard-flow-metric { display: flex; min-width: 0; min-height: 145px; flex-direction: column; padding: 13px; border-radius: 15px; box-shadow: 0 6px 16px rgba(23,43,34,.07); }
+  .dashboard-flow-metric + .dashboard-flow-metric { border-left: 0; }
+  .dashboard-flow-icon { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; color: #fffaf0; background: rgba(255,255,255,.13); border: 1px solid rgba(255,255,255,.12); border-radius: 11px; }
+  .dashboard-flow-metric strong { display: block; margin-top: auto; padding-top: 14px; color: #fffdf7; font-size: clamp(14px,4.15vw,18px); font-weight: 750; font-variant-numeric: tabular-nums; letter-spacing: -.5px; line-height: 1.12; white-space: nowrap; }
+  .dashboard-flow-label { display: block; margin-top: 5px; color: #fffdf7; font-size: 11.5px; font-weight: 670; }
+  .dashboard-flow-metric small { display: block; margin-top: 3px; color: rgba(255,253,247,.7); font-size: 10px; font-weight: 530; }
+  .dashboard-flow-metric.income { background: linear-gradient(145deg,#1c625b,#287a70); }
+  .dashboard-flow-metric.expense { background: linear-gradient(145deg,#93601d,#b77d28); }
 
-  .dashboard-analysis-card { margin-top: 11px; overflow: hidden; padding: 14px 15px 11px; color: #f6f6ed; background: linear-gradient(145deg,#18221e,#242d29); border: 1px solid #2d3933; border-radius: 15px; box-shadow: 0 8px 20px rgba(17,27,22,.1); }
+  .dashboard-analysis-card { margin-top: 12px; overflow: hidden; padding: 15px 15px 12px; color: #f6f6ed; background: linear-gradient(145deg,#18221e,#242d29); border: 1px solid #2d3933; border-radius: 15px; box-shadow: 0 8px 20px rgba(17,27,22,.1); }
   .dashboard-analysis-card > header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 10px; }
   .dashboard-analysis-card > header > div:first-child { min-width: 0; }
   .dashboard-analysis-card header span { display: block; color: #93a19a; font-size: 9.5px; font-weight: 720; letter-spacing: .8px; text-transform: uppercase; }
@@ -1511,8 +1505,8 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(22,130,93,.35); 
   .dashboard-period-control { display: flex; flex: 0 0 auto; padding: 2px; background: rgba(0,0,0,.22); border-radius: 8px; }
   .dashboard-period-control button { min-height: 29px; padding: 4px 8px; color: #8f9c96; background: transparent; border: 0; border-radius: 6px; cursor: pointer; font-size: 9.5px; font-weight: 620; }
   .dashboard-period-control button.active { color: #1c281f; background: #c8f36b; }
-  .dashboard-analysis-chart { height: 104px; margin-top: 7px; }
-  .dashboard-analysis-sparkline { width: 100%; height: 104px; opacity: .94; }
+  .dashboard-analysis-chart { height: 112px; margin-top: 9px; }
+  .dashboard-analysis-sparkline { width: 100%; height: 112px; opacity: .94; }
   .dashboard-balance-condition { display: flex; align-items: center; gap: 6px; min-height: 27px; margin-top: 2px; padding-top: 9px; border-top: 1px solid rgba(255,255,255,.075); font-size: 11px; font-weight: 610; }
   .dashboard-balance-condition svg { flex: 0 0 auto; }
   .dashboard-balance-condition.positive { color: #c8f36b; }
@@ -1583,9 +1577,8 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(22,130,93,.35); 
   .dashboard-wallet-card { min-height: 170px; padding: 15px; }
   .dashboard-wallet-logo { width: 58px; height: 38px; flex-basis: 58px; }
   .dashboard-wallet-type { max-width: 132px; font-size: 10px; }
-  .dashboard-flow-metric { min-height: 92px; grid-template-columns: 29px minmax(0,1fr); gap: 7px; padding-right: 9px; padding-left: 9px; }
-  .dashboard-flow-icon { width: 29px; height: 29px; }
-  .dashboard-flow-metric strong { font-size: clamp(12.5px,3.65vw,15px); }
+  .dashboard-flow-metric { min-height: 140px; padding-right: 11px; padding-left: 11px; }
+  .dashboard-flow-metric strong { font-size: clamp(13.5px,4vw,16px); }
   .dashboard-period-control button { padding-right: 6px; padding-left: 6px; }
   .dashboard-insight-card { min-height: 104px; padding: 11px; }
   .dashboard-insight-card strong { font-size: 12.5px; }
