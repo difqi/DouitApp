@@ -345,7 +345,7 @@ export default function DashboardPage() {
 
   return (
     <div className="workspace-page dashboard-page">
-      <div className="page-heading dashboard-heading">
+      <div className="page-heading dashboard-heading dashboard-desktop-only">
         <div>
           <div className="eyebrow"><CalendarDays size={14} /> {new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div>
           <h1>Selamat datang, {membership?.display_name?.split(" ")[0] ?? "User"}.</h1>
@@ -356,7 +356,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <section className="dashboard-mobile-hero" aria-label="Saldo dan rekening aktif">
+      <section className="dashboard-mobile-hero dashboard-mobile-only" aria-label="Saldo dan rekening aktif">
         <header className="dashboard-mobile-hero-heading">
           <span>{new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span>
           <h1>Selamat datang, {membership?.display_name?.split(" ")[0] ?? "User"}.</h1>
@@ -469,7 +469,7 @@ export default function DashboardPage() {
         </section>
       )}
 
-      <section className="dashboard-mobile-summary" aria-label="Ringkasan keuangan mobile">
+      <section className="dashboard-mobile-summary dashboard-mobile-only" aria-label="Ringkasan keuangan mobile">
         <nav className="dashboard-quick-actions" aria-label="Aksi cepat">
           <Link href="/transactions" className="quick-action quick-action-record"><span><Plus size={21} /></span><small>Catat</small></Link>
           <Link href="/chat" className="quick-action quick-action-ai"><span><Bot size={20} /></span><small>Douit AI</small></Link>
@@ -552,7 +552,7 @@ export default function DashboardPage() {
         </aside>
       </section>
 
-      <section className="financial-summary dashboard-desktop-summary" aria-label="Ringkasan keuangan">
+      <section className="financial-summary dashboard-desktop-summary dashboard-desktop-only" aria-label="Ringkasan keuangan">
         <article className="balance-card financial-balance">
           <div className="balance-topline">
             <div className="balance-identity">
@@ -686,7 +686,7 @@ export default function DashboardPage() {
             <Link href="/transactions" className="text-button">Lihat semua <ArrowRight size={15} /></Link>
           </div>
           <div className="recent-transactions-wrap">
-            <table className="recent-transactions-table dashboard-recent-desktop">
+            <table className="recent-transactions-table dashboard-recent-desktop dashboard-desktop-only">
               <thead>
                 <tr>
                   <th>Transaksi</th>
@@ -727,7 +727,7 @@ export default function DashboardPage() {
               </tbody>
             </table>
 
-            <div className="dashboard-recent-mobile" role="list">
+            <div className="dashboard-recent-mobile dashboard-mobile-only" role="list">
               {recentTransactions.length === 0 && <p className="dashboard-recent-empty">Belum ada transaksi.</p>}
               {recentTransactions.map((tx) => (
                 <article className="dashboard-transaction-feed-item" key={tx.id} role="listitem">
