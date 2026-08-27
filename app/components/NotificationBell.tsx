@@ -18,7 +18,7 @@ export interface AppNotification {
   created_at: string;
 }
 
-export function NotificationBell() {
+export function NotificationBell({ mode = "popover" }: { mode?: "popover" | "link" }) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [userAccounts, setUserAccounts] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
@@ -62,15 +62,17 @@ export function NotificationBell() {
         setNotifications(cleanedData as AppNotification[]);
       }
       
-      const { data: accounts } = await supabase.from('payment_accounts').select('name').eq('user_id', user.id);
-      if (accounts) {
-        setUserAccounts(accounts);
+      if (mode === "popover") {
+        const { data: accounts } = await supabase.from('payment_accounts').select('name').eq('user_id', user.id);
+        if (accounts) {
+          setUserAccounts(accounts);
+        }
       }
     };
 
     fetchNotifications();
 
-    const channelName = `user_notifications_${user.id}`;
+    const channelName = `user_notifications_${mode}_${user.id}`;
     
     // 1. Remove stale cached channel if React Strict Mode re-executed useEffect
     const existingChannel = supabase.getChannels().find(
@@ -106,7 +108,7 @@ export function NotificationBell() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user?.id]);
+  }, [mode, user?.id]);
 
   const unreadCount = notifications.filter((n) => !n.is_read).length;
 
@@ -188,6 +190,15 @@ export function NotificationBell() {
       prev.map((item) => (item.id === n.id ? { ...item, is_read: true, metadata: newMetadata } : item))
     );
   };
+
+  if (mode === "link") {
+    return (
+      <Link href="/notifikasi" className="mobile-notification-link" aria-label={unreadCount > 0 ? `Notifikasi, ${unreadCount} belum dibaca` : "Notifikasi"}>
+        <Bell size={20} aria-hidden="true" />
+        {unreadCount > 0 && <span className="mobile-notification-dot" aria-hidden="true" />}
+      </Link>
+    );
+  }
 
   if (!mounted) {
     return (

@@ -5,12 +5,10 @@ import {
   Bot,
   ChevronDown,
   LayoutDashboard,
-  Menu,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
   Sparkles,
-  X,
   User,
   LogOut,
   BarChart3,
@@ -25,6 +23,8 @@ import { createClient } from "@/lib/supabase/client";
 import { NotificationBell } from "./NotificationBell";
 import { DouitLogo } from "./icons/DouitLogo";
 import { WorkspaceLoading } from "@/components/ui/WorkspaceLoading";
+import { MobileBottomNavigation } from "./MobileBottomNavigation";
+import { MobileAppHeader } from "./MobileAppHeader";
 
 type ActivePage = "dashboard" | "chat" | "transactions" | "wallet" | "settings" | "laporan" | "nabung";
 
@@ -45,7 +45,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   else if (pathname.includes("/settings")) active = "settings";
   else if (pathname.includes("/laporan")) active = "laporan";
   else if (pathname.includes("/nabung")) active = "nabung";
-  const [menuOpen, setMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const { user, membership, business, loading } = useDouit();
@@ -74,14 +73,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const memberInitials = membership.display_name.split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase();
 
   return (
-    <div className={`app-frame ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-      <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""} ${menuOpen ? "open" : ""}`}>
+    <div className={`app-frame ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${pathname === "/" ? "dashboard-route" : ""} ${active === "chat" ? "chat-route" : ""}`}>
+      <aside className={`sidebar desktop-navigation ${sidebarCollapsed ? "collapsed" : ""}`}>
         <div className="sidebar-brand-row flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <Link
               href="/"
               className="brand flex items-center gap-2.5 text-white font-bold no-underline tracking-tight transition-opacity hover:opacity-90"
-              onClick={() => setMenuOpen(false)}
             >
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 border border-white/10 shadow-sm">
                 <DouitLogo className="h-6 w-6" />
@@ -92,7 +90,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <NotificationBell />
             </div>
           </div>
-          <button className="mobile-close" onClick={() => setMenuOpen(false)} aria-label="Tutup menu"><X size={20} /></button>
         </div>
         <div className="business-switcher" title={business.name} style={{ cursor: 'default' }}>
           <span className="business-logo">{initials}</span>
@@ -107,7 +104,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               title={sidebarCollapsed ? label : undefined}
               className={`nav-item ${active === id ? "active" : ""}`}
               aria-current={active === id ? "page" : undefined}
-              onClick={() => setMenuOpen(false)}
             >
               <span className="nav-icon"><Icon size={18} /></span>
               <span>{label}</span>
@@ -118,7 +114,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ))}
 
           <span className="nav-label ai-label">Asisten</span>
-          <Link href="/chat" title={sidebarCollapsed ? "Douit AI" : undefined} className={`nav-item ai-nav ${active === "chat" ? "active" : ""}`} aria-current={active === "chat" ? "page" : undefined} onClick={() => setMenuOpen(false)}>
+          <Link href="/chat" title={sidebarCollapsed ? "Douit AI" : undefined} className={`nav-item ai-nav ${active === "chat" ? "active" : ""}`} aria-current={active === "chat" ? "page" : undefined}>
             <span className="nav-icon"><Bot size={18} /></span><span>Douit AI</span><Sparkles size={13} className="nav-sparkle" />
           </Link>
         </nav>
@@ -127,11 +123,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div>
             <b>Butuh insight cepat?</b>
             <p>Tanya soal transaksi dan kebiasaan belanjamu.</p>
-            <Link href="/chat" onClick={() => setMenuOpen(false)}>Tanya Douit AI</Link>
+            <Link href="/chat">Tanya Douit AI</Link>
           </div>
         </div>
         <div className="sidebar-bottom">
-          <Link href="/settings" title={sidebarCollapsed ? "Pengaturan" : undefined} className={`nav-item ${active === "settings" ? "active" : ""}`} aria-current={active === "settings" ? "page" : undefined} onClick={() => setMenuOpen(false)}>
+          <Link href="/settings" title={sidebarCollapsed ? "Pengaturan" : undefined} className={`nav-item ${active === "settings" ? "active" : ""}`} aria-current={active === "settings" ? "page" : undefined}>
             <span className="nav-icon"><Settings size={17} /></span><span>Pengaturan</span>
           </Link>
           <div className="profile-container" style={{ position: 'relative', width: '100%' }}>
@@ -161,7 +157,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <div className="bg-[#E8DFC8] h-[1px] w-full"></div>
                 <div className="bg-transparent p-1.5 flex flex-col gap-1">
                   <button
-                    onClick={() => { setProfileMenuOpen(false); setMenuOpen(false); router.push('/settings'); }}
+                    onClick={() => { setProfileMenuOpen(false); router.push('/settings'); }}
                     className="w-full text-left px-2 py-1.5 text-[13px] text-[#1E293B] bg-transparent hover:bg-[#F2EBDC] border-none rounded-md cursor-pointer flex items-center gap-2 transition-colors"
                   >
                     <Settings className="h-4 w-4 text-[#1E293B]" />
@@ -182,24 +178,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
       <button
-        className="sidebar-collapse"
+        className="sidebar-collapse desktop-navigation-control"
         onClick={() => setSidebarCollapsed((current) => !current)}
         aria-label={sidebarCollapsed ? "Perluas sidebar" : "Ciutkan sidebar"}
         title={sidebarCollapsed ? "Perluas sidebar" : "Ciutkan sidebar"}
       >
         {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
       </button>
-      {menuOpen && <button className="sidebar-scrim" aria-label="Tutup menu" onClick={() => setMenuOpen(false)} />}
       <main className="main-area">
-        <header className="mobile-shell-bar">
-          <button className="mobile-menu-button" aria-label="Buka menu" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>
-          <Link href="/" className="mobile-brand" aria-label="Ke halaman ringkasan">
-            <DouitLogo className="h-5 w-5" />
-            <span>Douit</span>
-          </Link>
-        </header>
+        <MobileAppHeader />
         <div className={`page-content ${active === "chat" ? "chat-page-content" : ""}`}>{children}</div>
       </main>
+      <MobileBottomNavigation />
     </div>
   );
 }

@@ -357,11 +357,6 @@ export default function DashboardPage() {
       </div>
 
       <section className="dashboard-mobile-hero dashboard-mobile-only" aria-label="Saldo dan rekening aktif">
-        <header className="dashboard-mobile-hero-heading">
-          <span>{new Date().toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span>
-          <h1>Selamat datang, {membership?.display_name?.split(" ")[0] ?? "User"}.</h1>
-        </header>
-
         <section className="dashboard-mobile-total" aria-label="Total saldo seluruh sumber dana">
           <div>
             <span>Total saldo</span>
