@@ -27,7 +27,7 @@ const getCurrentDateLabel = () => {
   return label.charAt(0).toUpperCase() + label.slice(1);
 };
 
-export function MobileAppHeader() {
+export function MobileProfileIdentity() {
   const { membership, user } = useDouit();
   const [avatarFailed, setAvatarFailed] = useState(false);
   const displayName = membership?.display_name?.trim() || "User";
@@ -37,7 +37,7 @@ export function MobileAppHeader() {
   const avatarUrl = typeof possibleAvatar === "string" ? possibleAvatar : null;
 
   return (
-    <header className="mobile-app-header mobile-navigation">
+    <>
       <Link href="/settings" className="mobile-app-profile" aria-label="Buka profil dan pengaturan">
         <span className="mobile-app-avatar" aria-hidden="true">
           {avatarUrl && !avatarFailed ? (
@@ -52,6 +52,14 @@ export function MobileAppHeader() {
         </span>
       </Link>
       <NotificationBell mode="link" />
+    </>
+  );
+}
+
+export function MobileAppHeader() {
+  return (
+    <header className="mobile-app-header mobile-navigation">
+      <MobileProfileIdentity />
     </header>
   );
 }

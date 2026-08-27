@@ -30,6 +30,7 @@ import { Transaction } from "../../types";
 import { MiniSparkline } from "../components/MiniSparkline";
 import { BankLogo } from "../components/BankLogo";
 import { useWalletCarousel } from "../components/useWalletSwipe";
+import { MobileProfileIdentity } from "../components/MobileAppHeader";
 
 import { getAccountCurrentBalance, getTotalCurrentBalance, PaymentAccount } from "@/lib/account-balance";
 import { createClient } from "@/lib/supabase/client";
@@ -357,6 +358,10 @@ export default function DashboardPage() {
       </div>
 
       <section className="dashboard-mobile-hero dashboard-mobile-only" aria-label="Saldo dan rekening aktif">
+        <header className="dashboard-hero-profile-row mobile-navigation">
+          <MobileProfileIdentity />
+        </header>
+
         <section className="dashboard-mobile-total" aria-label="Total saldo seluruh sumber dana">
           <div>
             <span>Total saldo</span>

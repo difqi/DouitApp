@@ -533,6 +533,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(22,130,93,.35); 
   .mobile-navigation { display: grid; }
   .main-area, .app-frame.sidebar-collapsed .main-area { width: 100%; margin-left: 0; }
   .page-content { min-height: calc(100dvh - var(--mobile-app-header-height) - env(safe-area-inset-top)); }
+  .dashboard-route .page-content { min-height: 100dvh; }
   .page-content:not(.chat-page-content) { padding-bottom: calc(var(--mobile-bottom-nav-height) + env(safe-area-inset-bottom) + 12px); scroll-padding-bottom: calc(var(--mobile-bottom-nav-height) + env(safe-area-inset-bottom) + 12px); }
   .chat-route .mobile-app-header { display: none; }
   .dashboard-heading { min-height: 0; padding-left: 0; }
@@ -1454,24 +1455,25 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(22,130,93,.35); 
   .dashboard-mobile-only { display: block !important; }
   .dashboard-desktop-only { display: none !important; }
   .dashboard-page { max-width: 100%; padding: 14px 14px max(42px,calc(env(safe-area-inset-bottom) + 22px)); overflow-x: clip; }
-  .dashboard-route .mobile-app-header { position: relative; color: #fffdf5; background: #0d2b20; border-bottom-color: transparent; backdrop-filter: none; }
-  .dashboard-route .mobile-app-avatar { color: #173126; background: #c8f36b; border-color: rgba(255,255,255,.16); }
-  .dashboard-route .mobile-app-identity strong { color: #fffdf5; }
-  .dashboard-route .mobile-app-identity time { color: #aac2b6; }
-  .dashboard-route .mobile-notification-link { color: #eff7f1; background: rgba(255,255,255,.085); border-color: rgba(255,255,255,.13); box-shadow: none; }
-  .dashboard-route .mobile-notification-dot { border-color: #0d2b20; }
-  .dashboard-mobile-hero { position: relative; margin: -14px -14px 0; padding: 8px 14px 13px; overflow: hidden; color: #fffdf5; background: linear-gradient(145deg,#0d2b20 0%,#154b36 58%,#266351 100%); border-radius: 0 0 28px 18px; box-shadow: 0 10px 25px rgba(19,55,40,.12); }
+  .dashboard-mobile-hero { position: relative; margin: -14px -14px 0; padding: max(12px,env(safe-area-inset-top)) 14px 13px; overflow: hidden; color: #fffdf5; background: linear-gradient(145deg,#0d2b20 0%,#154b36 58%,#266351 100%); border-radius: 0 0 28px 18px; box-shadow: 0 10px 25px rgba(19,55,40,.12); }
   .dashboard-mobile-hero::after { position: absolute; top: -95px; right: -95px; width: 235px; height: 235px; content: ""; background: radial-gradient(circle,rgba(200,243,107,.105),transparent 68%); border-radius: 50%; pointer-events: none; }
+  .dashboard-hero-profile-row { position: relative; z-index: 2; width: 100%; min-height: 52px; grid-template-columns: minmax(0,1fr) 44px; align-items: center; gap: 12px; padding: 0; color: #fffdf5; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+  .dashboard-hero-profile-row .mobile-app-profile { padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+  .dashboard-hero-profile-row .mobile-app-avatar { color: #173126; background: #c8f36b; border-color: rgba(255,255,255,.16); }
+  .dashboard-hero-profile-row .mobile-app-identity strong { color: #fffdf5; }
+  .dashboard-hero-profile-row .mobile-app-identity time { color: #aac2b6; }
+  .dashboard-hero-profile-row .mobile-notification-link { color: #eff7f1; background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.12); box-shadow: none; }
+  .dashboard-hero-profile-row .mobile-notification-dot { border-color: #0d2b20; }
   .dashboard-page .pending-action-center { margin: 12px 0 0; padding: 10px 11px; border-radius: 11px; }
   .dashboard-page .pending-action-icon { width: 32px; height: 32px; }
   .dashboard-page .pending-action-center p { font-size: 11px; }
   .dashboard-page .pending-action-link { min-height: 40px; }
   .dashboard-mobile-summary { min-width: 0; }
 
-  .dashboard-mobile-total { position: relative; z-index: 2; display: flex; min-height: 55px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 2px 1px 9px; }
+  .dashboard-mobile-total { position: relative; z-index: 2; display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 0 1px 8px; }
   .dashboard-mobile-total > div { min-width: 0; }
   .dashboard-mobile-total span { display: block; color: #acc3b7; font-size: 11px; font-weight: 620; }
-  .dashboard-mobile-total strong { display: block; margin-top: 3px; overflow-wrap: anywhere; color: #fffdf5; font-size: clamp(22px,6.8vw,28px); font-weight: 760; font-variant-numeric: tabular-nums; letter-spacing: -.9px; line-height: 1.08; }
+  .dashboard-mobile-total strong { display: block; margin-top: 3px; overflow-wrap: anywhere; color: #fffdf5; font-size: clamp(25px,7.2vw,30px); font-weight: 760; font-variant-numeric: tabular-nums; letter-spacing: -.9px; line-height: 1.08; }
   .dashboard-mobile-total button { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; padding: 0; color: #edf7ef; background: rgba(255,255,255,.085); border: 1px solid rgba(255,255,255,.13); border-radius: 12px; cursor: pointer; transition: background-color 140ms ease,transform 120ms ease; }
   .dashboard-mobile-total button:active { background: rgba(255,255,255,.15); transform: scale(.96); }
 

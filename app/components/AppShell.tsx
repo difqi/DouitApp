@@ -186,7 +186,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
       </button>
       <main className="main-area">
-        <MobileAppHeader />
+        {pathname !== "/" && <MobileAppHeader />}
         <div className={`page-content ${active === "chat" ? "chat-page-content" : ""}`}>{children}</div>
       </main>
       <MobileBottomNavigation />
