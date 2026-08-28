@@ -35,12 +35,12 @@ const formatRupiah = (value: number | string) => new Intl.NumberFormat("id-ID", 
 }).format(Number(value));
 
 const subscribeSettingsViewport = (onStoreChange: () => void) => {
-  const mediaQuery = window.matchMedia("(max-width: 760px)");
+  const mediaQuery = window.matchMedia("(max-width: 900px)");
   mediaQuery.addEventListener("change", onStoreChange);
   return () => mediaQuery.removeEventListener("change", onStoreChange);
 };
 
-const getSettingsMobileSnapshot = () => window.matchMedia("(max-width: 760px)").matches;
+const getSettingsMobileSnapshot = () => window.matchMedia("(max-width: 900px)").matches;
 const getSettingsServerSnapshot = () => false;
 
 export default function SettingsPage() {

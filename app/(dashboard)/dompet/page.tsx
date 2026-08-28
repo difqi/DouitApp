@@ -186,6 +186,13 @@ export default function DompetPage() {
   );
   const selectedIndex = Math.max(0, accounts.findIndex((account) => account.id === selectedAccountId));
   const selectedAccount = accounts[selectedIndex] || null;
+  const stackedAccounts = useMemo(() => {
+    if (accounts.length === 0) return [];
+    return Array.from({ length: Math.min(accounts.length, 3) }, (_, depth) => {
+      const accountIndex = (selectedIndex + depth) % accounts.length;
+      return { account: accounts[accountIndex], accountIndex, depth };
+    });
+  }, [accounts, selectedIndex]);
   const actionAccount = accounts.find((account) => account.id === actionAccountId) || null;
   const selectAccountAt = useCallback((index: number) => {
     const account = accounts[index];
@@ -372,6 +379,51 @@ export default function DompetPage() {
   const maskedBalance = "Rp ••••••••";
   const balanceText = (value: number) => balanceVisible ? formatRupiah(value) : maskedBalance;
 
+  const renderMobileWalletCard = (account: PaymentAccount, accountIndex: number, depth: number) => {
+    const isActive = depth === 0;
+    return (
+      <div
+        key={account.id}
+        className="wallet-mobile-card wallet-stack-card"
+        data-depth={depth}
+        data-variant={accountIndex % 4}
+        aria-hidden={isActive ? undefined : true}
+        style={isActive ? {
+          transform: `translate3d(${dragOffset}px, 0, 0) rotate(${dragOffset / 80}deg)`,
+          transition: dragOffset ? "none" : undefined,
+        } : undefined}
+        onPointerDown={isActive ? handlePointerDown : undefined}
+        onPointerMove={isActive ? handlePointerMove : undefined}
+        onPointerUp={isActive ? finishPointerGesture : undefined}
+        onPointerCancel={isActive ? finishPointerGesture : undefined}
+      >
+        <div className="wallet-card-topline">
+          <AccountLogo bankName={account.name} variant="hero" />
+          <div className="wallet-card-actions">
+            <span className="wallet-card-type"><AccountTypeIcon type={account.type} /><span>{accountTypeLabel(account.type)}</span></span>
+            {accounts.length > 1 && (
+              <button
+                type="button"
+                className="wallet-cycle-button"
+                onClick={isActive ? showNextAccount : undefined}
+                tabIndex={isActive ? undefined : -1}
+                aria-label="Lihat dompet berikutnya"
+              >
+                <RefreshCw size={17} />
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="wallet-card-identity">
+          <h2>{account.name}</h2>
+          <p>{account.is_primary ? "Rekening utama" : accountTypeLabel(account.type)}</p>
+        </div>
+        <div className="wallet-card-balance"><span>Saldo saat ini</span><strong>{balanceText(accountBalances.get(account.id) || 0)}</strong></div>
+        <div className="wallet-card-mark" aria-hidden="true"><WalletCards /></div>
+      </div>
+    );
+  };
+
   const renderAccountActions = () => {
     if (!actionAccount || typeof document === "undefined") return null;
     const actionButtons = (
@@ -438,51 +490,38 @@ export default function DompetPage() {
         </section>
       ) : isMobileViewport ? (
         <div className="wallet-mobile-presentation">
-          <section className="wallet-mobile-total" aria-label="Total saldo seluruh sumber dana">
-            <div><span>Total saldo</span><strong>{balanceText(totalBalance)}</strong></div>
-            <button type="button" onClick={() => setBalanceVisible((visible) => !visible)} aria-label={balanceVisible ? "Sembunyikan saldo" : "Tampilkan saldo"}>{balanceVisible ? <EyeOff size={19} /> : <Eye size={19} />}</button>
+          <section className="wallet-mobile-hero-shell" aria-label="Ringkasan dompet">
+            <div className="wallet-mobile-hero">
+              <header className="wallet-mobile-hero-heading">
+                <h1>Dompet</h1>
+                <p>Kelola rekening, e-wallet, dan saldo kamu.</p>
+              </header>
+              <div className="wallet-mobile-total" aria-label="Total saldo seluruh sumber dana">
+                <div><span>Total saldo</span><strong>{balanceText(totalBalance)}</strong></div>
+                <button type="button" onClick={() => setBalanceVisible((visible) => !visible)} aria-label={balanceVisible ? "Sembunyikan saldo" : "Tampilkan saldo"}>{balanceVisible ? <EyeOff size={19} /> : <Eye size={19} />}</button>
+              </div>
+              <svg className="wallet-mobile-hero-wave" viewBox="0 0 400 64" preserveAspectRatio="none" aria-hidden="true">
+                <path d="M0 30C72 51 126 52 190 32C260 10 323 5 400 28V64H0Z" fill="currentColor" />
+              </svg>
+            </div>
+
+            {selectedAccount && (
+              <section className="wallet-mobile-explorer" ref={walletHeroRef} aria-label="Dompet aktif">
+                <div className="wallet-real-card-stack" data-size={stackedAccounts.length}>
+                  {stackedAccounts.map(({ account, accountIndex, depth }) => renderMobileWalletCard(account, accountIndex, depth))}
+                </div>
+              </section>
+            )}
           </section>
 
-          {selectedAccount && (
-            <section className="wallet-mobile-explorer" ref={walletHeroRef} aria-label="Dompet aktif">
-              <div className="wallet-card-stack" aria-hidden="true"><i /><i /></div>
-              <div
-                key={selectedAccount.id}
-                className="wallet-mobile-card"
-                data-variant={selectedIndex % 4}
-                style={{
-                  transform: `translate3d(${dragOffset}px, 0, 0) rotate(${dragOffset / 80}deg)`,
-                  transition: dragOffset ? "none" : undefined,
-                }}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={finishPointerGesture}
-                onPointerCancel={finishPointerGesture}
-              >
-                <div className="wallet-card-topline">
-                  <AccountLogo bankName={selectedAccount.name} variant="hero" />
-                  <div className="wallet-card-actions">
-                    <span className="wallet-card-type"><AccountTypeIcon type={selectedAccount.type} /><span>{accountTypeLabel(selectedAccount.type)}</span></span>
-                    {accounts.length > 1 && <button type="button" className="wallet-cycle-button" onClick={showNextAccount} aria-label="Lihat dompet berikutnya"><RefreshCw size={17} /></button>}
-                  </div>
-                </div>
-                <div className="wallet-card-identity">
-                  <h2>{selectedAccount.name}</h2>
-                  <p>{selectedAccount.is_primary ? "Rekening utama" : accountTypeLabel(selectedAccount.type)}</p>
-                </div>
-                <div className="wallet-card-balance"><span>Saldo saat ini</span><strong>{balanceText(accountBalances.get(selectedAccount.id) || 0)}</strong></div>
-                <div className="wallet-card-mark" aria-hidden="true"><WalletCards /></div>
+          {accounts.length > 1 && (
+            <div className="wallet-explorer-controls">
+              <div className="wallet-page-indicators" aria-label={`Dompet ${selectedIndex + 1} dari ${accounts.length}`}>
+                {accounts.map((account, index) => <button key={account.id} type="button" className={index === selectedIndex ? "active" : ""} onClick={() => selectAccountAt(index)} aria-label={`Lihat ${account.name}`} aria-current={index === selectedIndex ? "true" : undefined} />)}
               </div>
-              {accounts.length > 1 && (
-                <div className="wallet-explorer-controls">
-                  <div className="wallet-page-indicators" aria-label={`Dompet ${selectedIndex + 1} dari ${accounts.length}`}>
-                    {accounts.map((account, index) => <button key={account.id} type="button" className={index === selectedIndex ? "active" : ""} onClick={() => selectAccountAt(index)} aria-label={`Lihat ${account.name}`} aria-current={index === selectedIndex ? "true" : undefined} />)}
-                  </div>
-                </div>
-              )}
-              <button type="button" className="button primary wallet-mobile-add" onClick={openAddAccount}><Plus size={17} /> Tambah rekening</button>
-            </section>
+            </div>
           )}
+          <button type="button" className="button primary wallet-mobile-add" onClick={openAddAccount}><Plus size={17} /> Tambah rekening</button>
 
           <section className="wallet-accounts-section" aria-labelledby="wallet-mobile-accounts-heading">
             <div className="wallet-section-heading"><div><h2 id="wallet-mobile-accounts-heading">Rekening & sumber dana</h2></div><small>{accounts.length} rekening</small></div>

@@ -73,7 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const memberInitials = membership.display_name.split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase();
 
   return (
-    <div className={`app-frame ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${pathname === "/" ? "dashboard-route" : ""} ${active === "chat" ? "chat-route" : ""}`}>
+    <div className={`app-frame ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${pathname === "/" ? "dashboard-route" : ""} ${active === "chat" ? "chat-route" : ""} ${active === "settings" ? "settings-route" : ""}`}>
       <aside className={`sidebar desktop-navigation ${sidebarCollapsed ? "collapsed" : ""}`}>
         <div className="sidebar-brand-row flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -186,7 +186,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
       </button>
       <main className="main-area">
-        {pathname !== "/" && active !== "transactions" && <MobileAppHeader />}
+        {pathname !== "/" && active !== "transactions" && active !== "settings" && active !== "nabung" && <MobileAppHeader />}
         <div className={`page-content ${active === "chat" ? "chat-page-content" : ""}`}>{children}</div>
       </main>
       <MobileBottomNavigation />

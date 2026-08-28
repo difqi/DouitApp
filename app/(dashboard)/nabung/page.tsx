@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, useSyncExternalStore } from "react";
 import {
   PiggyBank,
   Flame,
@@ -71,8 +71,22 @@ let cachedTodayExpenseTotal: number = 0;
 let cachedUserProfile: { whatsapp_number: string; is_whatsapp_verified: boolean } | null = null;
 let hasLoadedGoalsOnce = false;
 
+const subscribeNabungViewport = (onStoreChange: () => void) => {
+  const mediaQuery = window.matchMedia("(max-width: 767px)");
+  mediaQuery.addEventListener("change", onStoreChange);
+  return () => mediaQuery.removeEventListener("change", onStoreChange);
+};
+
+const getNabungMobileSnapshot = () => window.matchMedia("(max-width: 767px)").matches;
+const getNabungServerSnapshot = () => false;
+
 export default function NabungPage() {
   const { user } = useDouit();
+  const isMobileViewport = useSyncExternalStore(
+    subscribeNabungViewport,
+    getNabungMobileSnapshot,
+    getNabungServerSnapshot,
+  );
   const [goals, setGoals] = useState<SavingsGoal[]>(cachedGoals);
   const [loading, setLoading] = useState<boolean>(!hasLoadedGoalsOnce);
 
@@ -866,22 +880,41 @@ export default function NabungPage() {
   };
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[#faf9f5] p-4 text-slate-900 sm:p-6 lg:p-8">
+    <div
+      className="nabung-page min-h-screen overflow-x-hidden bg-[#faf9f5] p-4 text-slate-900 sm:p-6 lg:p-8"
+      style={isMobileViewport ? { paddingTop: 0 } : undefined}
+    >
       {/* HEADER SECTION */}
-      <div className="mx-auto flex max-w-7xl flex-col gap-4 border-b border-slate-200/80 pb-5 md:flex-row md:items-end md:justify-between">
-        <div>
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-200/70 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
-            <PiggyBank className="w-4 h-4 text-emerald-600" />
-            <span>Smart Savings Assistant</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
+      <div
+        className="nabung-hero mx-auto flex max-w-7xl flex-col gap-4 border-b border-slate-200/80 pb-5 md:flex-row md:items-end md:justify-between"
+        style={isMobileViewport ? {
+          position: "relative",
+          margin: "0 -16px",
+          padding: "max(26px, calc(env(safe-area-inset-top) + 18px)) 16px 64px",
+          overflow: "hidden",
+          color: "#fffdf5",
+          background: "radial-gradient(circle at 92% 12%, rgba(200,243,107,.16), transparent 38%), linear-gradient(137deg,#0a2a1d 0%,#15503a 58%,#2d735e 100%)",
+          border: 0,
+          borderRadius: "0 0 28px 28px",
+          boxShadow: "0 10px 24px rgba(12,48,33,.12)",
+          gap: "14px",
+        } : undefined}
+      >
+        <div className="nabung-hero-copy">
+          <h1
+            className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900"
+            style={isMobileViewport ? { color: "#fffdf5", fontSize: "27px", lineHeight: 1.08 } : undefined}
+          >
             Target & Tabungan Impian
           </h1>
-          <p className="text-slate-600 text-sm mt-1 max-w-2xl">
+          <p
+            className="text-slate-600 text-sm mt-1 max-w-2xl"
+            style={isMobileViewport ? { maxWidth: "345px", marginTop: "7px", color: "#c6d9ce", fontSize: "12.5px", lineHeight: 1.5 } : undefined}
+          >
             Rencanakan target tabungan, pantau progres, dan dapatkan pengingat lewat WhatsApp.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="nabung-hero-actions flex flex-wrap items-center gap-2.5">
           {isGoalLimitReached && (
             <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-700 border border-amber-500/20">
               Batas Maksimal (3/3)
@@ -889,12 +922,17 @@ export default function NabungPage() {
           )}
           <button
             onClick={handleOpenCreateModal}
-            className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 ${
+            className={`nabung-add-target inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 ${
               isGoalLimitReached
                 ? "cursor-not-allowed border border-slate-300 bg-slate-200 text-slate-500"
                 : "cursor-pointer border border-emerald-700/50 bg-[#173b2b] text-white hover:bg-[#1d4935] active:scale-[0.98]"
             }`}
             aria-disabled={isGoalLimitReached}
+            style={isMobileViewport && !isGoalLimitReached ? {
+              background: "rgba(255,255,255,.1)",
+              borderColor: "rgba(255,255,255,.2)",
+              boxShadow: "none",
+            } : undefined}
           >
             <Plus className={`w-4 h-4 stroke-[2.5] ${isGoalLimitReached ? "text-slate-500" : "text-emerald-400"}`} />
             <span className={isGoalLimitReached ? "text-slate-600 font-semibold" : "text-white font-semibold"}>Tambah target</span>
@@ -903,7 +941,14 @@ export default function NabungPage() {
       </div>
 
       {/* TOP STATS OVERVIEW: compact on mobile, separate cards on desktop */}
-      <div className="mx-auto my-5 grid min-h-24 max-w-7xl grid-cols-3 divide-x divide-emerald-800/60 overflow-hidden rounded-2xl border border-[#254936] bg-[#17382a] px-1 py-3.5 text-white shadow-sm md:hidden">
+      <div
+        className="nabung-mobile-stats relative z-10 mx-auto grid min-h-24 max-w-7xl grid-cols-3 divide-x divide-emerald-800/60 overflow-hidden rounded-2xl border border-[#254936] bg-[#17382a] px-1 py-3.5 text-white shadow-sm md:hidden"
+        style={isMobileViewport ? {
+          marginTop: "-48px",
+          marginBottom: "20px",
+          boxShadow: "0 14px 28px rgba(12,48,33,.18)",
+        } : undefined}
+      >
         <div className="flex min-w-0 flex-col items-center justify-center px-1.5 text-center">
           <Wallet className="mb-1.5 h-4 w-4 shrink-0 text-emerald-300" />
           {loading ? (
