@@ -10,6 +10,7 @@ import {
   CircleDollarSign,
   Download,
   Filter,
+  Info,
   Mail,
   List,
   MoreHorizontal,
@@ -365,6 +366,7 @@ export function TransactionsView() {
   );
   const [kind, setKind] = useState("Semua");
   const [searchQuery, setSearchQuery] = useState("");
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [saveRule, setSaveRule] = useState(false);
   const [dateFilter, setDateFilter] = useState<{mode: string, preset: string, month: string, year: string, start: string, end: string}>({mode: "preset", preset: "Semua", month: "", year: "", start: "", end: ""});
@@ -830,6 +832,51 @@ export function TransactionsView() {
           <h1>Transaksi</h1>
           <strong>{todayRows.length} transaksi hari ini</strong>
         </div>
+        <div className="transactions-mobile-header-actions">
+          {!mobileSearchOpen && (
+            <button
+              type="button"
+              className="transactions-mobile-search-button"
+              aria-label="Cari transaksi"
+              title="Cari transaksi"
+              onClick={() => setMobileSearchOpen(true)}
+            >
+              <Search size={17} />
+            </button>
+          )}
+          <button
+            type="button"
+            className="transactions-mobile-export-button"
+            aria-label="Ekspor transaksi ke CSV"
+            title="Ekspor transaksi ke CSV"
+            onClick={handleExportCSV}
+          >
+            <Download size={17} />
+          </button>
+        </div>
+        {mobileSearchOpen && (
+          <div className="transactions-mobile-search">
+            <Search size={15} aria-hidden="true" />
+            <input
+              autoFocus
+              placeholder="Cari transaksi..."
+              aria-label="Cari transaksi"
+              value={searchQuery}
+              onChange={event => setSearchQuery(event.target.value)}
+            />
+            <button
+              type="button"
+              aria-label="Tutup pencarian"
+              title="Tutup pencarian"
+              onClick={() => {
+                setSearchQuery("");
+                setMobileSearchOpen(false);
+              }}
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
         <div className="transactions-source-breakdown" aria-label="Sumber dana transaksi hari ini">
           {todaySourceBreakdown.length > 0 ? todaySourceBreakdown.map(source => (
             <span className="transactions-source-chip" key={source.name.toLocaleLowerCase("id-ID")}>
@@ -862,7 +909,7 @@ export function TransactionsView() {
       
       <section className="workspace-card data-card transactions-data-card">
         <div className="data-toolbar transactions-toolbar">
-          <div className="transactions-view-controls" role="group" aria-label="Mode tampilan transaksi">
+          <div className="transactions-view-controls transactions-desktop-view-controls" role="group" aria-label="Mode tampilan transaksi">
             <button type="button" className={viewMode === "list" ? "active" : ""} aria-pressed={viewMode === "list"} onClick={() => setViewMode("list")}><List size={15} /> List</button>
             <button type="button" className={viewMode === "calendar" ? "active" : ""} aria-pressed={viewMode === "calendar"} onClick={() => setViewMode("calendar")}><CalendarDays size={15} /> Kalender</button>
           </div>
@@ -884,6 +931,7 @@ export function TransactionsView() {
             type="button"
             className={`compact-control transactions-filter-button ${activeDateFilterLabel ? "active" : ""}`}
             aria-label={activeDateFilterLabel ? `Ubah filter tanggal: ${activeDateFilterLabel}` : "Filter tanggal"}
+            title={activeDateFilterLabel ? `Ubah filter tanggal: ${activeDateFilterLabel}` : "Filter tanggal"}
             onClick={() => {
               setTempFilterMode(dateFilter.mode);
               setTempPreset(dateFilter.preset);
@@ -894,11 +942,12 @@ export function TransactionsView() {
               setFilterModalOpen(true);
             }}
           >
-            <CalendarDays size={15} />
+            <CalendarDays className="transactions-filter-date-icon" size={15} />
+            <Filter className="transactions-filter-mobile-icon" size={15} />
             <span>{activeDateFilterLabel || "Periode"}</span>
           </button>
-          <button className="button secondary transactions-export-button" onClick={handleExportCSV} aria-label="Ekspor transaksi ke CSV"><Download size={15} /> <span>Ekspor CSV</span></button>
-          <button className="transactions-add-button" onClick={openAddModal}><Plus size={16} /> <span>Catat</span></button>
+          <button className="button secondary transactions-export-button" onClick={handleExportCSV} aria-label="Ekspor transaksi ke CSV" title="Ekspor transaksi ke CSV"><Download size={15} /> <span>Ekspor CSV</span></button>
+          <button type="button" className="transactions-add-button" aria-label="Catat transaksi" title="Catat transaksi" onClick={openAddModal}><Plus size={16} /> <span>Catat</span></button>
         </div>
         {activeDateFilterLabel && (
           <div className="transactions-active-filter">
@@ -908,6 +957,18 @@ export function TransactionsView() {
         )}
 
         <div className="transactions-list-area">
+          <div className="transactions-mobile-view-strip">
+            {isDefaultDateFilter && (
+              <span className="transactions-mobile-limit-info">
+                <Info size={13} />
+                <span>150 transaksi terbaru</span>
+              </span>
+            )}
+            <div className="transactions-view-controls transactions-mobile-view-controls" role="group" aria-label="Mode tampilan transaksi">
+              <button type="button" className={viewMode === "list" ? "active" : ""} aria-pressed={viewMode === "list"} onClick={() => setViewMode("list")}><List size={14} /> List</button>
+              <button type="button" className={viewMode === "calendar" ? "active" : ""} aria-pressed={viewMode === "calendar"} onClick={() => setViewMode("calendar")}><CalendarDays size={14} /> Kalender</button>
+            </div>
+          </div>
           {isDefaultDateFilter && (
             <div className="transactions-limit-info">
               <CircleAlert size={14} />
