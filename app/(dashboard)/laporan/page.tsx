@@ -6,20 +6,25 @@ import {
   BarChart3,
   Bot,
   Calendar,
+  CalendarCheck,
   ChevronDown,
   Download,
   Edit3,
   FileText,
   Filter,
   Layers,
+  List,
   PieChart,
   Store,
   Table,
+  Tags,
   TrendingDown,
   TrendingUp,
-  Wallet
+  Wallet,
+  X
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { useDouit } from "@/app/providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
@@ -132,6 +137,36 @@ function ExplorerMark({
   );
 }
 
+function BreakdownDimensionToggle({
+  value,
+  onChange,
+  label,
+}: {
+  value: "Kategori" | "Merchant";
+  onChange: (value: "Kategori" | "Merchant") => void;
+  label: string;
+}) {
+  return (
+    <div className="report-micro-toggle report-breakdown-dimension-toggle grid shrink-0 grid-cols-2 gap-0.5 rounded-lg bg-[#20322b] p-0.5" role="group" aria-label={label}>
+      {(["Kategori", "Merchant"] as const).map((mode) => {
+        const ModeIcon = mode === "Kategori" ? Tags : Store;
+
+        return (
+          <button
+            key={mode}
+            type="button"
+            aria-pressed={value === mode}
+            onClick={() => onChange(mode)}
+            className={`inline-flex min-h-8 cursor-pointer items-center justify-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-semibold transition-[transform,background-color,color,box-shadow] duration-150 active:translate-y-px motion-reduce:transform-none ${value === mode ? "bg-[#c8f36b] text-[#1c291f] shadow-[0_1px_3px_rgba(8,24,15,.2)]" : "bg-transparent text-[#F7F4EA] hover:text-white"}`}
+          >
+            <ModeIcon className="h-3 w-3 shrink-0" aria-hidden="true" /> {mode}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 type CompactDonutSlice = {
   item: { name: string };
   color: string;
@@ -226,9 +261,9 @@ let hasLoadedLaporanOnce = false;
 
 export default function LaporanPage() {
   const [activeTab, setActiveTab] = useState("Bulanan");
-  const [breakdownMode, setBreakdownMode] = useState("Kategori");
-  const [annualBreakdownMode, setAnnualBreakdownMode] = useState("Kategori");
-  const [multiYearBreakdownMode, setMultiYearBreakdownMode] = useState("Kategori");
+  const [breakdownMode, setBreakdownMode] = useState<"Kategori" | "Merchant">("Kategori");
+  const [annualBreakdownMode, setAnnualBreakdownMode] = useState<"Kategori" | "Merchant">("Kategori");
+  const [multiYearBreakdownMode, setMultiYearBreakdownMode] = useState<"Kategori" | "Merchant">("Kategori");
   const [multiYearSelectedYear, setMultiYearSelectedYear] = useState<number>(new Date().getFullYear());
   const [primaryMode, setPrimaryMode] = useState<"Pengeluaran" | "Pemasukan" | "Net">("Pengeluaran");
   
@@ -758,16 +793,63 @@ export default function LaporanPage() {
   };
 
   useEffect(() => {
+    if (!exportDropdownOpen) return;
+
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const isMobileSheet = mediaQuery.matches;
+    const body = document.body;
+    const scrollY = window.scrollY;
+    const previousStyles = {
+      position: body.style.position,
+      top: body.style.top,
+      right: body.style.right,
+      left: body.style.left,
+      width: body.style.width,
+      overflow: body.style.overflow,
+    };
+
     function handleClickOutside(event: MouseEvent) {
       if (exportDropdownRef.current && !exportDropdownRef.current.contains(event.target as Node)) {
         setExportDropdownOpen(false);
       }
     }
-    if (exportDropdownOpen) {
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setExportDropdownOpen(false);
+    }
+
+    function handleBreakpointChange() {
+      setExportDropdownOpen(false);
+    }
+
+    if (isMobileSheet) {
+      body.style.position = "fixed";
+      body.style.top = `-${scrollY}px`;
+      body.style.right = "0";
+      body.style.left = "0";
+      body.style.width = "100%";
+      body.style.overflow = "hidden";
+    } else {
       document.addEventListener("mousedown", handleClickOutside);
     }
+
+    document.addEventListener("keydown", handleEscape);
+    mediaQuery.addEventListener("change", handleBreakpointChange);
+
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+      mediaQuery.removeEventListener("change", handleBreakpointChange);
+
+      if (isMobileSheet) {
+        body.style.position = previousStyles.position;
+        body.style.top = previousStyles.top;
+        body.style.right = previousStyles.right;
+        body.style.left = previousStyles.left;
+        body.style.width = previousStyles.width;
+        body.style.overflow = previousStyles.overflow;
+        window.scrollTo(0, scrollY);
+      }
     };
   }, [exportDropdownOpen]);
 
@@ -1178,63 +1260,54 @@ export default function LaporanPage() {
 
   const detailTitle = detailView === "monthly-breakdown"
     ? primaryMode === "Net"
-      ? `Rincian anggaran ${breakdownMode.toLowerCase()}`
-      : `Seluruh ${breakdownMode.toLowerCase()}`
+      ? `Rincian Anggaran ${breakdownMode}`
+      : `Laporan Seluruh ${breakdownMode}`
     : detailView === "annual-months"
-    ? `Rincian bulanan ${selectedYear}`
+    ? "Rincian Kas Bulanan"
     : detailView === "annual-breakdown"
-    ? `Sebaran ${annualBreakdownMode.toLowerCase()} ${selectedYear}`
+    ? "Sebaran Pengeluaran Tahunan"
     : detailView === "multi-year-recap"
-    ? "Rekap seluruh tahun"
-    : `Sebaran ${multiYearBreakdownMode.toLowerCase()} ${safeMultiYearSelected}`;
+    ? "Rekap Seluruh Tahun"
+    : "Sebaran Pengeluaran Multi-Tahun";
 
-  const detailDescription = detailView === "monthly-breakdown"
-    ? `Ranking lengkap ${breakdownMode.toLowerCase()}, kontribusi, frekuensi, dan detail anggaran pada ${reportPeriodLabel}.`
-    : detailView === "annual-months"
-    ? "Pemasukan, pengeluaran, net, dan margin setiap bulan tanpa horizontal scroll."
-    : detailView === "annual-breakdown"
-    ? `Kontribusi dan pola bulanan seluruh ${annualBreakdownMode.toLowerCase()} yang tersedia.`
-    : detailView === "multi-year-recap"
-    ? "Perbandingan pemasukan, pengeluaran, net, dan margin untuk seluruh tahun yang tersedia."
-    : `Ranking lengkap, kontribusi, dan perubahan dibanding tahun sebelumnya pada ${safeMultiYearSelected}.`;
+  const detailPeriodLabel = detailView === "multi-year-breakdown"
+    ? `Tahun ${safeMultiYearSelected}`
+    : reportPeriodLabel;
 
   const detailContent = detailView ? (
-    <div className="space-y-4 md:space-y-6">
-      <header className="flex flex-col gap-2.5 border-b border-slate-200 pb-4 sm:gap-3 md:flex-row md:items-end md:justify-between">
-        <div className="min-w-0">
-          <button type="button" onClick={closeDetailView} className="mb-1 inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2.5 text-xs font-semibold text-slate-700 transition-[background-color,border-color,color] hover:border-emerald-200 hover:bg-emerald-50/70 hover:text-emerald-900 sm:mb-2 sm:text-sm">
+    <div className="reports-detail-content space-y-4 md:space-y-6">
+      <header className="reports-detail-hero flex flex-col gap-2.5 border-b border-slate-200 pb-4 sm:gap-3 md:flex-row md:items-end md:justify-between">
+        <div className="reports-detail-hero-copy min-w-0">
+          <button type="button" onClick={closeDetailView} className="reports-detail-back mb-1 inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2.5 text-xs font-semibold text-slate-700 transition-[background-color,border-color,color] hover:border-emerald-200 hover:bg-emerald-50/70 hover:text-emerald-900 sm:mb-2 sm:text-sm">
             <ArrowLeft className="h-4 w-4 text-emerald-700" aria-hidden="true" /> Laporan
           </button>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-700">Detail laporan</p>
-          <h1 className="mt-0.5 text-xl font-bold tracking-[-0.035em] text-slate-950 sm:text-2xl md:text-3xl">{detailTitle}</h1>
-          <p className="mt-1.5 hidden max-w-2xl text-sm leading-relaxed text-slate-500 sm:block">{detailDescription}</p>
+          <h1 className="reports-detail-title text-xl font-bold tracking-[-0.035em] text-slate-950 sm:text-2xl md:text-3xl">{detailTitle}</h1>
         </div>
-        <div className="flex min-h-9 items-center self-start rounded-lg border border-teal-100 bg-teal-50/60 px-3 text-[11px] font-semibold text-slate-600 md:min-h-10 md:self-auto md:text-xs">
-          {reportPeriodLabel} <span className="mx-1.5 text-slate-300">·</span> {selectedAccount === "Semua" ? "Semua rekening" : selectedAccount}
+        <div className="reports-detail-context flex min-h-9 min-w-0 max-w-full items-center self-start rounded-lg border border-teal-100 bg-teal-50/60 px-3 text-[11px] font-semibold text-slate-600 md:min-h-10 md:self-auto md:text-xs">
+          <span className="shrink-0">{detailPeriodLabel}</span>
+          <span className="mx-1.5 shrink-0 text-slate-300">·</span>
+          <span className="min-w-0 truncate">{selectedAccount === "Semua" ? "Semua rekening" : selectedAccount}</span>
         </div>
       </header>
 
       {detailView === "monthly-breakdown" && (
         <>
-          <section className="rounded-2xl border border-slate-200 bg-white p-3.5 md:p-4" aria-label="Kontrol rincian bulanan">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 lg:w-[390px]" role="group" aria-label="Metric rincian transaksi">
+          <section className="reports-detail-lead reports-detail-control-card rounded-2xl border border-slate-200 bg-white p-3.5 md:p-4" aria-label="Kontrol rincian bulanan">
+            <div className="reports-detail-section-heading mb-3 flex items-start justify-between gap-2.5">
+              <h2 className="text-[1.02rem] font-bold tracking-tight text-slate-900 md:text-lg">Sebaran transaksi</h2>
+              <BreakdownDimensionToggle value={breakdownMode} onChange={setBreakdownMode} label="Kelompok rincian" />
+            </div>
+            <div className="report-metric-toggle grid grid-cols-3 gap-0.5 rounded-xl bg-[#20322b] p-0.5 lg:max-w-[390px]" role="group" aria-label="Metric rincian transaksi">
                 {([
                   ["Pengeluaran", totalExpense, TrendingDown],
                   ["Pemasukan", totalIncome, TrendingUp],
                   ["Net", netSurplus, Wallet],
                 ] as const).map(([mode, value, MetricIcon]) => (
-                  <button key={mode} type="button" aria-pressed={primaryMode === mode} onClick={() => setPrimaryMode(mode)} className={`flex min-h-12 cursor-pointer flex-col items-start justify-center rounded-lg border px-2 text-left transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:px-3 ${primaryMode === mode ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
+                  <button key={mode} type="button" aria-pressed={primaryMode === mode} onClick={() => setPrimaryMode(mode)} className={`flex min-h-11 min-w-0 cursor-pointer flex-col items-start justify-center rounded-[9px] border-0 px-2 text-left transition-[transform,background-color,color,box-shadow] duration-150 active:translate-y-px motion-reduce:transform-none sm:px-3 ${primaryMode === mode ? "bg-[#c8f36b] text-[#1c291f] shadow-[0_1px_3px_rgba(8,24,15,.2)]" : "bg-transparent text-[#F7F4EA] hover:text-white"}`}>
                     <span className="flex items-center gap-1 text-[10px] font-semibold"><MetricIcon className="h-3 w-3 shrink-0" aria-hidden="true" />{mode === "Net" ? "Saldo bersih" : mode}</span>
-                    <span className="mt-0.5 max-w-full truncate text-xs font-bold text-slate-900 tabular-nums">{formatCompactMoney(value)}</span>
+                    <span className={`mt-0.5 max-w-full truncate text-[11px] font-bold tabular-nums ${primaryMode === mode ? "text-[#1c291f]" : "text-[#FFFDF5]"}`}>{formatCompactMoney(value)}</span>
                   </button>
                 ))}
-              </div>
-              <div className="grid grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 lg:w-auto" role="group" aria-label="Kelompok rincian">
-                {(["Kategori", "Merchant"] as const).map((mode) => (
-                  <button key={mode} type="button" aria-pressed={breakdownMode === mode} onClick={() => setBreakdownMode(mode)} className={`min-h-11 cursor-pointer rounded-lg border px-4 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none ${breakdownMode === mode ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>{mode}</button>
-                ))}
-              </div>
             </div>
           </section>
 
@@ -1312,16 +1385,28 @@ export default function LaporanPage() {
 
       {detailView === "annual-months" && (
         <>
-          <div className="grid w-full grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:w-64" role="group" aria-label="Cakupan bulan">
-            {(["Aktif", "Semua"] as const).map((mode) => <button key={mode} type="button" aria-pressed={monthDetailFilter === mode} onClick={() => setMonthDetailFilter(mode)} className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none ${monthDetailFilter === mode ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>{mode === "Aktif" ? "Bulan aktif" : "Semua bulan"}</button>)}
-          </div>
+          <section className="reports-detail-lead reports-detail-control-card rounded-2xl border border-slate-200 bg-white p-3.5 md:p-4" aria-label="Cakupan rincian bulanan">
+            <div className="reports-detail-section-heading flex items-start justify-between gap-2.5">
+              <h2 className="text-[1.02rem] font-bold tracking-tight text-slate-900 md:text-lg">Rincian per bulan</h2>
+              <div className="report-micro-toggle report-month-scope-toggle grid shrink-0 grid-cols-2 gap-0.5 rounded-lg bg-[#20322b] p-0.5" role="group" aria-label="Cakupan bulan">
+                {(["Aktif", "Semua"] as const).map((mode) => {
+                  const ModeIcon = mode === "Aktif" ? CalendarCheck : List;
+                  return (
+                    <button key={mode} type="button" aria-pressed={monthDetailFilter === mode} onClick={() => setMonthDetailFilter(mode)} className={`inline-flex min-h-8 cursor-pointer items-center justify-center gap-1 rounded-md border-0 px-1.5 text-[10px] font-semibold transition-[transform,background-color,color,box-shadow] duration-150 active:translate-y-px motion-reduce:transform-none ${monthDetailFilter === mode ? "bg-[#c8f36b] text-[#1c291f] shadow-[0_1px_3px_rgba(8,24,15,.2)]" : "bg-transparent text-[#F7F4EA] hover:text-white"}`}>
+                      <ModeIcon className="h-3 w-3 shrink-0" aria-hidden="true" /> {mode === "Aktif" ? "Bulan aktif" : "Semua bulan"}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
           {annualMonthDetailRows.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 py-12 text-center text-sm text-slate-500">Belum ada bulan dengan aktivitas pada {selectedYear}.</div>
           ) : (
             <section className="grid gap-3 lg:grid-cols-2">
               {annualMonthDetailRows.map((row) => (
                 <article key={row.name} className={`rounded-2xl border p-4 ${row.isActive ? "border-slate-200 bg-white" : "border-slate-100 bg-slate-50/70"}`}>
-                  <div className="border-b border-slate-100 pb-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700">Periode bulanan</p><h2 className="mt-0.5 text-lg font-bold text-slate-900">{row.name} {selectedYear}</h2></div>
+                  <h2 className="text-lg font-bold tracking-tight text-slate-900">{row.name}</h2>
                   <dl className="mt-3 space-y-2.5">
                     <div className="grid grid-cols-[1fr_auto] items-baseline gap-4"><dt className="text-xs text-slate-500">Pemasukan</dt><dd className="text-sm font-semibold text-emerald-700 tabular-nums">{formatMoney(row.income)}</dd></div>
                     <div className="grid grid-cols-[1fr_auto] items-baseline gap-4"><dt className="text-xs text-slate-500">Pengeluaran</dt><dd className="text-sm font-semibold text-slate-800 tabular-nums">{formatMoney(row.expense)}</dd></div>
@@ -1337,8 +1422,9 @@ export default function LaporanPage() {
 
       {detailView === "annual-breakdown" && (
         <>
-          <div className="grid w-full grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:w-64" role="group" aria-label="Kelompok sebaran tahunan">
-            {(["Kategori", "Merchant"] as const).map((mode) => <button key={mode} type="button" aria-pressed={annualBreakdownMode === mode} onClick={() => setAnnualBreakdownMode(mode)} className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none ${annualBreakdownMode === mode ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>{mode}</button>)}
+          <div className="reports-detail-lead reports-detail-control-card reports-detail-section-heading flex items-start justify-between gap-2.5 rounded-2xl border border-slate-200 bg-white p-3.5 md:p-4">
+            <h2 className="text-[1.02rem] font-bold tracking-tight text-slate-900 md:text-lg">Sebaran transaksi</h2>
+            <BreakdownDimensionToggle value={annualBreakdownMode} onChange={setAnnualBreakdownMode} label="Kelompok sebaran tahunan" />
           </div>
           {annualBreakdownMode === "Kategori" && heatmapGrandTotal > 0 && (
             <MobileDetailDonut
@@ -1367,7 +1453,7 @@ export default function LaporanPage() {
       )}
 
       {detailView === "multi-year-recap" && (
-        <section className="grid gap-3 lg:grid-cols-2">
+        <section className="reports-detail-lead grid gap-3 lg:grid-cols-2">
           {[...activeYears].reverse().map((year) => {
             const stat = multiYearStats[year];
             const margin = stat.income > 0 ? (stat.net / stat.income) * 100 : null;
@@ -1380,9 +1466,12 @@ export default function LaporanPage() {
 
       {detailView === "multi-year-breakdown" && (
         <>
-          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-end sm:justify-between">
-            <div className="w-full sm:w-40"><CustomSelect value={String(safeMultiYearSelected)} onChange={(value) => setMultiYearSelectedYear(Number(value))} options={activeYears.map((year) => ({ value: String(year), label: `Tahun ${year}` }))} buttonClassName="min-h-11" /></div>
-            <div className="grid grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:w-64" role="group" aria-label="Kelompok sebaran multi-tahun">{(["Kategori", "Merchant"] as const).map((mode) => <button key={mode} type="button" aria-pressed={multiYearBreakdownMode === mode} onClick={() => setMultiYearBreakdownMode(mode)} className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none ${multiYearBreakdownMode === mode ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>{mode}</button>)}</div>
+          <div className="reports-detail-lead reports-detail-control-card space-y-2.5 rounded-2xl border border-slate-200 bg-white p-3.5 md:p-4">
+            <div className="reports-detail-section-heading flex items-start justify-between gap-2.5">
+              <h2 className="text-[1.02rem] font-bold tracking-tight text-slate-900 md:text-lg">Sebaran transaksi</h2>
+              <BreakdownDimensionToggle value={multiYearBreakdownMode} onChange={setMultiYearBreakdownMode} label="Kelompok sebaran multi-tahun" />
+            </div>
+            <div className="w-full sm:w-40"><CustomSelect value={String(safeMultiYearSelected)} onChange={(value) => setMultiYearSelectedYear(Number(value))} options={activeYears.map((year) => ({ value: String(year), label: `Tahun ${year}` }))} buttonClassName="min-h-11" responsiveOverlay lockBodyScroll selectionTitle="Pilih tahun laporan" /></div>
           </div>
           {multiYearBreakdownMode === "Kategori" && myBreakdownTotal > 0 && (
             <MobileDetailDonut
@@ -1407,19 +1496,58 @@ export default function LaporanPage() {
     </div>
   ) : null;
 
+  const exportContextLabel = activeTab === "Bulanan"
+    ? `Laporan Bulanan (${monthNames[selectedMonth]} ${selectedYear})`
+    : activeTab === "Tahunan"
+    ? `Laporan Tahunan (${selectedYear})`
+    : `Laporan Multi-Tahun (${activeYears.length === 1 ? activeYears[0] : `${activeYears[0]} - ${activeYears[activeYears.length - 1]}`})`;
+
+  const renderExportActions = (mobileSheet = false) => (
+    <div className={mobileSheet ? "reports-export-sheet-options" : "space-y-1"}>
+      <button
+        type="button"
+        onClick={handleExportPdf}
+        className={`group flex w-full cursor-pointer items-start gap-3 rounded-xl text-left text-sm font-medium text-gray-700 transition-colors hover:bg-emerald-50/70 hover:text-emerald-700 ${mobileSheet ? "min-h-[62px] px-3.5 py-3" : "px-3 py-2.5"}`}
+      >
+        <span className="shrink-0 rounded-lg bg-emerald-100/70 p-2 text-emerald-700 transition-colors group-hover:bg-emerald-600 group-hover:text-white">
+          <FileText className="h-4 w-4" />
+        </span>
+        <span>
+          <span className="block text-xs font-semibold text-gray-900 group-hover:text-emerald-800">Unduh Dokumen PDF (.pdf)</span>
+          <span className="mt-0.5 block text-[11px] font-normal text-gray-500">Format siap cetak, tabel & executive KPI</span>
+        </span>
+      </button>
+
+      <button
+        type="button"
+        onClick={handleExportExcel}
+        className={`group flex w-full cursor-pointer items-start gap-3 rounded-xl text-left text-sm font-medium text-gray-700 transition-colors hover:bg-emerald-50/70 hover:text-emerald-700 ${mobileSheet ? "min-h-[62px] px-3.5 py-3" : "px-3 py-2.5"}`}
+      >
+        <span className="shrink-0 rounded-lg bg-emerald-100/70 p-2 text-emerald-700 transition-colors group-hover:bg-emerald-600 group-hover:text-white">
+          <Table className="h-4 w-4" />
+        </span>
+        <span>
+          <span className="block text-xs font-semibold text-gray-900 group-hover:text-emerald-800">Unduh Spreadsheet Excel (.xlsx / .csv)</span>
+          <span className="mt-0.5 block text-[11px] font-normal text-gray-500">Format spreadsheet & rekap multi-sheet</span>
+        </span>
+      </button>
+    </div>
+  );
+
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 py-5 md:p-6 lg:p-8 space-y-5 md:space-y-6 overflow-x-hidden [&_button]:focus-visible:outline-none [&_button]:focus-visible:ring-2 [&_button]:focus-visible:ring-emerald-500/40">
+    <div className={`reports-page ${detailView ? "reports-detail-page" : "reports-overview-page"} w-full max-w-7xl mx-auto px-4 py-5 md:p-6 lg:p-8 space-y-5 md:space-y-6 overflow-x-hidden [&_button]:focus-visible:outline-none [&_button]:focus-visible:ring-2 [&_button]:focus-visible:ring-emerald-500/40`}>
       {detailView ? detailContent : (
       <>
-      
+
+      <div className="reports-top-shell">
       {/* HEADER CONTROLS */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="reports-hero flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">Analisis keuangan</p>
-          <h1 className="text-[1.65rem] md:text-3xl font-bold text-gray-900 tracking-[-0.04em] leading-tight">Laporan Keuangan</h1>
-          <p className="text-gray-500 text-sm mt-1.5">Pahami arus kas, kebiasaan, dan kesehatan keuanganmu.</p>
+          <p className="reports-eyebrow mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">Analisis keuangan</p>
+          <h1 className="reports-title text-[1.65rem] md:text-3xl font-bold text-gray-900 tracking-[-0.04em] leading-tight">Laporan Keuangan</h1>
+          <p className="reports-subtitle text-gray-500 text-sm mt-1.5">Pahami arus kas, kebiasaan, dan kesehatan keuanganmu.</p>
         </div>
-        <div className="shrink-0">
+        <div className="reports-export shrink-0">
           {/* DYNAMIC CONTEXT-AWARE EXPORT DROPDOWN */}
           <div className="relative" ref={exportDropdownRef}>
             <button 
@@ -1438,66 +1566,57 @@ export default function LaporanPage() {
             </button>
 
             {exportDropdownOpen && (
-              <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 animate-in fade-in zoom-in-95 duration-150 motion-reduce:animate-none">
+              <div className="reports-export-popover absolute right-0 z-50 mt-2 w-72 animate-in rounded-2xl border border-gray-100 bg-white p-2 shadow-xl fade-in zoom-in-95 duration-150 motion-reduce:animate-none">
                 <div className="px-3 py-2 border-b border-gray-100 mb-1">
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Pilihan Format Ekspor</span>
                   <p className="text-xs text-gray-600 font-medium mt-0.5">
-                    {activeTab === "Bulanan" ? `Laporan Bulanan (${monthNames[selectedMonth]} ${selectedYear})` :
-                     activeTab === "Tahunan" ? `Laporan Tahunan (${selectedYear})` :
-                     `Laporan Multi-Tahun (${activeYears.length === 1 ? activeYears[0] : `${activeYears[0]} - ${activeYears[activeYears.length - 1]}`})`}
+                    {exportContextLabel}
                   </p>
                 </div>
-                <div className="space-y-1">
-                  <button
-                    onClick={handleExportPdf}
-                    className="w-full flex items-start gap-3 px-3 py-2.5 text-left text-sm font-medium text-gray-700 hover:text-emerald-700 hover:bg-emerald-50/70 rounded-xl transition-colors group cursor-pointer"
-                  >
-                    <div className="p-2 rounded-lg bg-emerald-100/70 text-emerald-700 group-hover:bg-emerald-600 group-hover:text-white transition-colors shrink-0">
-                      <FileText className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="font-semibold text-gray-900 text-xs group-hover:text-emerald-800">Unduh Dokumen PDF (.pdf)</div>
-                      <div className="text-[11px] text-gray-500 font-normal mt-0.5">Format siap cetak, tabel & executive KPI</div>
-                    </div>
-                  </button>
-
-                  <button
-                    onClick={handleExportExcel}
-                    className="w-full flex items-start gap-3 px-3 py-2.5 text-left text-sm font-medium text-gray-700 hover:text-emerald-700 hover:bg-emerald-50/70 rounded-xl transition-colors group cursor-pointer"
-                  >
-                    <div className="p-2 rounded-lg bg-emerald-100/70 text-emerald-700 group-hover:bg-emerald-600 group-hover:text-white transition-colors shrink-0">
-                      <Table className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="font-semibold text-gray-900 text-xs group-hover:text-emerald-800">Unduh Spreadsheet Excel (.xlsx / .csv)</div>
-                      <div className="text-[11px] text-gray-500 font-normal mt-0.5">Format spreadsheet & rekap multi-sheet</div>
-                    </div>
-                  </button>
-                </div>
+                {renderExportActions()}
               </div>
             )}
           </div>
+          {exportDropdownOpen && typeof document !== "undefined" && createPortal(
+            <div className="reports-export-sheet-layer" onMouseDown={() => setExportDropdownOpen(false)}>
+              <section className="reports-export-sheet" role="dialog" aria-modal="true" aria-labelledby="reports-export-sheet-title" onMouseDown={(event) => event.stopPropagation()}>
+                <header className="reports-export-sheet-header">
+                  <div className="min-w-0">
+                    <h2 id="reports-export-sheet-title">Unduh laporan</h2>
+                    <p>{exportContextLabel}</p>
+                  </div>
+                  <button type="button" onClick={() => setExportDropdownOpen(false)} aria-label="Tutup pilihan unduhan">
+                    <X className="h-5 w-5" />
+                  </button>
+                </header>
+                <div className="reports-export-sheet-body">
+                  {renderExportActions(true)}
+                </div>
+              </section>
+            </div>,
+            document.body,
+          )}
         </div>
       </div>
 
-      <div className="flex flex-col gap-5">
+      <div className="reports-top-controls flex flex-col gap-5">
       {/* TAB NAVIGATION */}
-      <div className="order-2 flex justify-center sm:justify-start lg:order-1">
-        <div className="grid w-full grid-cols-3 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:inline-grid sm:w-auto" role="tablist" aria-label="Mode laporan">
-          <button type="button" role="tab" aria-selected={activeTab === "Bulanan"} onClick={() => setActiveTab("Bulanan")} className={`flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 sm:px-4 sm:text-sm ${activeTab === "Bulanan" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
+      <div className="reports-mode-wrap order-2 flex justify-center sm:justify-start lg:order-1">
+        <div className="reports-mode-tabs grid w-full grid-cols-3 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:inline-grid sm:w-auto" role="tablist" aria-label="Mode laporan">
+          <button type="button" role="tab" aria-selected={activeTab === "Bulanan"} onClick={() => setActiveTab("Bulanan")} className={`flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 sm:px-4 sm:text-sm ${activeTab === "Bulanan" ? "is-active border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
             <PieChart className="hidden h-4 w-4 sm:block" /> Bulanan
           </button>
-          <button type="button" role="tab" aria-selected={activeTab === "Tahunan"} onClick={() => setActiveTab("Tahunan")} className={`flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 sm:px-4 sm:text-sm ${activeTab === "Tahunan" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
+          <button type="button" role="tab" aria-selected={activeTab === "Tahunan"} onClick={() => setActiveTab("Tahunan")} className={`flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 sm:px-4 sm:text-sm ${activeTab === "Tahunan" ? "is-active border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
             <BarChart3 className="hidden h-4 w-4 sm:block" /> Tahunan
           </button>
-          <button type="button" role="tab" aria-selected={activeTab === "Makro"} onClick={() => setActiveTab("Makro")} className={`flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 sm:px-4 sm:text-sm ${activeTab === "Makro" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
+          <button type="button" role="tab" aria-selected={activeTab === "Makro"} onClick={() => setActiveTab("Makro")} className={`flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 sm:px-4 sm:text-sm ${activeTab === "Makro" ? "is-active border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
             <Layers className="hidden h-4 w-4 sm:block" /> Multi-Tahun
           </button>
         </div>
       </div>
 
       {/* PERIOD AND ACCOUNT FILTERS */}
-      <section className="order-1 rounded-2xl border border-slate-200/80 bg-white shadow-sm lg:order-2" aria-label="Filter laporan">
+      <section className="reports-filter-panel order-1 rounded-2xl border border-slate-200/80 bg-white shadow-sm lg:order-2" aria-label="Filter laporan">
         <div className="hidden gap-6 p-3.5 lg:flex lg:items-center lg:justify-between">
           <div className="flex min-w-[220px] items-center gap-3">
             <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-teal-100 bg-teal-50/70 text-teal-700">
@@ -1518,6 +1637,9 @@ export default function LaporanPage() {
                 onChange={(val) => setSelectedMonth(Number(val))}
                 options={monthNames.map((m, i) => ({ value: String(i), label: m }))}
                 buttonClassName="min-h-11 px-3"
+                responsiveOverlay
+                lockBodyScroll
+                selectionTitle="Pilih bulan laporan"
               />
             )}
             {(activeTab === "Bulanan" || activeTab === "Tahunan") && (
@@ -1527,6 +1649,9 @@ export default function LaporanPage() {
                 onChange={(val) => setSelectedYear(Number(val))}
                 options={[2024, 2025, 2026, 2027].map((y) => ({ value: String(y), label: String(y) }))}
                 buttonClassName="min-h-11 px-3"
+                responsiveOverlay
+                lockBodyScroll
+                selectionTitle="Pilih tahun laporan"
               />
             )}
             <CustomSelect
@@ -1541,6 +1666,9 @@ export default function LaporanPage() {
               icon={<Filter className="w-4 h-4 text-emerald-700 shrink-0" />}
               className={activeTab === "Bulanan" ? "col-span-2 lg:col-span-1" : ""}
               buttonClassName="min-h-11 px-3"
+              responsiveOverlay
+              lockBodyScroll
+              selectionTitle="Pilih rekening"
             />
           </div>
         </div>
@@ -1569,6 +1697,9 @@ export default function LaporanPage() {
                 onChange={(val) => setSelectedMonth(Number(val))}
                 options={monthNames.map((m, i) => ({ value: String(i), label: m }))}
                 buttonClassName="min-h-11 px-3"
+                responsiveOverlay
+                lockBodyScroll
+                selectionTitle="Pilih bulan laporan"
               />
             )}
             {(activeTab === "Bulanan" || activeTab === "Tahunan") && (
@@ -1578,6 +1709,9 @@ export default function LaporanPage() {
                 onChange={(val) => setSelectedYear(Number(val))}
                 options={[2024, 2025, 2026, 2027].map((y) => ({ value: String(y), label: String(y) }))}
                 buttonClassName="min-h-11 px-3"
+                responsiveOverlay
+                lockBodyScroll
+                selectionTitle="Pilih tahun laporan"
               />
             )}
             <CustomSelect
@@ -1592,10 +1726,14 @@ export default function LaporanPage() {
               icon={<Filter className="h-4 w-4 shrink-0 text-emerald-700" />}
               className={activeTab === "Bulanan" ? "col-span-2" : ""}
               buttonClassName="min-h-11 px-3"
+              responsiveOverlay
+              lockBodyScroll
+              selectionTitle="Pilih rekening"
             />
           </div>
         </details>
       </section>
+      </div>
       </div>
 
       {/* SHARED FINANCIAL SUMMARY */}
@@ -1683,14 +1821,14 @@ export default function LaporanPage() {
         </div>
       </section>
 
-      <section className={`flex items-start gap-3 rounded-2xl border p-4 md:p-5 ${hasReportData && reportNet < 0 ? "border-amber-200/80 bg-[#FBF5EA]" : "border-emerald-200/80 bg-[#F1F7F2]"}`} aria-labelledby="primary-insight-heading">
-        <div className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl ${hasReportData && reportNet < 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+      <section className={`report-primary-insight flex items-start gap-3 rounded-2xl border p-4 md:p-5 ${hasReportData && reportNet < 0 ? "is-negative border-amber-200/80 bg-[#FBF5EA]" : "is-positive border-emerald-200/80 bg-[#F1F7F2]"}`} aria-labelledby="primary-insight-heading">
+        <div className={`report-primary-insight-icon mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl ${hasReportData && reportNet < 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
           <Bot className="h-4.5 w-4.5" />
         </div>
         <div className="min-w-0">
           <h2 id="primary-insight-heading" className="text-xs font-bold uppercase tracking-[0.1em] text-slate-500">Insight utama</h2>
-          <p className="mt-1 text-sm md:text-base font-semibold leading-relaxed text-slate-900">{primaryInsight}</p>
-          <p className="mt-1 text-xs md:text-sm leading-relaxed text-slate-600">{supportingInsight}</p>
+          <p className="report-primary-insight-main mt-1 text-sm md:text-base font-semibold leading-relaxed text-slate-900">{primaryInsight}</p>
+          <p className="report-primary-insight-support mt-1 text-xs md:text-sm leading-relaxed text-slate-600">{supportingInsight}</p>
         </div>
       </section>
 
@@ -1699,42 +1837,24 @@ export default function LaporanPage() {
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 motion-reduce:animate-none">
           {/* Breakdown Section */}
           <div className="w-full">
-            <div className="border border-emerald-100/80 bg-[#F6FAF6] rounded-2xl shadow-sm p-4 md:p-6 w-full">
-              <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                <div className="w-full lg:max-w-xl">
-                  <h3 className="text-base font-bold tracking-tight text-gray-900 md:text-lg">Sebaran transaksi</h3>
-                  <p className="mt-1 text-xs text-slate-500 md:text-sm">Top {breakdownMode.toLowerCase()} berdasarkan metric aktif, dengan rincian lengkap melalui drill-down.</p>
-                  <div className="mt-3 grid grid-cols-3 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 lg:max-w-[390px]" role="group" aria-label="Metric sebaran transaksi">
+            <div className="report-breakdown-card border border-emerald-100/80 bg-[#F6FAF6] rounded-2xl shadow-sm p-4 md:p-6 w-full">
+              <div className="report-breakdown-heading mb-5 space-y-3">
+                <div className="report-breakdown-title-row flex items-start justify-between gap-2">
+                  <h3 className="text-[1.08rem] font-bold tracking-tight text-gray-900 md:text-lg">Sebaran transaksi</h3>
+                  <BreakdownDimensionToggle value={breakdownMode} onChange={setBreakdownMode} label="Kelompok breakdown" />
+                </div>
+                <div className="report-metric-toggle grid grid-cols-3 gap-0.5 rounded-xl bg-[#20322b] p-0.5 lg:max-w-[390px]" role="group" aria-label="Metric sebaran transaksi">
                     {([
                       ["Pengeluaran", totalExpense, TrendingDown],
                       ["Pemasukan", totalIncome, TrendingUp],
                       ["Net", netSurplus, Wallet],
                     ] as const).map(([mode, value, MetricIcon]) => (
-                      <button key={mode} type="button" aria-pressed={primaryMode === mode} onClick={() => setPrimaryMode(mode)} className={`flex min-h-12 cursor-pointer flex-col items-start justify-center rounded-lg border px-2 text-left transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:px-3 ${primaryMode === mode ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>
+                      <button key={mode} type="button" aria-pressed={primaryMode === mode} onClick={() => setPrimaryMode(mode)} className={`flex min-h-11 min-w-0 cursor-pointer flex-col items-start justify-center rounded-[9px] border-0 px-2 text-left transition-[transform,background-color,color,box-shadow] duration-150 active:translate-y-px motion-reduce:transform-none sm:px-3 ${primaryMode === mode ? "bg-[#c8f36b] text-[#1c291f] shadow-[0_1px_3px_rgba(8,24,15,.2)]" : "bg-transparent text-[#F7F4EA] hover:text-white"}`}>
                         <span className="flex items-center gap-1 text-[10px] font-semibold"><MetricIcon className="h-3 w-3 shrink-0" aria-hidden="true" />{mode === "Net" ? "Saldo bersih" : mode}</span>
-                        <span className="mt-0.5 max-w-full truncate text-xs font-bold text-slate-900 tabular-nums">{formatCompactMoney(value)}</span>
+                        <span className={`mt-0.5 max-w-full truncate text-[11px] font-bold tabular-nums ${primaryMode === mode ? "text-[#1c291f]" : "text-[#FFFDF5]"}`}>{formatCompactMoney(value)}</span>
                       </button>
                     ))}
                   </div>
-                </div>
-                <div className="grid w-full grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 lg:w-auto" role="group" aria-label="Kelompok breakdown">
-                  <button 
-                    type="button"
-                    aria-pressed={breakdownMode === "Kategori"}
-                    onClick={() => setBreakdownMode("Kategori")}
-                    className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 ${breakdownMode === "Kategori" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}
-                  >
-                    Kategori
-                  </button>
-                  <button 
-                    type="button"
-                    aria-pressed={breakdownMode === "Merchant"}
-                    onClick={() => setBreakdownMode("Merchant")}
-                    className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 ${breakdownMode === "Merchant" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}
-                  >
-                    Merchant
-                  </button>
-                </div>
               </div>
               
               {isLoading ? (
@@ -1859,7 +1979,7 @@ export default function LaporanPage() {
                       </div>
                     </div>
                     {/* Insight Box */}
-                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-3.5 w-full text-left">
+                    <div className="report-breakdown-highlight w-full rounded-xl border border-emerald-100/70 bg-white/60 p-3 text-left">
                        <h4 className="text-emerald-800 font-bold text-[11px] uppercase tracking-wider mb-1 flex items-center gap-1.5"><TrendingUp className="w-3.5 h-3.5" /> Sorotan breakdown</h4>
                        <p className="text-slate-600 text-xs leading-relaxed">
                          {activeList.length > 0 && chartSum > 0
@@ -1882,7 +2002,7 @@ export default function LaporanPage() {
                         const color = pieColors[i % pieColors.length];
 
                         return (
-                          <div key={item.name} className={`rounded-xl border p-3 transition-[background-color,border-color] ${i === 0 ? "border-emerald-200 bg-emerald-50/55" : "border-slate-100 bg-[#FCFCF9] hover:border-emerald-200/70 hover:bg-white"}`}>
+                          <div key={item.name} className={`report-ranked-item rounded-xl p-3 transition-colors ${i === 0 ? "bg-emerald-50/70" : "bg-white/70 hover:bg-white"}`}>
                             <div className="flex items-start justify-between gap-3 text-sm">
                               <div className="flex min-w-0 items-start gap-2.5">
                                 <ExplorerMark categoryName={breakdownMode === "Kategori" ? item.name : undefined} merchantName={breakdownMode === "Merchant" ? item.name : undefined} dominantCategories={monthlyMerchantDominantCategories} rank={i + 1} />
@@ -1973,7 +2093,7 @@ export default function LaporanPage() {
                 Lihat rincian {accounts.length} rekening
                 <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
               </summary>
-              <div className="space-y-3 border-t border-slate-100 p-3">
+              <div className="report-account-detail-list space-y-3 border-t border-slate-100 p-3">
                 {isLoading ? (
                   [1, 2].map((item) => <div key={item} className="h-32 animate-pulse rounded-xl bg-slate-100" />)
                 ) : accounts.length === 0 ? (
@@ -1986,19 +2106,19 @@ export default function LaporanPage() {
                     const finalBal = initBal + accIn - accOut;
 
                     return (
-                      <article key={acc.id} className="rounded-xl border border-slate-200 bg-[#FCFCF9] p-3.5">
-                        <div className="flex items-center gap-2.5">
-                          <BankLogo bankName={acc.name} className="h-8 min-w-[46px] max-w-[68px] shrink-0 overflow-hidden rounded-lg px-2 shadow-sm" />
+                      <article key={acc.id} className="report-account-wallet-card rounded-xl border border-slate-200 bg-[#FCFCF9] p-3.5">
+                        <div className="report-account-wallet-head flex min-w-0 items-center gap-2.5">
+                          <BankLogo bankName={acc.name} className="report-account-wallet-logo h-8 min-w-[46px] max-w-[68px] shrink-0 overflow-hidden rounded-lg px-2 shadow-sm" />
                           <div className="min-w-0">
-                            <h4 className="truncate text-sm font-bold text-slate-900">{acc.name}</h4>
-                            <p className="text-[10px] uppercase tracking-wider text-slate-400">{acc.is_primary ? "Rekening utama" : "Rekening"}</p>
+                            <h4 className="report-account-wallet-name truncate text-sm font-bold text-slate-900">{acc.name}</h4>
+                            <p className="report-account-wallet-status text-[10px] uppercase tracking-wider text-slate-400">{acc.is_primary ? "Rekening utama" : "Rekening"}</p>
                           </div>
                         </div>
-                        <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3">
+                        <dl className="report-account-wallet-metrics mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3">
                           <div><dt className="text-[10px] text-slate-400">Saldo awal</dt><dd className="mt-1 break-words text-xs font-semibold text-slate-700 tabular-nums">{formatMoney(initBal)}</dd></div>
-                          <div><dt className="text-[10px] text-slate-400">Saldo akhir</dt><dd className="mt-1 break-words text-xs font-bold text-slate-900 tabular-nums">{formatMoney(finalBal)}</dd></div>
-                          <div><dt className="text-[10px] text-slate-400">Masuk</dt><dd className="mt-1 break-words text-xs font-semibold text-emerald-700 tabular-nums">+{formatMoney(accIn)}</dd></div>
-                          <div><dt className="text-[10px] text-slate-400">Keluar</dt><dd className="mt-1 break-words text-xs font-semibold text-rose-700 tabular-nums">-{formatMoney(accOut)}</dd></div>
+                          <div className="is-ending"><dt className="text-[10px] text-slate-400">Saldo akhir</dt><dd className="mt-1 break-words text-xs font-bold text-slate-900 tabular-nums">{formatMoney(finalBal)}</dd></div>
+                          <div className="is-income"><dt className="text-[10px] text-slate-400">Masuk</dt><dd className="mt-1 break-words text-xs font-semibold text-emerald-700 tabular-nums">+{formatMoney(accIn)}</dd></div>
+                          <div className="is-expense"><dt className="text-[10px] text-slate-400">Keluar</dt><dd className="mt-1 break-words text-xs font-semibold text-rose-700 tabular-nums">-{formatMoney(accOut)}</dd></div>
                         </dl>
                       </article>
                     );
@@ -2083,16 +2203,10 @@ export default function LaporanPage() {
 
           {/* Heatmap Matrix & Pie Chart */}
           <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(220px,1fr)]">
-            <div className="min-w-0 rounded-2xl border border-emerald-100/80 bg-[#F6FAF6] p-4 shadow-sm md:p-6">
-              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end mb-6 gap-4">
-                <div>
-                  <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Sebaran pengeluaran tahunan</h3>
-                  <p className="mt-1 text-xs md:text-sm text-slate-500">Kontribusi tiap kelompok dan pola pengeluaran dari bulan ke bulan.</p>
-                </div>
-                <div className="grid w-full grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:w-auto" role="group" aria-label="Kelompok sebaran tahunan">
-                  <button type="button" aria-pressed={annualBreakdownMode === "Kategori"} onClick={() => setAnnualBreakdownMode("Kategori")} className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 ${annualBreakdownMode === "Kategori" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>Kategori</button>
-                  <button type="button" aria-pressed={annualBreakdownMode === "Merchant"} onClick={() => setAnnualBreakdownMode("Merchant")} className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 ${annualBreakdownMode === "Merchant" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}>Merchant</button>
-                </div>
+            <div className="report-annual-breakdown-card min-w-0 rounded-2xl border border-emerald-100/80 bg-[#F6FAF6] p-4 shadow-sm md:p-6">
+              <div className="report-section-heading mb-5 flex items-start justify-between gap-2.5 md:mb-6">
+                <h3 className="min-w-0 text-[1.08rem] font-bold leading-tight tracking-tight text-gray-900 md:text-lg">Sebaran pengeluaran tahunan</h3>
+                <BreakdownDimensionToggle value={annualBreakdownMode} onChange={setAnnualBreakdownMode} label="Kelompok sebaran tahunan" />
               </div>
 
               <div className="space-y-2.5">
@@ -2371,40 +2485,22 @@ export default function LaporanPage() {
           </div>
 
           {/* Sebaran Pengeluaran Multi-Tahun Visual Breakdown */}
-          <div className="w-full rounded-2xl border border-emerald-100/80 bg-[#F6FAF6] p-4 md:p-6">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h3 className="text-base md:text-lg font-bold tracking-tight text-gray-900">Sebaran pengeluaran multi-tahun</h3>
-                <p className="mt-1 text-xs md:text-sm text-slate-500">Ranking pengeluaran dan perubahannya dibanding tahun sebelumnya.</p>
-                <p className="mt-1.5 text-[11px] font-semibold text-emerald-700 md:hidden">Tahun {safeMultiYearSelected} · {multiYearBreakdownMode}</p>
-              </div>
+          <div className="report-multi-year-breakdown-card w-full rounded-2xl border border-emerald-100/80 bg-[#F6FAF6] p-4 md:p-6">
+            <div className="report-section-heading flex items-start justify-between gap-2.5">
+              <h3 className="min-w-0 text-[1.08rem] font-bold leading-tight tracking-tight text-gray-900 md:text-lg">Sebaran pengeluaran multi-tahun</h3>
+              <BreakdownDimensionToggle value={multiYearBreakdownMode} onChange={setMultiYearBreakdownMode} label="Kelompok sebaran multi-tahun" />
             </div>
-            <div className="mt-4 block md:mt-5 md:flex md:items-end md:justify-between md:gap-4">
+            <div className="mt-3 block md:mt-4">
               <div className="w-full sm:w-40">
                   <CustomSelect 
                     value={String(safeMultiYearSelected)} 
                     onChange={val => setMultiYearSelectedYear(Number(val))}
                     options={activeYears.map(y => ({ value: String(y), label: `Tahun ${y}` }))}
                     buttonClassName="min-h-11"
+                    responsiveOverlay
+                    lockBodyScroll
+                    selectionTitle="Pilih tahun laporan"
                   />
-              </div>
-              <div className="mt-2.5 grid w-full grid-cols-2 gap-1 rounded-xl border border-slate-200/80 bg-[#F7F7F2] p-1 sm:w-auto md:mt-0" role="group" aria-label="Kelompok sebaran multi-tahun">
-                <button 
-                  type="button"
-                  aria-pressed={multiYearBreakdownMode === "Kategori"}
-                  onClick={() => setMultiYearBreakdownMode("Kategori")}
-                  className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 ${multiYearBreakdownMode === "Kategori" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}
-                >
-                  Kategori
-                </button>
-                <button 
-                  type="button"
-                  aria-pressed={multiYearBreakdownMode === "Merchant"}
-                  onClick={() => setMultiYearBreakdownMode("Merchant")}
-                  className={`min-h-11 cursor-pointer rounded-lg border px-3 text-xs font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-200 ease-out active:translate-y-px active:shadow-none motion-reduce:transform-none sm:min-h-10 ${multiYearBreakdownMode === "Merchant" ? "border-emerald-400/90 bg-emerald-100/90 text-emerald-950 shadow-[0_1px_3px_rgba(6,95,70,0.14),inset_0_1px_0_rgba(255,255,255,0.75)]" : "border-slate-200/90 bg-white/80 text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.03)] hover:border-emerald-300/80 hover:bg-emerald-50/80 hover:text-emerald-900"}`}
-                >
-                  Merchant
-                </button>
               </div>
             </div>
             <div className="mt-5 block md:mt-6">

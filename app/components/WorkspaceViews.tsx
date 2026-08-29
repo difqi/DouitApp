@@ -7,7 +7,6 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  CircleDollarSign,
   Download,
   Filter,
   Info,
@@ -34,6 +33,7 @@ import { exportCsv } from "@/lib/report-export-utils";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
 import { CustomDatePicker } from "@/app/components/ui/CustomDatePicker";
 import { CategoryIcon } from "@/app/components/CategoryIcon";
+import { TransactionCreateModal, transactionSourceNames } from "@/app/components/TransactionCreateModal";
 
 const formatMoney = (value: number | string) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value));
 const formatDate = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" });
@@ -378,11 +378,6 @@ export function TransactionsView() {
   const [tempStart, setTempStart] = useState("");
   const [tempEnd, setTempEnd] = useState("");
 
-  const [addType, setAddType] = useState("EXPENSE");
-  const [addDate, setAddDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [addCategoryId, setAddCategoryId] = useState("");
-  const [addSumberDana, setAddSumberDana] = useState("Tunai");
-
   const [editCategoryId, setEditCategoryId] = useState("");
   const [editSumberDana, setEditSumberDana] = useState("Tunai");
   
@@ -524,51 +519,6 @@ export function TransactionsView() {
     return sources;
   }, new Map<string, { name: string; count: number }>()).values());
 
-  async function createTransaction(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!user) return;
-    const data = new FormData(event.currentTarget);
-    const supabase = createClient();
-    
-    const merchantName = String(data.get("name"));
-    let categoryId = String(data.get("category_id"));
-    let sumberDana = String(data.get("sumber_dana") || "Tunai");
-    let notes = null;
-    
-    // Auto matching logic
-    const { data: rule } = await supabase.from('merchant_rules').select('category_id, keyword, sumber_dana').eq('user_id', user.id).eq('merchant_name', merchantName).single();
-    if (rule) {
-      if (rule.category_id) categoryId = rule.category_id;
-      if (rule.keyword) notes = rule.keyword;
-      if (rule.sumber_dana) sumberDana = rule.sumber_dana;
-    }
-    
-    const rawDate = String(data.get("date") || "");
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const targetDate = rawDate || todayStr;
-    const manualNotes = notes ? `${notes} [NO_TIME]` : '[NO_TIME]';
-    
-    const newTx = {
-      user_id: user.id,
-      amount: Number(data.get("amount")),
-      type: String(data.get("type")) as 'INCOME' | 'EXPENSE',
-      merchant: merchantName,
-      category_id: categoryId,
-      sumber_dana: sumberDana,
-      notes: manualNotes,
-      status: "APPROVED",
-      source: "MANUAL_FORM",
-      confidence_score: 1.0,
-      transaction_date: `${targetDate}T00:00:00.000Z`
-    };
-    
-    await supabase.from('transactions').insert(newTx);
-    setAddOpen(false);
-    if (newTx.type === 'EXPENSE' && user) {
-      triggerBudgetAlertCheck(user.id).catch(console.error);
-    }
-  }
-
   async function approveTransaction(row: any) {
     if (!user) return;
     const supabase = createClient();
@@ -675,15 +625,7 @@ export function TransactionsView() {
     exportCsv(csvContent, `Transaksi-Douit-${todayStr}.csv`);
   };
 
-  const openAddModal = () => {
-    setAddOpen(true);
-    if (!addCategoryId && categories.length > 0) {
-      const validCats = categories.filter(c => c.name !== 'Nabung');
-      if (validCats.length > 0) {
-        setAddCategoryId(validCats[0].id);
-      }
-    }
-  };
+  const openAddModal = () => setAddOpen(true);
 
   const openEditModal = (row: any) => {
     setEditRow(row as any);
@@ -721,27 +663,15 @@ export function TransactionsView() {
     if (dateMonth.year !== calendarMonth.year || dateMonth.month !== calendarMonth.month) setCalendarMonth(dateMonth);
   };
 
-  const typeOptions = [
-    { value: "EXPENSE", label: "Pengeluaran" },
-    { value: "INCOME", label: "Pemasukan" }
-  ];
-
   const categoryOptions = categories
     .filter(c => c.name !== 'Nabung')
     .map(c => ({ value: c.id, label: c.name, icon: <CategoryIcon category={c.name} /> }));
 
-  const sumberDanaOptions = [
-    { value: "Tunai", label: "Tunai", icon: <TransactionBankLogo bankName="Tunai" className="transaction-select-bank-logo" /> },
-    { value: "Bank BCA", label: "Bank BCA", icon: <TransactionBankLogo bankName="Bank BCA" className="transaction-select-bank-logo" /> },
-    { value: "Bank Mandiri", label: "Bank Mandiri", icon: <TransactionBankLogo bankName="Bank Mandiri" className="transaction-select-bank-logo" /> },
-    { value: "Bank BRI", label: "Bank BRI", icon: <TransactionBankLogo bankName="Bank BRI" className="transaction-select-bank-logo" /> },
-    { value: "Bank BNI", label: "Bank BNI", icon: <TransactionBankLogo bankName="Bank BNI" className="transaction-select-bank-logo" /> },
-    { value: "GoPay", label: "GoPay", icon: <TransactionBankLogo bankName="GoPay" className="transaction-select-bank-logo" /> },
-    { value: "OVO", label: "OVO", icon: <TransactionBankLogo bankName="OVO" className="transaction-select-bank-logo" /> },
-    { value: "Dana", label: "Dana", icon: <TransactionBankLogo bankName="Dana" className="transaction-select-bank-logo" /> },
-    { value: "ShopeePay", label: "ShopeePay", icon: <TransactionBankLogo bankName="ShopeePay" className="transaction-select-bank-logo" /> },
-    { value: "Lainnya", label: "Lainnya", icon: <TransactionBankLogo bankName="Lainnya" className="transaction-select-bank-logo" /> }
-  ];
+  const sumberDanaOptions = transactionSourceNames.map((source) => ({
+    value: source,
+    label: source,
+    icon: <TransactionBankLogo bankName={source} className="transaction-select-bank-logo" />,
+  }));
 
   const monthOptions = [
     { value: "", label: "Pilih Bulan" },
@@ -1097,71 +1027,7 @@ export function TransactionsView() {
         </div>
       )}
 
-      {addOpen && (
-        <div className="modal-scrim transaction-modal-scrim" onClick={() => setAddOpen(false)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="modal-dialog transaction-modal-dialog transaction-add-dialog relative w-full max-w-lg bg-white rounded-2xl md:rounded-3xl shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-            <div className="modal-header transaction-modal-header flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100 rounded-t-2xl md:rounded-t-3xl">
-              <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}><CircleDollarSign size={19} /> Catat transaksi</h3>
-              <button type="button" className="transaction-modal-close" onClick={() => setAddOpen(false)} aria-label="Tutup form catat transaksi"><X size={19} /></button>
-            </div>
-            <form className="transaction-modal-form" onSubmit={createTransaction}>
-              <div className="form-grid transaction-modal-fields transaction-add-fields" style={{ padding: '24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <div className="transaction-primary-field" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Tipe</span>
-                  <CustomSelect
-                    name="type"
-                    value={addType}
-                    onChange={setAddType}
-                    options={typeOptions}
-                    responsiveOverlay
-                    selectionTitle="Pilih tipe transaksi"
-                  />
-                </div>
-                <label className="transaction-primary-field" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Jumlah (Rp)</span>
-                  <input name="amount" type="number" min="1" inputMode="numeric" placeholder="0" required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', gridColumn: 'span 2' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Nama transaksi / merchant</span>
-                  <input name="name" placeholder="Contoh: Beli Makan" required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
-                </label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Tanggal</span>
-                  <CustomDatePicker name="date" value={addDate} onChange={setAddDate} responsiveOverlay selectionTitle="Pilih tanggal transaksi" />
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Kategori</span>
-                  <CustomSelect
-                    name="category_id"
-                    value={addCategoryId || (categoryOptions[0]?.value ?? "")}
-                    onChange={setAddCategoryId}
-                    options={categoryOptions}
-                    placeholder="Pilih Kategori"
-                    responsiveOverlay
-                    selectionTitle="Pilih kategori"
-                  />
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Sumber Dana</span>
-                  <CustomSelect
-                    name="sumber_dana"
-                    value={addSumberDana}
-                    onChange={setAddSumberDana}
-                    options={sumberDanaOptions}
-                    placeholder="Pilih Sumber Dana"
-                    responsiveOverlay
-                    selectionTitle="Pilih sumber dana"
-                  />
-                </div>
-              </div>
-              <div className="modal-actions transaction-modal-actions rounded-b-2xl md:rounded-b-3xl" style={{ padding: '16px 24px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: '12px', background: '#f8fafc' }}>
-                <button type="button" className="button secondary" onClick={() => setAddOpen(false)}>Batal</button>
-                <button type="submit" className="button primary">Simpan transaksi</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <TransactionCreateModal open={addOpen} onClose={() => setAddOpen(false)} categories={categories} />
 
       {editRow && (
         <div className="modal-scrim transaction-modal-scrim" onClick={() => setEditRow(null)} style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

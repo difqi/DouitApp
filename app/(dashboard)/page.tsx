@@ -31,6 +31,7 @@ import { MiniSparkline } from "../components/MiniSparkline";
 import { BankLogo } from "../components/BankLogo";
 import { useWalletCarousel } from "../components/useWalletSwipe";
 import { MobileProfileIdentity } from "../components/MobileAppHeader";
+import { TransactionCreateModal } from "../components/TransactionCreateModal";
 
 import { getAccountCurrentBalance, getTotalCurrentBalance, PaymentAccount } from "@/lib/account-balance";
 import { createClient } from "@/lib/supabase/client";
@@ -182,6 +183,7 @@ export default function DashboardPage() {
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [period, setPeriod] = useState<DashboardPeriod>("Bulan ini");
   const [transactions, setTransactions] = useState<Transaction[]>(cachedDashboardTx);
+  const [transactionModalOpen, setTransactionModalOpen] = useState(false);
   const { user, membership } = useDouit();
 
   useEffect(() => {
@@ -353,7 +355,7 @@ export default function DashboardPage() {
           <p className="dashboard-heading-subtitle">Ini gambaran keuanganmu bulan ini.</p>
         </div>
         <div className="heading-actions">
-          <Link href="/transactions" className="button primary"><Plus size={17} /> Catat manual</Link>
+          <button type="button" className="button primary" onClick={() => setTransactionModalOpen(true)} aria-haspopup="dialog"><Plus size={17} /> Catat manual</button>
         </div>
       </div>
 
@@ -471,7 +473,7 @@ export default function DashboardPage() {
 
       <section className="dashboard-mobile-summary dashboard-mobile-only" aria-label="Ringkasan keuangan mobile">
         <nav className="dashboard-quick-actions" aria-label="Aksi cepat">
-          <Link href="/transactions" className="quick-action quick-action-record"><span><Plus size={21} /></span><small>Catat</small></Link>
+          <button type="button" className="quick-action quick-action-record" onClick={() => setTransactionModalOpen(true)} aria-haspopup="dialog"><span><Plus size={21} /></span><small>Catat</small></button>
           <Link href="/chat" className="quick-action quick-action-ai"><span><Bot size={20} /></span><small>Douit AI</small></Link>
           <Link href="/nabung" className="quick-action quick-action-saving"><span><PiggyBank size={20} /></span><small>Nabung</small></Link>
           <Link href="/laporan" className="quick-action quick-action-report"><span><ChartNoAxesColumnIncreasing size={20} /></span><small>Laporan</small></Link>
@@ -755,6 +757,7 @@ export default function DashboardPage() {
           </div>
         </section>
       </div>
+      <TransactionCreateModal open={transactionModalOpen} onClose={() => setTransactionModalOpen(false)} />
     </div>
   );
 }

@@ -194,51 +194,45 @@ export default function NotifikasiPage() {
   });
 
   return (
-    <div className="workspace-page">
-      <div className="page-heading dashboard-heading" style={{ paddingBottom: '16px', borderBottom: '1px solid #e2e8f0' }}>
-        <div>
-          <div className="eyebrow"><BellRing size={14} /> Pusat Notifikasi</div>
-          <h1>Notifikasi</h1>
-          <p>Lihat update transaksi, anggaran, rekening, dan target tabunganmu.</p>
-        </div>
-      </div>
+    <div className="notifications-page workspace-page">
+      <div className="notifications-top-shell">
+        <header className="notifications-hero page-heading dashboard-heading border-b border-slate-200 pb-4">
+          <div className="min-w-0">
+            <div className="notifications-title-row">
+              <BellRing aria-hidden="true" />
+              <h1>Notifikasi</h1>
+            </div>
+            <p>Lihat update transaksi, anggaran, rekening, dan target tabunganmu.</p>
+          </div>
+        </header>
 
-      <div className="w-full" style={{ margin: '24px 0', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-          <div style={{ display: 'flex', gap: '8px', background: '#f1f5f9', padding: '4px', borderRadius: '8px' }}>
-            <button 
-              onClick={() => setFilter("ALL")} 
-              style={{ padding: '6px 12px', fontSize: '13px', fontWeight: 600, borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all 0.2s', background: filter === "ALL" ? '#fff' : 'transparent', color: filter === "ALL" ? '#0f172a' : '#64748b', boxShadow: filter === "ALL" ? '0 1px 2px rgba(0,0,0,0.05)' : 'none' }}
-            >
+        <div className="notifications-toolbar">
+          <div className="notifications-filter-tabs" role="group" aria-label="Filter notifikasi">
+            <button type="button" aria-pressed={filter === "ALL"} onClick={() => setFilter("ALL")} className={filter === "ALL" ? "is-active" : ""}>
               Semua
             </button>
-            <button 
-              onClick={() => setFilter("UNREAD")} 
-              style={{ padding: '6px 12px', fontSize: '13px', fontWeight: 600, borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all 0.2s', background: filter === "UNREAD" ? '#fff' : 'transparent', color: filter === "UNREAD" ? '#0f172a' : '#64748b', boxShadow: filter === "UNREAD" ? '0 1px 2px rgba(0,0,0,0.05)' : 'none' }}
-            >
+            <button type="button" aria-pressed={filter === "UNREAD"} onClick={() => setFilter("UNREAD")} className={filter === "UNREAD" ? "is-active" : ""}>
               Belum dibaca
             </button>
-            <button 
-              onClick={() => setFilter("WARNING")} 
-              style={{ padding: '6px 12px', fontSize: '13px', fontWeight: 600, borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all 0.2s', background: filter === "WARNING" ? '#fff' : 'transparent', color: filter === "WARNING" ? '#0f172a' : '#64748b', boxShadow: filter === "WARNING" ? '0 1px 2px rgba(0,0,0,0.05)' : 'none' }}
-            >
+            <button type="button" aria-pressed={filter === "WARNING"} onClick={() => setFilter("WARNING")} className={filter === "WARNING" ? "is-active" : ""}>
               Peringatan
             </button>
           </div>
-          
-          <div style={{ display: 'flex', gap: '12px' }}>
+
+          <div className="notifications-bulk-actions">
             {notifications.some(n => !n.is_read) && (
-              <button onClick={markAllAsRead} className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium text-xs rounded-lg px-3 py-1.5 flex items-center gap-1.5 cursor-pointer">
+              <button type="button" onClick={markAllAsRead} className="notifications-mark-read">
                 <Check size={14} /> Tandai semua dibaca
               </button>
             )}
-            <button onClick={deleteAll} className="bg-rose-50 border border-rose-200/80 text-rose-600 hover:bg-rose-100 font-medium text-xs rounded-lg px-3 py-1.5 flex items-center gap-1.5 cursor-pointer">
+            <button type="button" onClick={deleteAll} className="notifications-delete-all">
               <Trash2 size={14} /> Hapus Semua
             </button>
           </div>
         </div>
+      </div>
 
-        <div style={{ borderRadius: '12px' }}>
+      <div className="notifications-list-shell">
           {loading ? (
             <div style={{ padding: '48px', textAlign: 'center', color: '#64748b', fontSize: '14px' }}>Memuat notifikasi...</div>
           ) : filteredNotifications.length === 0 ? (
@@ -262,10 +256,10 @@ export default function NotifikasiPage() {
                   <div className="mt-0.5">
                     {getIcon(n.type)}
                   </div>
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', paddingRight: '16px' }}>
-                      <h4 className="text-white font-semibold text-sm tracking-wide m-0">{n.title}</h4>
-                      <span className="text-emerald-400/70 text-[11px] whitespace-nowrap">{timeAgo(n.created_at)}</span>
+                  <div className="min-w-0" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div className="min-w-0" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', paddingRight: '16px' }}>
+                      <h4 className="m-0 min-w-0 break-words text-sm font-semibold tracking-wide text-white">{n.title}</h4>
+                      <span className="shrink-0 whitespace-nowrap text-[11px] text-emerald-400/70">{timeAgo(n.created_at)}</span>
                     </div>
                     <p className="text-[#a8c9b9] text-xs leading-relaxed mt-1 font-normal m-0">{n.message}</p>
                     
@@ -350,7 +344,6 @@ export default function NotifikasiPage() {
             </div>
           )}
         </div>
-      </div>
 
       <ConfirmDialog
         isOpen={confirmDeleteAllOpen}

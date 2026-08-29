@@ -24,7 +24,6 @@ import { NotificationBell } from "./NotificationBell";
 import { DouitLogo } from "./icons/DouitLogo";
 import { WorkspaceLoading } from "@/components/ui/WorkspaceLoading";
 import { MobileBottomNavigation } from "./MobileBottomNavigation";
-import { MobileAppHeader } from "./MobileAppHeader";
 
 type ActivePage = "dashboard" | "chat" | "transactions" | "wallet" | "settings" | "laporan" | "nabung";
 
@@ -186,7 +185,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
       </button>
       <main className="main-area">
-        {pathname !== "/" && active !== "transactions" && active !== "settings" && active !== "nabung" && <MobileAppHeader />}
         <div className={`page-content ${active === "chat" ? "chat-page-content" : ""}`}>{children}</div>
       </main>
       <MobileBottomNavigation />

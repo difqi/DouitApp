@@ -26,6 +26,7 @@ interface CustomSelectProps {
   icon?: React.ReactNode;
   responsiveOverlay?: boolean;
   selectionTitle?: string;
+  lockBodyScroll?: boolean;
 }
 
 const getPopoverStyle = (trigger: HTMLButtonElement): React.CSSProperties => {
@@ -64,6 +65,7 @@ export function CustomSelect({
   icon,
   responsiveOverlay = false,
   selectionTitle = "Pilih opsi",
+  lockBodyScroll = false,
 }: CustomSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isMobileSheet, setIsMobileSheet] = useState(false);
@@ -120,6 +122,38 @@ export function CustomSelect({
       window.removeEventListener("scroll", updateOverlayLayout, true);
     };
   }, [isOpen, responsiveOverlay]);
+
+  useEffect(() => {
+    if (!isOpen || !responsiveOverlay || !isMobileSheet || !lockBodyScroll) return;
+
+    const body = document.body;
+    const scrollY = window.scrollY;
+    const previousStyles = {
+      position: body.style.position,
+      top: body.style.top,
+      right: body.style.right,
+      left: body.style.left,
+      width: body.style.width,
+      overflow: body.style.overflow,
+    };
+
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.right = "0";
+    body.style.left = "0";
+    body.style.width = "100%";
+    body.style.overflow = "hidden";
+
+    return () => {
+      body.style.position = previousStyles.position;
+      body.style.top = previousStyles.top;
+      body.style.right = previousStyles.right;
+      body.style.left = previousStyles.left;
+      body.style.width = previousStyles.width;
+      body.style.overflow = previousStyles.overflow;
+      window.scrollTo(0, scrollY);
+    };
+  }, [isMobileSheet, isOpen, lockBodyScroll, responsiveOverlay]);
 
   const isDarkEmerald = variant === "dark-emerald";
 
@@ -219,10 +253,10 @@ export function CustomSelect({
 
       {isOpen && responsiveOverlay && typeof document !== "undefined" && createPortal(
         isMobileSheet ? (
-          <div className="fixed inset-0 z-[200] bg-slate-950/45 backdrop-blur-[2px]" onMouseDown={() => setIsOpen(false)}>
+          <div className="responsive-select-mobile-layer fixed inset-0 z-[200] bg-slate-950/45 backdrop-blur-[2px]" onMouseDown={() => setIsOpen(false)}>
             <div
               ref={overlayRef}
-              className="absolute inset-x-0 bottom-0 max-h-[78dvh] overflow-hidden rounded-t-3xl border border-slate-200 bg-[#FAF9F5] shadow-2xl"
+              className="responsive-select-mobile-sheet absolute inset-x-0 bottom-0 max-h-[78dvh] overflow-hidden rounded-t-3xl border border-slate-200 bg-[#FAF9F5] shadow-2xl"
               onMouseDown={(event) => event.stopPropagation()}
               role="dialog"
               aria-modal="true"
