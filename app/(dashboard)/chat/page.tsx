@@ -32,6 +32,16 @@ import { CategoryIcon } from "@/app/components/CategoryIcon";
 type Message = { id: string; role: "user" | "assistant"; content: string; message_kind: string; action_draft_id: string | null; created_at: string };
 type ActionDraft = { id: string; action_type: string; status: "pending" | "approved" | "rejected" | "failed"; preview: Record<string, unknown>; executed_entity_id?: string | null };
 type ChatSession = { id: string; title: string; created_at: string; is_pinned?: boolean };
+type ChatApiResponse = {
+  sessionId?: string;
+  draftId?: string | null;
+  preview?: Record<string, unknown> | null;
+  reply?: string;
+  needsClarification?: boolean;
+  missingFields?: string[];
+  requestId?: string;
+  error?: string;
+};
 
 const WELCOME_MESSAGE = "Halo! Saya Douit AI, asisten keuangan pribadimu. Ceritakan transaksi dengan tanggal, jam, nominal, dan rekening yang digunakan. Contoh: 'Hari ini jam 7 malam beli bensin 30k pakai BRI'.";
 const PENDING_TRANSACTION_MESSAGE = "Aku sudah menyiapkan transaksi ini. Periksa detailnya lalu setujui untuk menyimpannya.";
@@ -46,6 +56,10 @@ const PROMPT_SUGGESTIONS = [
 const money = (value: unknown) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value ?? 0));
 const messageTime = (value: string) => new Date(value).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }).replace(".", ":");
 const sessionTime = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: new Date(value).getFullYear() === new Date().getFullYear() ? undefined : "numeric", timeZone: "Asia/Jakarta" });
+const elapsedMs = (startedAt: number) => Math.round(performance.now() - startedAt);
+const logChatClient = (requestId: string, phase: string, metadata: Record<string, unknown> = {}, level: "info" | "warn" | "error" = "info") => {
+  console[level]({ scope: "douit_ai_chat_client", requestId, phase, ...metadata });
+};
 
 export default function ChatPage() {
   const router = useRouter();
@@ -66,6 +80,9 @@ export default function ChatPage() {
 
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const messagesEnd = useRef<HTMLDivElement>(null);
+  const activeSessionIdRef = useRef<string | null>(null);
+  const viewRevisionRef = useRef(0);
+  const chatRequestControllerRef = useRef<AbortController | null>(null);
 
   const fetchSessions = async () => {
     const supabase = createClient();
@@ -97,6 +114,9 @@ export default function ChatPage() {
 
   useEffect(() => {
     fetchSessions();
+    return () => {
+      chatRequestControllerRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -145,13 +165,22 @@ export default function ChatPage() {
   }, [menuSessionId]);
 
   const loadSession = async (sessionId: string) => {
+    chatRequestControllerRef.current?.abort();
+    const viewRevision = ++viewRevisionRef.current;
+    activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId);
     setHistoryOpen(false);
     setMenuSessionId(null);
     setEditingSessionId(null);
     setEditingDraft(null);
     const supabase = createClient();
-    const { data } = await supabase.from('chat_messages').select('*').eq('session_id', sessionId).order('created_at', { ascending: true });
+    const { data, error } = await supabase.from('chat_messages').select('*').eq('session_id', sessionId).order('created_at', { ascending: true });
+    if (error) {
+      logChatClient(crypto.randomUUID(), "session_load_failed", { errorCode: error.code }, "error");
+      return;
+    }
+    // Ignore a slower response from a session that is no longer the active view.
+    if (viewRevision !== viewRevisionRef.current) return;
     if (data) {
       const loadedDrafts: Record<string, ActionDraft> = {};
       const newMessages = data.map(m => {
@@ -179,6 +208,9 @@ export default function ChatPage() {
   };
 
   const newSession = () => {
+    chatRequestControllerRef.current?.abort();
+    viewRevisionRef.current += 1;
+    activeSessionIdRef.current = null;
     setActiveSessionId(null);
     setHistoryOpen(false);
     setMenuSessionId(null);
@@ -253,26 +285,61 @@ export default function ChatPage() {
     const text = input.trim();
     if (!text || !business || sending) return;
 
+    const requestId = crypto.randomUUID();
+    const submitStartedAt = performance.now();
+    const originSessionId = activeSessionIdRef.current;
+    const originViewRevision = viewRevisionRef.current;
+    const requestController = new AbortController();
+    chatRequestControllerRef.current = requestController;
     setSending(true); setInput(""); setEditingDraft(null);
 
     const userMsg: Message = { id: `local-${Date.now()}`, role: "user", content: text, message_kind: "text", action_draft_id: null, created_at: new Date().toISOString() };
     setMessages(current => [...current, userMsg]);
+    window.requestAnimationFrame(() => {
+      const renderMs = elapsedMs(submitStartedAt);
+      logChatClient(requestId, "optimistic_ui_rendered", {
+        optimisticBubbleMs: renderMs,
+        typingIndicatorMs: renderMs,
+      });
+    });
 
+    const requestStartedAt = performance.now();
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, sessionId: activeSessionId })
+        headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
+        body: JSON.stringify({ message: text, sessionId: originSessionId }),
+        signal: requestController.signal,
       });
-      const data = (await res.json()) as { sessionId?: string; draftId?: string; preview?: Record<string, unknown>; reply?: string; error?: string };
+      const responseHeadersAt = performance.now();
+      const data = (await res.json()) as ChatApiResponse;
+      const responseReceivedAt = performance.now();
+      const correlatedRequestId = data.requestId || res.headers.get('x-request-id') || requestId;
+      logChatClient(correlatedRequestId, "response_received", {
+        requestMs: Math.round(responseReceivedAt - requestStartedAt),
+        responseBodyMs: Math.round(responseReceivedAt - responseHeadersAt),
+        status: res.status,
+        needsClarification: Boolean(data.needsClarification),
+      }, res.ok ? "info" : "warn");
 
-      if (data.sessionId && !activeSessionId) {
+      const stillOnOriginatingView = viewRevisionRef.current === originViewRevision;
+      if (!stillOnOriginatingView) {
+        logChatClient(correlatedRequestId, "response_not_rendered", { reason: "active_session_changed" }, "warn");
+        void fetchSessions();
+        return;
+      }
+
+      if (data.sessionId && !originSessionId) {
+        activeSessionIdRef.current = data.sessionId;
         setActiveSessionId(data.sessionId);
-        await fetchSessions();
+        void fetchSessions();
+      } else if (originSessionId && data.sessionId && data.sessionId !== originSessionId) {
+        logChatClient(correlatedRequestId, "response_not_rendered", { reason: "session_mismatch" }, "error");
+        return;
       }
 
       let newMsg: Message;
-      if (data.draftId && data.preview) {
+      if (!data.needsClarification && data.draftId && data.preview) {
         setDrafts(prev => ({
           ...prev,
           [data.draftId as string]: {
@@ -288,26 +355,80 @@ export default function ChatPage() {
         newMsg = { id: `${requestFailed ? "err" : "ai"}-${Date.now()}`, role: "assistant", content: requestFailed ? "Douit sedang mengalami kendala. Pesanmu belum dapat diproses, silakan coba lagi." : data.reply || "Maaf, saya tidak mengerti.", message_kind: requestFailed ? "error" : "text", action_draft_id: null, created_at: new Date().toISOString() };
       }
       setMessages(current => [...current, newMsg]);
-    } catch (err) {
-      console.error(err);
-      setMessages(current => [...current, { id: `err-${Date.now()}`, role: "assistant", content: "Terjadi kesalahan jaringan atau sistem.", message_kind: "text", action_draft_id: null, created_at: new Date().toISOString() }]);
+      window.requestAnimationFrame(() => {
+        logChatClient(correlatedRequestId, "assistant_rendered", {
+          responseToRenderMs: elapsedMs(responseReceivedAt),
+        });
+      });
+    } catch (error) {
+      if (requestController.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+        logChatClient(requestId, "request_aborted", {
+          requestMs: elapsedMs(requestStartedAt),
+          reason: "view_changed_or_unmounted",
+        }, "warn");
+        return;
+      }
+      logChatClient(requestId, "request_failed", {
+        requestMs: elapsedMs(requestStartedAt),
+        errorType: error instanceof Error ? error.name : "Error",
+      }, "error");
+      if (viewRevisionRef.current === originViewRevision) {
+        setMessages(current => [...current, { id: `err-${Date.now()}`, role: "assistant", content: "Terjadi kesalahan jaringan atau sistem.", message_kind: "text", action_draft_id: null, created_at: new Date().toISOString() }]);
+      }
     } finally {
-      setSending(false);
+      if (chatRequestControllerRef.current === requestController) {
+        chatRequestControllerRef.current = null;
+        setSending(false);
+      }
     }
   }
 
   async function reviewAction(actionId: string, decision: "approve" | "reject") {
     const supabase = createClient();
     const draft = drafts[actionId];
+    const approvalRequestId = crypto.randomUUID();
+    const approvalStartedAt = performance.now();
+
+    if (!draft) {
+      logChatClient(approvalRequestId, "approval_failed", { reason: "draft_not_found" }, "error");
+      return;
+    }
 
     if (decision === "reject") {
+      const draftStatusStartedAt = performance.now();
+      const { error: rejectError } = await supabase
+        .from('chat_messages')
+        .update({ draft_data: { ...draft.preview, status: 'rejected' } })
+        .eq('action_draft_id', actionId);
+      const draftStatusUpdateMs = elapsedMs(draftStatusStartedAt);
+
+      if (rejectError) {
+        logChatClient(approvalRequestId, "rejection_failed", {
+          totalMs: elapsedMs(approvalStartedAt),
+          draftStatusUpdateMs,
+          errorCode: rejectError.code,
+        }, "error");
+        return;
+      }
+
       setDrafts(prev => ({
         ...prev,
         [actionId]: { ...prev[actionId], status: "rejected" }
       }));
+      logChatClient(approvalRequestId, "rejection_complete", {
+        totalMs: elapsedMs(approvalStartedAt),
+        draftStatusUpdateMs,
+      });
+      return;
     }
 
-    if (decision === 'approve') {
+    logChatClient(approvalRequestId, "approval_start");
+    let authMs = 0;
+    let transactionInsertMs = 0;
+    let draftStatusUpdateMs = 0;
+    let merchantRuleMs = 0;
+
+    try {
       const txPayload: any = {
         amount: Number(draft.preview.amount),
         type: String(draft.preview.type),
@@ -318,74 +439,143 @@ export default function ChatPage() {
         source: 'MANUAL_CHAT',
         confidence_score: 1.0,
         notes: draft.preview.notes ? String(draft.preview.notes) : null,
+        idempotency_key: `chat:${actionId}`,
       };
       if (draft.preview.transaction_date) {
         txPayload.transaction_date = String(draft.preview.transaction_date);
       }
 
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        txPayload.user_id = user.id;
-        const payloads = [txPayload];
-
-        if (draft.preview.admin_fee) {
-          const { data: categories } = await supabase.from('categories').select('id').eq('name', 'Biaya Admin').single();
-          payloads.push({
-            ...txPayload,
-            amount: Number(draft.preview.admin_fee),
-            merchant: `Biaya Admin ${txPayload.sumber_dana}`,
-            category_id: categories?.id || null,
-          });
-        }
-
-        const { error: insertError } = await supabase.from('transactions').insert(payloads);
-
-        if (insertError) {
-          console.error("Supabase Insert Error:", insertError);
-          setDrafts(prev => ({
-            ...prev,
-            [actionId]: { ...prev[actionId], status: "failed" }
-          }));
-        } else {
-          setDrafts(prev => ({
-            ...prev,
-            [actionId]: { ...prev[actionId], status: "approved" }
-          }));
-          if (txPayload.type === 'EXPENSE') {
-            triggerBudgetAlertCheck(user.id).catch(console.error);
-          }
-          if (txPayload.merchant && txPayload.category_id) {
-            await supabase.from('user_merchant_rules').upsert({
-              user_id: user.id,
-              merchant_pattern: txPayload.merchant,
-              category_id: txPayload.category_id
-            }, { onConflict: 'user_id, merchant_pattern' });
-          }
-          // Persist approved status to chat_messages
-          try {
-            await supabase
-              .from('chat_messages')
-              .update({
-                draft_data: { ...draft.preview, status: 'approved' }
-              })
-              .eq('action_draft_id', actionId);
-          } catch (err) {
-            console.warn("Could not update chat message draft status:", err);
-          }
-        }
+      const authStartedAt = performance.now();
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      authMs = elapsedMs(authStartedAt);
+      if (authError || !user) {
+        setDrafts(prev => ({ ...prev, [actionId]: { ...prev[actionId], status: "failed" } }));
+        logChatClient(approvalRequestId, "approval_failed", {
+          reason: "unauthorized",
+          authMs,
+          totalMs: elapsedMs(approvalStartedAt),
+          errorCode: authError?.code || null,
+        }, "error");
+        return;
       }
-    } else if (decision === 'reject') {
-      // Persist rejected status to chat_messages
-      try {
-        await supabase
-          .from('chat_messages')
-          .update({
-            draft_data: { ...draft.preview, status: 'rejected' }
+
+      txPayload.user_id = user.id;
+      const payloads = [txPayload];
+
+      if (Number(draft.preview.admin_fee) > 0) {
+        const { data: feeCategory, error: feeCategoryError } = await supabase
+          .from('categories')
+          .select('id')
+          .eq('name', 'Biaya Admin')
+          .maybeSingle();
+        if (feeCategoryError) {
+          logChatClient(approvalRequestId, "admin_fee_category_lookup_failed", {
+            errorCode: feeCategoryError.code,
+          }, "warn");
+        }
+        payloads.push({
+          ...txPayload,
+          amount: Number(draft.preview.admin_fee),
+          merchant: `Biaya Admin ${txPayload.sumber_dana}`,
+          category_id: feeCategory?.id || null,
+          idempotency_key: `chat:${actionId}:admin-fee`,
+        });
+      }
+
+      const transactionInsertStartedAt = performance.now();
+      const { error: insertError } = await supabase.from('transactions').insert(payloads);
+      transactionInsertMs = elapsedMs(transactionInsertStartedAt);
+      const idempotentReplay = insertError?.code === '23505';
+
+      if (insertError && !idempotentReplay) {
+        setDrafts(prev => ({ ...prev, [actionId]: { ...prev[actionId], status: "failed" } }));
+        logChatClient(approvalRequestId, "approval_failed", {
+          reason: "transaction_insert",
+          authMs,
+          transactionInsertMs,
+          totalMs: elapsedMs(approvalStartedAt),
+          errorCode: insertError.code,
+        }, "error");
+        return;
+      }
+
+      if (txPayload.type === 'EXPENSE') {
+        triggerBudgetAlertCheck(user.id)
+          .then((result) => {
+            if (!result.success) {
+              logChatClient(approvalRequestId, "budget_alert_failed", { errorType: "ActionFailed" }, "warn");
+            }
           })
-          .eq('action_draft_id', actionId);
-      } catch (err) {
-        console.warn("Could not update chat message draft status:", err);
+          .catch((error) => {
+            logChatClient(approvalRequestId, "budget_alert_failed", {
+              errorType: error instanceof Error ? error.name : "Error",
+            }, "warn");
+          });
       }
+
+      // Learning and draft metadata are independent after the durable financial insert.
+      const merchantRulePromise = (async () => {
+        if (!txPayload.merchant || !txPayload.category_id) return null;
+        const startedAt = performance.now();
+        const { error } = await supabase.from('merchant_rules').upsert({
+          user_id: user.id,
+          merchant_name: txPayload.merchant,
+          category_id: txPayload.category_id,
+          sumber_dana: txPayload.sumber_dana,
+        }, { onConflict: 'user_id, merchant_name' });
+        merchantRuleMs = elapsedMs(startedAt);
+        return error;
+      })();
+      const draftStatusPromise = (async () => {
+        const startedAt = performance.now();
+        const { error } = await supabase
+          .from('chat_messages')
+          .update({ draft_data: { ...draft.preview, status: 'approved' } })
+          .eq('action_draft_id', actionId);
+        draftStatusUpdateMs = elapsedMs(startedAt);
+        return error;
+      })();
+      const [merchantRuleError, draftStatusError] = await Promise.all([
+        merchantRulePromise,
+        draftStatusPromise,
+      ]);
+
+      if (merchantRuleError) {
+        logChatClient(approvalRequestId, "merchant_rule_learning_failed", {
+          errorCode: merchantRuleError.code,
+          merchantRuleMs,
+        }, "warn");
+      }
+
+      // The financial insert already succeeded; keep the local card approved even if chat metadata sync fails.
+      setDrafts(prev => ({ ...prev, [actionId]: { ...prev[actionId], status: "approved" } }));
+      if (draftStatusError) {
+        logChatClient(approvalRequestId, "draft_status_update_failed", {
+          errorCode: draftStatusError.code,
+          draftStatusUpdateMs,
+        }, "error");
+      }
+
+      logChatClient(approvalRequestId, "approval_complete", {
+        totalMs: elapsedMs(approvalStartedAt),
+        authMs,
+        transactionInsertMs,
+        draftStatusUpdateMs,
+        merchantRuleMs,
+        idempotentReplay,
+        draftStatusPersisted: !draftStatusError,
+      });
+    } catch (error) {
+      setDrafts(prev => ({ ...prev, [actionId]: { ...prev[actionId], status: "failed" } }));
+      logChatClient(approvalRequestId, "approval_failed", {
+        reason: "unexpected",
+        totalMs: elapsedMs(approvalStartedAt),
+        authMs,
+        transactionInsertMs,
+        draftStatusUpdateMs,
+        merchantRuleMs,
+        errorType: error instanceof Error ? error.name : "Error",
+      }, "error");
     }
   }
 
