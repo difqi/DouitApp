@@ -36,15 +36,16 @@ type ChatApiResponse = {
   sessionId?: string;
   draftId?: string | null;
   preview?: Record<string, unknown> | null;
+  draftUpdated?: boolean;
   reply?: string;
   needsClarification?: boolean;
   missingFields?: string[];
   requestId?: string;
   error?: string;
+  errorKind?: "unauthorized" | "invalid_request" | "session" | "database" | "provider" | "internal";
 };
 
-const WELCOME_MESSAGE = "Halo! Saya Douit AI, asisten keuangan pribadimu. Ceritakan transaksi dengan tanggal, jam, nominal, dan rekening yang digunakan. Contoh: 'Hari ini jam 7 malam beli bensin 30k pakai BRI'.";
-const PENDING_TRANSACTION_MESSAGE = "Aku sudah menyiapkan transaksi ini. Periksa detailnya lalu setujui untuk menyimpannya.";
+const WELCOME_MESSAGE = "Halo! Aku Douit, asisten keuanganmu. Kamu bisa langsung ceritakan transaksi atau tanya soal keuangan.";
 
 const PROMPT_SUGGESTIONS = [
   "Hari ini jam 7 malam beli bensin 30k pakai BRI",
@@ -57,8 +58,22 @@ const money = (value: unknown) => new Intl.NumberFormat("id-ID", { style: "curre
 const messageTime = (value: string) => new Date(value).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }).replace(".", ":");
 const sessionTime = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: new Date(value).getFullYear() === new Date().getFullYear() ? undefined : "numeric", timeZone: "Asia/Jakarta" });
 const elapsedMs = (startedAt: number) => Math.round(performance.now() - startedAt);
+const normalizeDraftStatus = (value: unknown): ActionDraft["status"] => {
+  if (value === "approved" || value === "rejected" || value === "failed") return value;
+  // Legacy previews used uppercase APPROVED for the future transaction status,
+  // while the draft itself was still waiting for user confirmation.
+  return "pending";
+};
 const logChatClient = (requestId: string, phase: string, metadata: Record<string, unknown> = {}, level: "info" | "warn" | "error" = "info") => {
   console[level]({ scope: "douit_ai_chat_client", requestId, phase, ...metadata });
+};
+const chatErrorCopy = (errorKind: ChatApiResponse["errorKind"], status: number): string => {
+  if (errorKind === "provider" || status === 503) return "Douit lagi agak lama merespons. Coba kirim lagi sebentar ya.";
+  if (errorKind === "unauthorized" || status === 401) return "Sesi kamu sudah berakhir. Masuk lagi, lalu coba kirim pesannya ya.";
+  if (errorKind === "session" || status === 404) return "Percakapan ini sudah tidak tersedia. Mulai chat baru, ya.";
+  if (errorKind === "invalid_request" || status === 400) return "Pesannya belum bisa aku proses. Coba periksa lalu kirim lagi ya.";
+  if (errorKind === "database") return "Aku belum bisa menyimpan percakapan ini. Coba kirim lagi ya.";
+  return "Ada kendala sebentar. Coba kirim lagi ya.";
 };
 
 export default function ChatPage() {
@@ -185,7 +200,7 @@ export default function ChatPage() {
       const loadedDrafts: Record<string, ActionDraft> = {};
       const newMessages = data.map(m => {
         if (m.action_draft_id && m.draft_data) {
-          const draftStatus = (m.draft_data as any)?.status || "pending";
+          const draftStatus = normalizeDraftStatus((m.draft_data as Record<string, unknown>)?.status);
           loadedDrafts[m.action_draft_id] = {
             id: m.action_draft_id,
             action_type: "create_transaction",
@@ -202,7 +217,7 @@ export default function ChatPage() {
           created_at: m.created_at
         };
       });
-      setDrafts(prev => ({ ...prev, ...loadedDrafts }));
+      setDrafts(loadedDrafts);
       setMessages(newMessages);
     }
   };
@@ -289,6 +304,7 @@ export default function ChatPage() {
     const submitStartedAt = performance.now();
     const originSessionId = activeSessionIdRef.current;
     const originViewRevision = viewRevisionRef.current;
+    const targetDraftId = editingDraft?.id || null;
     const requestController = new AbortController();
     chatRequestControllerRef.current = requestController;
     setSending(true); setInput(""); setEditingDraft(null);
@@ -308,7 +324,7 @@ export default function ChatPage() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-request-id': requestId },
-        body: JSON.stringify({ message: text, sessionId: originSessionId }),
+        body: JSON.stringify({ message: text, sessionId: originSessionId, targetDraftId }),
         signal: requestController.signal,
       });
       const responseHeadersAt = performance.now();
@@ -349,10 +365,19 @@ export default function ChatPage() {
             preview: data.preview!
           }
         }));
-        newMsg = { id: `ai-${Date.now()}`, role: "assistant", content: data.reply || "Saya siapkan draft transaksinya.", message_kind: "text", action_draft_id: data.draftId, created_at: new Date().toISOString() };
+        newMsg = {
+          id: `ai-${Date.now()}`,
+          role: "assistant",
+          content: data.reply || "Siap, cek detailnya ya.",
+          message_kind: "text",
+          // The original message keeps the only card attachment. A patch only refreshes
+          // its shared draft state, so the follow-up reply cannot render a duplicate card.
+          action_draft_id: data.draftUpdated ? null : data.draftId,
+          created_at: new Date().toISOString(),
+        };
       } else {
         const requestFailed = !res.ok || Boolean(data.error);
-        newMsg = { id: `${requestFailed ? "err" : "ai"}-${Date.now()}`, role: "assistant", content: requestFailed ? "Douit sedang mengalami kendala. Pesanmu belum dapat diproses, silakan coba lagi." : data.reply || "Maaf, saya tidak mengerti.", message_kind: requestFailed ? "error" : "text", action_draft_id: null, created_at: new Date().toISOString() };
+        newMsg = { id: `${requestFailed ? "err" : "ai"}-${Date.now()}`, role: "assistant", content: requestFailed ? chatErrorCopy(data.errorKind, res.status) : data.reply || "Aku belum menangkap maksudnya. Bisa ceritakan sedikit lagi?", message_kind: requestFailed ? "error" : "text", action_draft_id: null, created_at: new Date().toISOString() };
       }
       setMessages(current => [...current, newMsg]);
       window.requestAnimationFrame(() => {
@@ -373,7 +398,7 @@ export default function ChatPage() {
         errorType: error instanceof Error ? error.name : "Error",
       }, "error");
       if (viewRevisionRef.current === originViewRevision) {
-        setMessages(current => [...current, { id: `err-${Date.now()}`, role: "assistant", content: "Terjadi kesalahan jaringan atau sistem.", message_kind: "text", action_draft_id: null, created_at: new Date().toISOString() }]);
+        setMessages(current => [...current, { id: `err-${Date.now()}`, role: "assistant", content: "Koneksinya terputus. Coba kirim lagi ya.", message_kind: "error", action_draft_id: null, created_at: new Date().toISOString() }]);
       }
     } finally {
       if (chatRequestControllerRef.current === requestController) {
@@ -386,11 +411,18 @@ export default function ChatPage() {
   async function reviewAction(actionId: string, decision: "approve" | "reject") {
     const supabase = createClient();
     const draft = drafts[actionId];
+    const actionSessionId = activeSessionIdRef.current;
     const approvalRequestId = crypto.randomUUID();
     const approvalStartedAt = performance.now();
 
-    if (!draft) {
-      logChatClient(approvalRequestId, "approval_failed", { reason: "draft_not_found" }, "error");
+    if (!draft || !actionSessionId) {
+      logChatClient(approvalRequestId, "approval_failed", {
+        reason: !draft ? "draft_not_found" : "session_not_found",
+      }, "error");
+      return;
+    }
+    if (draft.status !== "pending" && draft.status !== "failed") {
+      logChatClient(approvalRequestId, "approval_failed", { reason: "draft_not_pending" }, "warn");
       return;
     }
 
@@ -399,7 +431,8 @@ export default function ChatPage() {
       const { error: rejectError } = await supabase
         .from('chat_messages')
         .update({ draft_data: { ...draft.preview, status: 'rejected' } })
-        .eq('action_draft_id', actionId);
+        .eq('action_draft_id', actionId)
+        .eq('session_id', actionSessionId);
       const draftStatusUpdateMs = elapsedMs(draftStatusStartedAt);
 
       if (rejectError) {
@@ -531,7 +564,8 @@ export default function ChatPage() {
         const { error } = await supabase
           .from('chat_messages')
           .update({ draft_data: { ...draft.preview, status: 'approved' } })
-          .eq('action_draft_id', actionId);
+          .eq('action_draft_id', actionId)
+          .eq('session_id', actionSessionId);
         draftStatusUpdateMs = elapsedMs(startedAt);
         return error;
       })();
@@ -580,9 +614,8 @@ export default function ChatPage() {
   }
 
   function editAction(draft: ActionDraft) {
-    const prompt = `Ubah jumlah pengeluaran ini menjadi: `;
     setEditingDraft(draft);
-    setInput(prompt);
+    setInput("");
     window.requestAnimationFrame(() => {
       composerInput.current?.focus();
     });
@@ -830,13 +863,12 @@ export default function ChatPage() {
           {messages.map(message => {
             const draft = message.action_draft_id ? drafts[message.action_draft_id] : null;
             const showDraftPrompt = draft && (draft.status === "pending" || draft.status === "failed");
-            const displayedContent = showDraftPrompt ? PENDING_TRANSACTION_MESSAGE : message.content;
             return (
               <div className={`message-row ${message.role === "user" ? "user-message" : "assistant-message"} ${message.message_kind === "error" || message.id.startsWith("err-") ? "error-message" : ""}`} key={message.id}>
                 {message.role === "assistant" && <div className="small-avatar ai"><Bot size={16} /></div>}
                 <div className={`assistant-stack ${draft ? "wide" : ""}`}>
-                  {(!draft || showDraftPrompt) && <div className={`message-bubble ${message.role === "assistant" ? "rich" : ""}`}><p>{displayedContent}</p></div>}
-                  {draft && <DraftCard draft={draft} onDecision={reviewAction} onEdit={editAction} onOpenSaved={openSavedData} />}
+                  {(!draft || showDraftPrompt) && <div className={`message-bubble ${message.role === "assistant" ? "rich" : ""}`}><p>{message.content}</p></div>}
+                  {draft && <DraftCard draft={draft} disabled={sending} onDecision={reviewAction} onEdit={editAction} onOpenSaved={openSavedData} />}
                   <span className="message-meta">{message.role === "assistant" ? "Douit AI" : "Kamu"} · {messageTime(message.created_at)}</span>
                 </div>
               </div>
@@ -890,7 +922,7 @@ export default function ChatPage() {
                 }
               }}
               rows={1}
-              placeholder="Catat pengeluaran atau tanya keuangan..."
+              placeholder={editingDraft ? "Tulis bagian yang mau diubah..." : "Catat pengeluaran atau tanya keuangan..."}
               aria-label="Pesan untuk Douit AI"
               disabled={sending}
               onFocus={() => window.requestAnimationFrame(() => messagesEnd.current?.scrollIntoView({ block: "end" }))}
@@ -905,7 +937,7 @@ export default function ChatPage() {
   );
 }
 
-function DraftCard({ draft, onDecision, onEdit, onOpenSaved }: { draft: ActionDraft; onDecision: (id: string, decision: "approve" | "reject") => Promise<void>; onEdit: (draft: ActionDraft) => void; onOpenSaved: () => void }) {
+function DraftCard({ draft, disabled, onDecision, onEdit, onOpenSaved }: { draft: ActionDraft; disabled: boolean; onDecision: (id: string, decision: "approve" | "reject") => Promise<void>; onEdit: (draft: ActionDraft) => void; onOpenSaved: () => void }) {
   const [loading, setLoading] = useState(false);
 
   const handleDecision = async (id: string, decision: "approve" | "reject") => {
@@ -925,18 +957,22 @@ function DraftCard({ draft, onDecision, onEdit, onOpenSaved }: { draft: ActionDr
   const transactionDate = preview.transaction_date
     ? new Date(String(preview.transaction_date)).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" })
     : null;
+  const transactionTime = typeof preview.transaction_time === "string"
+    && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(preview.transaction_time)
+    ? preview.transaction_time
+    : null;
 
   if (draft.status === "approved") return (
     <div className="success-card">
       <span className="success-icon"><CircleCheck size={18} /></span>
-      <div><h3>Transaksi berhasil disimpan</h3><p>{merchant} · {money(preview.amount)}</p></div>
+      <div><h3>Transaksi berhasil dicatat</h3><p>{merchant} · {money(preview.amount)}</p></div>
       <button type="button" onClick={onOpenSaved}>Lihat transaksi <ArrowRight size={14} /></button>
     </div>
   );
   if (draft.status === "rejected") return (
     <div className="rejected-card">
       <span><X size={17} /></span>
-      <div><h3>Transaksi ditolak</h3><p>{merchant} tidak disimpan.</p></div>
+      <div><h3>Transaksi tidak disimpan</h3><p>Draft {merchant} sudah dibatalkan.</p></div>
     </div>
   );
 
@@ -967,7 +1003,10 @@ function DraftCard({ draft, onDecision, onEdit, onOpenSaved }: { draft: ActionDr
 
       <div className="draft-meta">
         <span><Bot size={13} /> Dibuat dari percakapan AI</span>
-        {transactionDate && <span><CalendarDays size={13} /> {transactionDate}</span>}
+        {transactionDate && (
+          <span><CalendarDays size={13} /> {transactionDate}{transactionTime ? ` · ${transactionTime} WIB` : ""}</span>
+        )}
+        {!transactionTime && <span>Jam opsional · tambahkan lewat chat jika perlu</span>}
       </div>
 
       {draft.status === "failed" && (
@@ -978,11 +1017,11 @@ function DraftCard({ draft, onDecision, onEdit, onOpenSaved }: { draft: ActionDr
       )}
 
       <div className="draft-actions">
-        <button className="button primary" disabled={loading} onClick={() => void handleDecision(draft.id, "approve")}>
+        <button className="button primary" disabled={loading || disabled} onClick={() => void handleDecision(draft.id, "approve")}>
           {loading ? <><span className="button-spinner" aria-hidden="true" /> Menyimpan...</> : <><Check size={16} /> {draft.status === "failed" ? "Coba simpan lagi" : "Setujui & simpan"}</>}
         </button>
-        <button className="button secondary" type="button" disabled={loading} onClick={() => onEdit(draft)}><PencilLine size={15} /><span className="desktop-action-copy">Edit lewat chat</span><span className="mobile-action-copy">Edit</span></button>
-        <button className="button quiet-danger" type="button" disabled={loading} onClick={() => void handleDecision(draft.id, "reject")}><Trash2 size={15} /> Tolak</button>
+        <button className="button secondary" type="button" disabled={loading || disabled} onClick={() => onEdit(draft)}><PencilLine size={15} /><span className="desktop-action-copy">Edit lewat chat</span><span className="mobile-action-copy">Edit</span></button>
+        <button className="button quiet-danger" type="button" disabled={loading || disabled} onClick={() => void handleDecision(draft.id, "reject")}><Trash2 size={15} /> Tolak</button>
       </div>
     </article>
   );

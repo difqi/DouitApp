@@ -1,13 +1,28 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { GoogleGenAI } from "@google/genai";
+import {
+  extractGeminiRetryAfterMs,
+  GeminiProviderHealthRegistry,
+  isRetryableGeminiFailure,
+  type GeminiCandidateSelection,
+  type GeminiFailureClass,
+  type GeminiHealthUpdate,
+} from "@/lib/gemini-health";
 
 export type GeminiAttemptTelemetry = {
   attempt: number;
+  selectedCandidateIndex: number;
   durationMs: number;
   success: boolean;
-  failureClass: "rate_limit" | "authentication" | "invalid_request" | "timeout" | "provider" | "network" | "unknown" | null;
+  failureClass: GeminiFailureClass;
   errorType: string | null;
   retryable: boolean | null;
+  skippedCandidateCount: number;
+  cooldownSkips: number;
+  rateLimitCooldownApplied: boolean;
+  retryAfterMs: number | null;
+  providerSelectionMs: number;
+  allCandidatesCooling: boolean;
 };
 
 type GeminiFailoverOptions = {
@@ -15,6 +30,8 @@ type GeminiFailoverOptions = {
   attemptTimeoutMs?: number;
   totalTimeoutMs?: number;
 };
+
+const providerHealth = new GeminiProviderHealthRegistry();
 
 export type GeminiAttemptContext = {
   abortSignal?: AbortSignal;
@@ -73,7 +90,7 @@ function getErrorStatus(error: any): number | null {
   return typeof value === "number" ? value : null;
 }
 
-function classifyGeminiError(error: any): GeminiAttemptTelemetry["failureClass"] {
+function classifyGeminiError(error: any): GeminiFailureClass {
   if (isRateLimitError(error)) return "rate_limit";
 
   const status = getErrorStatus(error);
@@ -95,13 +112,6 @@ function classifyGeminiError(error: any): GeminiAttemptTelemetry["failureClass"]
   return "unknown";
 }
 
-function isRetryableFailure(failureClass: GeminiAttemptTelemetry["failureClass"]): boolean {
-  return failureClass === "rate_limit"
-    || failureClass === "timeout"
-    || failureClass === "provider"
-    || failureClass === "network";
-}
-
 function getSafeErrorType(error: any): string {
   if (typeof error?.name === "string" && error.name.trim()) return error.name.trim().slice(0, 80);
   return "Error";
@@ -111,16 +121,27 @@ function reportAttempt(
   options: GeminiFailoverOptions,
   startedAt: number,
   attempt: number,
+  candidateIndex: number,
+  selection: GeminiCandidateSelection,
+  providerSelectionMs: number,
+  failureClass: GeminiFailureClass,
+  healthUpdate: GeminiHealthUpdate | null,
   error?: unknown,
 ) {
-  const failureClass = error === undefined ? null : classifyGeminiError(error);
   options.onAttempt?.({
     attempt,
+    selectedCandidateIndex: candidateIndex,
     durationMs: Math.round(performance.now() - startedAt),
     success: error === undefined,
     failureClass,
     errorType: error === undefined ? null : getSafeErrorType(error),
-    retryable: error === undefined ? null : isRetryableFailure(failureClass),
+    retryable: error === undefined ? null : isRetryableGeminiFailure(failureClass),
+    skippedCandidateCount: selection.skippedCandidateCount,
+    cooldownSkips: selection.cooldownSkips,
+    rateLimitCooldownApplied: healthUpdate?.rateLimitCooldownApplied || false,
+    retryAfterMs: healthUpdate?.retryAfterMs ?? null,
+    providerSelectionMs,
+    allCandidatesCooling: selection.allCandidatesCooling,
   });
 }
 
@@ -188,9 +209,12 @@ export async function executeWithGeminiFailover<T>(
   const totalStartedAt = performance.now();
   const attemptTimeoutMs = positiveDuration(options.attemptTimeoutMs);
   const totalTimeoutMs = positiveDuration(options.totalTimeoutMs);
+  const selectionStartedAt = performance.now();
+  const selection = providerHealth.select(keys);
+  const providerSelectionMs = Math.round(performance.now() - selectionStartedAt);
 
-  for (let i = 0; i < keys.length; i++) {
-    const key = keys[i];
+  for (let i = 0; i < selection.candidates.length; i++) {
+    const { apiKey: key, candidateIndex } = selection.candidates[i];
     const attemptStartedAt = performance.now();
     try {
       const genAI = new GoogleGenerativeAI(key);
@@ -200,12 +224,35 @@ export async function executeWithGeminiFailover<T>(
         deadline.timeoutMs,
         deadline.timeoutCode,
       );
-      reportAttempt(options, attemptStartedAt, i + 1);
+      providerHealth.recordSuccess(key);
+      reportAttempt(
+        options,
+        attemptStartedAt,
+        i + 1,
+        candidateIndex,
+        selection,
+        providerSelectionMs,
+        null,
+        null,
+      );
       return result;
     } catch (error: any) {
       lastError = error;
-      reportAttempt(options, attemptStartedAt, i + 1, error);
-      if (!isRetryableFailure(classifyGeminiError(error))) break;
+      const failureClass = classifyGeminiError(error);
+      const retryAfterMs = failureClass === "rate_limit" ? extractGeminiRetryAfterMs(error) : null;
+      const healthUpdate = providerHealth.recordFailure(key, failureClass, retryAfterMs);
+      reportAttempt(
+        options,
+        attemptStartedAt,
+        i + 1,
+        candidateIndex,
+        selection,
+        providerSelectionMs,
+        failureClass,
+        healthUpdate,
+        error,
+      );
+      if (!isRetryableGeminiFailure(failureClass)) break;
       if (totalTimeoutMs && performance.now() - totalStartedAt >= totalTimeoutMs) break;
     }
   }
@@ -230,9 +277,12 @@ export async function executeWithGenAIFailover<T>(
   const totalStartedAt = performance.now();
   const attemptTimeoutMs = positiveDuration(options.attemptTimeoutMs);
   const totalTimeoutMs = positiveDuration(options.totalTimeoutMs);
+  const selectionStartedAt = performance.now();
+  const selection = providerHealth.select(keys);
+  const providerSelectionMs = Math.round(performance.now() - selectionStartedAt);
 
-  for (let i = 0; i < keys.length; i++) {
-    const key = keys[i];
+  for (let i = 0; i < selection.candidates.length; i++) {
+    const { apiKey: key, candidateIndex } = selection.candidates[i];
     const attemptStartedAt = performance.now();
     try {
       const genAI = new GoogleGenAI({ apiKey: key });
@@ -242,12 +292,35 @@ export async function executeWithGenAIFailover<T>(
         deadline.timeoutMs,
         deadline.timeoutCode,
       );
-      reportAttempt(options, attemptStartedAt, i + 1);
+      providerHealth.recordSuccess(key);
+      reportAttempt(
+        options,
+        attemptStartedAt,
+        i + 1,
+        candidateIndex,
+        selection,
+        providerSelectionMs,
+        null,
+        null,
+      );
       return result;
     } catch (error: any) {
       lastError = error;
-      reportAttempt(options, attemptStartedAt, i + 1, error);
-      if (!isRetryableFailure(classifyGeminiError(error))) break;
+      const failureClass = classifyGeminiError(error);
+      const retryAfterMs = failureClass === "rate_limit" ? extractGeminiRetryAfterMs(error) : null;
+      const healthUpdate = providerHealth.recordFailure(key, failureClass, retryAfterMs);
+      reportAttempt(
+        options,
+        attemptStartedAt,
+        i + 1,
+        candidateIndex,
+        selection,
+        providerSelectionMs,
+        failureClass,
+        healthUpdate,
+        error,
+      );
+      if (!isRetryableGeminiFailure(failureClass)) break;
       if (totalTimeoutMs && performance.now() - totalStartedAt >= totalTimeoutMs) break;
     }
   }
