@@ -1,13 +1,10 @@
 import { sendFonnteMessageWithFailover } from "@/lib/fonnte";
-import { createClient } from "@supabase/supabase-js";
+import { resolveSystemCategory, SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 function getSupabaseClient(providedClient?: any) {
   if (providedClient) return providedClient;
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { auth: { persistSession: false, autoRefreshToken: false } }
-  );
+  return createAdminClient();
 }
 
 /**
@@ -33,13 +30,14 @@ export async function checkAndSendOverBudgetAlert(userId: string, customSupabase
     }).format(new Date());
 
     // 1. Fetch system 'Nabung' category to exclude savings deposits
-    const { data: nabungCategory } = await supabase
-      .from('categories')
-      .select('id')
-      .eq('name', 'Nabung')
-      .maybeSingle();
-
-    const nabungCategoryId = nabungCategory?.id;
+    const nabungCategory = await resolveSystemCategory({
+      supabase,
+      name: SYSTEM_CATEGORY_NAMES.SAVING,
+      type: "EXPENSE",
+    });
+    const nabungCategoryId = nabungCategory.status === "matched"
+      ? nabungCategory.category.id
+      : undefined;
 
     // 2. Fetch total expenses recorded today for user
     const { data: todayTxs, error: txErr } = await supabase

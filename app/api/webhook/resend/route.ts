@@ -5,6 +5,15 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import crypto from "crypto";
 import { normalizeSumberDana } from "@/utils/bankAliases";
+import {
+  listCategoriesForUser,
+  getKnownSystemCategoryName,
+  resolveCategoryFromRows,
+  resolveCategoryIdFromRows,
+  resolveSystemCategoryFromRows,
+  SYSTEM_CATEGORY_NAMES,
+  type TransactionType,
+} from "@/lib/categories";
 
 import { sendFonnteMessageWithFailover, generateWaProgressBar } from "@/lib/fonnte";
 import { checkAndSendOverBudgetAlert } from "@/lib/savingsAlert";
@@ -293,8 +302,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, note: "Already processed" });
     }
 
-    const { data: categories } = await supabase.from('categories').select('id, name').or(`user_id.eq.${profile.id},is_system.eq.true`);
-    const categoryNames = categories ? categories.map(c => c.name).join(", ") : "Lain-lain";
+    const categories = await listCategoriesForUser(supabase, profile.id);
+    const categoryNames = categories.length > 0
+      ? categories.map((category) => category.name).join(", ")
+      : SYSTEM_CATEGORY_NAMES.OTHER;
 
     const fullEmailContent = `
       From: ${emailData.from || payload.from || ''}
@@ -318,11 +329,15 @@ export async function POST(req: NextRequest) {
     textResponse = textResponse.replace(/^```json\s*/, "").replace(/\s*```$/, "").trim();
     const parsed = JSON.parse(textResponse);
     
-    console.log("=== AI PARSED DATA ===");
-    console.log(JSON.stringify(parsed, null, 2));
-
     if (parsed.is_transaction_notification && parsed.transaction_details) {
       const tx = parsed.transaction_details;
+      const transactionType: TransactionType | null = tx.type === 'INCOME' || tx.type === 'EXPENSE'
+        ? tx.type
+        : null;
+
+      if (!transactionType) {
+        return NextResponse.json({ error: "Invalid transaction type" }, { status: 422 });
+      }
 
       // Domain Fallback for empty or unknown sumber_dana
       if (!tx.sumber_dana || tx.sumber_dana.toLowerCase().includes("tidak diketahui")) {
@@ -367,25 +382,29 @@ export async function POST(req: NextRequest) {
         console.error("Error checking active goals for transaction matching:", err);
       }
 
+      // Nabung is currently an EXPENSE-only system category. Do not create a
+      // category/type mismatch if an inbound income happens to match goal text.
+      if (matchedGoal && transactionType !== 'EXPENSE') matchedGoal = null;
+
       if (matchedGoal) {
         console.log(`🎯 Savings Goal Matched! Goal: "${matchedGoal.title}" (${matchedGoal.id}) matched with incoming "${tx.merchant}"`);
         // Assign system "Nabung" category
-        const { data: nabungCategory } = await supabase
-          .from('categories')
-          .select('id')
-          .eq('name', 'Nabung')
-          .single();
+        const nabungCategory = resolveSystemCategoryFromRows(
+          categories,
+          SYSTEM_CATEGORY_NAMES.SAVING,
+          'EXPENSE',
+        );
 
-        if (nabungCategory) {
-          categoryId = nabungCategory.id;
+        if (nabungCategory.status === 'matched') {
+          categoryId = nabungCategory.category.id;
         } else {
           // Fallback to "Lain-lain" if Nabung category doesn't exist yet
-          const { data: fallbackCategory } = await supabase
-            .from('categories')
-            .select('id')
-            .eq('name', 'Lain-lain')
-            .single();
-          if (fallbackCategory) categoryId = fallbackCategory.id;
+          const fallbackCategory = resolveSystemCategoryFromRows(
+            categories,
+            SYSTEM_CATEGORY_NAMES.OTHER,
+            'EXPENSE',
+          );
+          if (fallbackCategory.status === 'matched') categoryId = fallbackCategory.category.id;
         }
 
         // Standardize transaction title/merchant and notes to "Nabung {goal.title}"
@@ -409,33 +428,49 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        if (matchedRule) {
+        const matchedRuleCategory = matchedRule?.category_id
+          ? resolveCategoryIdFromRows({
+              categories,
+              userId: profile.id,
+              categoryId: matchedRule.category_id,
+              type: transactionType,
+            })
+          : null;
+
+        if (matchedRule && matchedRuleCategory?.status === 'matched') {
           // Bypass AI category and force approve
-          categoryId = matchedRule.category_id;
+          categoryId = matchedRuleCategory.category.id;
           status = 'APPROVED';
           if (matchedRule.keyword) tx.notes = matchedRule.keyword;
           if (matchedRule.sumber_dana) tx.sumber_dana = matchedRule.sumber_dana;
         } else {
           // 2. Lookup Category ID from AI's category string
-          const { data: categoryRow } = await supabase
-            .from('categories')
-            .select('id')
-            .eq('name', tx.category)
-            .single();
+          const requestedCategoryName = String(tx.category || '');
+          const knownSystemName = getKnownSystemCategoryName(requestedCategoryName);
+          const categoryRow = knownSystemName
+            ? resolveSystemCategoryFromRows(categories, knownSystemName, transactionType)
+            : resolveCategoryFromRows({
+                categories,
+                userId: profile.id,
+                name: requestedCategoryName,
+                type: transactionType,
+              });
           
-          if (categoryRow) {
-            categoryId = categoryRow.id;
+          if (categoryRow.status === 'matched') {
+            categoryId = categoryRow.category.id;
           } else {
             // Fallback to "Lain-lain"
-            const { data: fallbackCategory } = await supabase
-              .from('categories')
-              .select('id')
-              .eq('name', 'Lain-lain')
-              .single();
-            if (fallbackCategory) categoryId = fallbackCategory.id;
+            const fallbackCategory = resolveSystemCategoryFromRows(
+              categories,
+              SYSTEM_CATEGORY_NAMES.OTHER,
+              transactionType,
+            );
+            if (fallbackCategory.status === 'matched') categoryId = fallbackCategory.category.id;
           }
         }
       }
+
+      if (!categoryId) status = 'PENDING_APPROVAL';
 
       // Fetch user's payment accounts for matching
       const { data: accounts } = await supabase
@@ -494,7 +529,7 @@ export async function POST(req: NextRequest) {
       const txPayload = {
         user_id: profile.id,
         amount: tx.amount,
-        type: tx.type,
+        type: transactionType,
         merchant: tx.merchant,
         category_id: categoryId,
         sumber_dana: rawSumberDana || "Tunai", // Preserve raw source name
@@ -509,17 +544,19 @@ export async function POST(req: NextRequest) {
       const payloads = [txPayload];
 
       if (tx.admin_fee && tx.admin_fee > 0) {
-        const { data: adminCat } = await supabase
-          .from('categories')
-          .select('id')
-          .eq('name', 'Biaya Admin')
-          .single();
+        const adminCat = resolveSystemCategoryFromRows(
+          categories,
+          SYSTEM_CATEGORY_NAMES.ADMIN_FEE,
+          'EXPENSE',
+        );
 
         payloads.push({
           ...txPayload,
           amount: tx.admin_fee,
+          type: 'EXPENSE',
           merchant: "Biaya Admin " + (rawSumberDana || "Bank"),
-          category_id: adminCat?.id || null,
+          category_id: adminCat.status === 'matched' ? adminCat.category.id : null,
+          status: adminCat.status === 'matched' ? txPayload.status : 'PENDING_APPROVAL',
           idempotency_key: `${messageId}-adminfee`
         });
       }
@@ -531,9 +568,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Failed to save transaction" }, { status: 500 });
       }
       
-      console.log('✅ Successfully processed transaction from webhook:', parsed);
+      console.log('[Resend Webhook] Transaction processed');
 
-      if (tx.type === 'EXPENSE' && status === 'APPROVED') {
+      if (transactionType === 'EXPENSE' && status === 'APPROVED') {
         checkAndSendOverBudgetAlert(profile.id, supabase).catch(err => 
           console.error("Over budget check failed in resend webhook:", err)
         );

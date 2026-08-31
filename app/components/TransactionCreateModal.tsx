@@ -2,6 +2,7 @@
 
 import { CircleDollarSign, X } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { triggerBudgetAlertCheck } from "@/app/actions/savings-alert";
 import { BankLogo } from "@/app/components/BankLogo";
@@ -10,8 +11,9 @@ import { CustomDatePicker } from "@/app/components/ui/CustomDatePicker";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
 import { useDouit } from "@/app/providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
+import { SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
 
-type TransactionCategory = { id: string; name: string };
+type TransactionCategory = { id: string; name: string; type: string };
 
 type TransactionCreateModalProps = {
   open: boolean;
@@ -64,8 +66,8 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
     const supabase = createClient();
     void supabase
       .from("categories")
-      .select("id, name")
-      .or(`user_id.eq.${user.id},is_system.eq.true,user_id.is.null`)
+      .select("id, name, type")
+      .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
       .then(({ data }) => {
         if (data) setFetchedCategories(data);
       });
@@ -73,16 +75,20 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
 
   const categories = providedCategories ?? fetchedCategories;
   const categoryOptions = useMemo(() => categories
-    .filter((category) => category.name !== "Nabung")
+    .filter((category) =>
+      category.name !== SYSTEM_CATEGORY_NAMES.SAVING && category.type.toUpperCase() === type,
+    )
     .map((category) => ({
       value: category.id,
       label: category.name,
       icon: <CategoryIcon category={category.name} />,
-    })), [categories]);
+    })), [categories, type]);
 
   useEffect(() => {
-    if (!open || categoryId || categoryOptions.length === 0) return;
-    setCategoryId(categoryOptions[0].value);
+    if (!open || categoryOptions.length === 0) return;
+    if (!categoryOptions.some((category) => category.value === categoryId)) {
+      setCategoryId(categoryOptions[0].value);
+    }
   }, [categoryId, categoryOptions, open]);
 
   async function createTransaction(event: FormEvent<HTMLFormElement>) {
@@ -95,6 +101,7 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
     let selectedCategoryId = String(data.get("category_id"));
     let selectedSource = String(data.get("sumber_dana") || "Tunai");
     let notes: string | null = null;
+    const transactionType = String(data.get("type")) as "INCOME" | "EXPENSE";
 
     const { data: rule } = await supabase
       .from("merchant_rules")
@@ -103,10 +110,36 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
       .eq("merchant_name", merchantName)
       .single();
 
-    if (rule) {
+    const ruleCategory = rule?.category_id
+      ? categories.find((category) =>
+          category.id === rule.category_id && category.type.toUpperCase() === transactionType,
+        )
+      : null;
+
+    if (rule && ruleCategory) {
       if (rule.category_id) selectedCategoryId = rule.category_id;
       if (rule.keyword) notes = rule.keyword;
       if (rule.sumber_dana) selectedSource = rule.sumber_dana;
+    }
+
+    const selectedCategory = categories.find((category) =>
+      category.id === selectedCategoryId && category.type.toUpperCase() === transactionType,
+    );
+    if (!selectedCategory) {
+      toast.error("Kategori tidak valid untuk tipe transaksi ini.");
+      return;
+    }
+
+    const { data: safeCategory, error: categoryError } = await supabase
+      .from("categories")
+      .select("id")
+      .eq("id", selectedCategoryId)
+      .eq("type", transactionType)
+      .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
+      .maybeSingle();
+    if (categoryError || !safeCategory) {
+      toast.error("Kategori tidak dapat digunakan.");
+      return;
     }
 
     const rawDate = String(data.get("date") || "");
@@ -114,7 +147,7 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
     const transaction = {
       user_id: user.id,
       amount: Number(data.get("amount")),
-      type: String(data.get("type")) as "INCOME" | "EXPENSE",
+      type: transactionType,
       merchant: merchantName,
       category_id: selectedCategoryId,
       sumber_dana: selectedSource,
@@ -128,7 +161,7 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
     await supabase.from("transactions").insert(transaction);
     onClose();
     if (transaction.type === "EXPENSE") {
-      triggerBudgetAlertCheck(user.id).catch(console.error);
+      triggerBudgetAlertCheck().catch(console.error);
     }
   }
 

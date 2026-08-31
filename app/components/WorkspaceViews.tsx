@@ -34,6 +34,7 @@ import { CustomSelect } from "@/app/components/ui/CustomSelect";
 import { CustomDatePicker } from "@/app/components/ui/CustomDatePicker";
 import { CategoryIcon } from "@/app/components/CategoryIcon";
 import { TransactionCreateModal, transactionSourceNames } from "@/app/components/TransactionCreateModal";
+import { SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
 
 const formatMoney = (value: number | string) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value));
 const formatDate = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" });
@@ -304,7 +305,7 @@ import { isAccountMatch } from "../../utils/bankAliases";
 
 let cachedWorkspaceTx: any[] = [];
 let cachedWorkspaceTodayTx: any[] = [];
-let cachedCategories: {id: string, name: string}[] = [];
+let cachedCategories: {id: string, name: string, type: string}[] = [];
 let cachedPrimaryAccount: any = null;
 
 const toLocalYYYYMMDD = (d: Date) => {
@@ -385,7 +386,7 @@ export function TransactionsView() {
   const [todayActivityRows, setTodayActivityRows] = useState<Transaction[]>(cachedWorkspaceTodayTx);
   const [isLoading, setIsLoading] = useState(cachedWorkspaceTx.length === 0);
   const [loadError, setLoadError] = useState(false);
-  const [categories, setCategories] = useState<{id: string, name: string}[]>(cachedCategories);
+  const [categories, setCategories] = useState<{id: string, name: string, type: string}[]>(cachedCategories);
   const [primaryAccount, setPrimaryAccount] = useState<any>(cachedPrimaryAccount);
   const { user } = useDouit();
   const listScrollPositionRef = useRef(0);
@@ -464,7 +465,7 @@ export function TransactionsView() {
     
     fetchTransactions();
     
-    supabase.from('categories').select('id, name').or(`user_id.eq.${user.id},is_system.eq.true,user_id.is.null`).then(({data}) => {
+    supabase.from('categories').select('id, name, type').or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`).then(({data}) => {
       if (data) {
         cachedCategories = data;
         setCategories(data);
@@ -522,11 +523,30 @@ export function TransactionsView() {
   async function approveTransaction(row: any) {
     if (!user) return;
     const supabase = createClient();
-    
+
+    const category = categories.find((item) =>
+      item.id === row.category_id && item.type.toUpperCase() === row.type,
+    );
+    if (!category) {
+      toast.error("Pilih kategori yang valid sebelum menyetujui transaksi.");
+      return;
+    }
+    const { data: safeCategory, error: categoryError } = await supabase
+      .from('categories')
+      .select('id')
+      .eq('id', category.id)
+      .eq('type', row.type)
+      .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
+      .maybeSingle();
+    if (categoryError || !safeCategory) {
+      toast.error("Kategori tidak dapat digunakan.");
+      return;
+    }
+
     // Update status to APPROVED
     await supabase.from('transactions').update({ status: 'APPROVED' }).eq('id', row.id);
     if (row.type === 'EXPENSE' && user) {
-      triggerBudgetAlertCheck(user.id).catch(console.error);
+      triggerBudgetAlertCheck().catch(console.error);
     }
   }
 
@@ -541,6 +561,26 @@ export function TransactionsView() {
     const newNotes = String(data.get("notes") || "");
     const shouldSaveRule = data.get("save_rule") === "on";
     const shouldRetroactive = data.get("retroactive") === "on";
+
+    const selectedCategory = categories.find((category) =>
+      category.id === newCategoryId && category.type.toUpperCase() === editRow.type,
+    );
+    if (!selectedCategory) {
+      toast.error("Kategori tidak valid untuk tipe transaksi ini.");
+      return;
+    }
+
+    const { data: safeCategory, error: categoryError } = await supabase
+      .from('categories')
+      .select('id')
+      .eq('id', newCategoryId)
+      .eq('type', editRow.type)
+      .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
+      .maybeSingle();
+    if (categoryError || !safeCategory) {
+      toast.error("Kategori tidak dapat digunakan.");
+      return;
+    }
     
     await supabase.from('transactions').update({ 
       category_id: newCategoryId,
@@ -664,7 +704,7 @@ export function TransactionsView() {
   };
 
   const categoryOptions = categories
-    .filter(c => c.name !== 'Nabung')
+    .filter(c => c.name !== SYSTEM_CATEGORY_NAMES.SAVING && (!editRow || c.type.toUpperCase() === editRow.type))
     .map(c => ({ value: c.id, label: c.name, icon: <CategoryIcon category={c.name} /> }));
 
   const sumberDanaOptions = transactionSourceNames.map((source) => ({

@@ -26,6 +26,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useDouit } from "../../providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
 import { triggerBudgetAlertCheck } from "@/app/actions/savings-alert";
+import { SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
 import { BankLogo } from "@/app/components/BankLogo";
 import { CategoryIcon } from "@/app/components/CategoryIcon";
 
@@ -493,13 +494,44 @@ export default function ChatPage() {
       }
 
       txPayload.user_id = user.id;
+      if (!txPayload.category_id) {
+        setDrafts(prev => ({ ...prev, [actionId]: { ...prev[actionId], status: "failed" } }));
+        logChatClient(approvalRequestId, "approval_failed", {
+          reason: "category_validation",
+          authMs,
+          totalMs: elapsedMs(approvalStartedAt),
+          errorCode: null,
+        }, "error");
+        return;
+      }
+      {
+        const { data: safeCategory, error: categoryError } = await supabase
+          .from('categories')
+          .select('id')
+          .eq('id', txPayload.category_id)
+          .eq('type', txPayload.type)
+          .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
+          .maybeSingle();
+        if (categoryError || !safeCategory) {
+          setDrafts(prev => ({ ...prev, [actionId]: { ...prev[actionId], status: "failed" } }));
+          logChatClient(approvalRequestId, "approval_failed", {
+            reason: "category_validation",
+            authMs,
+            totalMs: elapsedMs(approvalStartedAt),
+            errorCode: categoryError?.code || null,
+          }, "error");
+          return;
+        }
+      }
       const payloads = [txPayload];
 
       if (Number(draft.preview.admin_fee) > 0) {
         const { data: feeCategory, error: feeCategoryError } = await supabase
           .from('categories')
           .select('id')
-          .eq('name', 'Biaya Admin')
+          .eq('name', SYSTEM_CATEGORY_NAMES.ADMIN_FEE)
+          .eq('is_system', true)
+          .is('user_id', null)
           .maybeSingle();
         if (feeCategoryError) {
           logChatClient(approvalRequestId, "admin_fee_category_lookup_failed", {
@@ -509,8 +541,10 @@ export default function ChatPage() {
         payloads.push({
           ...txPayload,
           amount: Number(draft.preview.admin_fee),
+          type: 'EXPENSE',
           merchant: `Biaya Admin ${txPayload.sumber_dana}`,
           category_id: feeCategory?.id || null,
+          status: feeCategory ? 'APPROVED' : 'PENDING_APPROVAL',
           idempotency_key: `chat:${actionId}:admin-fee`,
         });
       }
@@ -533,7 +567,7 @@ export default function ChatPage() {
       }
 
       if (txPayload.type === 'EXPENSE') {
-        triggerBudgetAlertCheck(user.id)
+        triggerBudgetAlertCheck()
           .then((result) => {
             if (!result.success) {
               logChatClient(approvalRequestId, "budget_alert_failed", { errorType: "ActionFailed" }, "warn");

@@ -1,23 +1,28 @@
 import { NextResponse } from 'next/server';
 import { checkAndSendOverBudgetAlert } from '@/lib/savingsAlert';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  { auth: { persistSession: false, autoRefreshToken: false } }
-);
+import { authorizeBudgetAlertUser } from '@/lib/budget-alert-authorization';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { createClient } from '@/lib/supabase/server';
 
 export async function POST(req: Request) {
   try {
-    const body: any = await req.json().catch(() => ({}));
-    const userId = body?.userId;
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    const body: unknown = await req.json().catch(() => ({}));
+    const requestedUserId = body && typeof body === 'object' && 'userId' in body
+      ? (body as { userId?: unknown }).userId
+      : undefined;
+    const authorization = authorizeBudgetAlertUser(
+      authError ? null : user?.id,
+      requestedUserId,
+    );
 
-    if (!userId) {
-      return NextResponse.json({ success: false, error: 'userId is required' }, { status: 400 });
+    if (!authorization.authorized) {
+      const error = authorization.status === 401 ? 'Unauthorized' : 'Forbidden';
+      return NextResponse.json({ success: false, error }, { status: authorization.status });
     }
 
-    await checkAndSendOverBudgetAlert(userId, supabaseAdmin);
+    await checkAndSendOverBudgetAlert(authorization.userId, createAdminClient());
     return NextResponse.json({ success: true });
   } catch (err: any) {
     console.error('[API: check-budget-alerts] Error:', err?.message || err);

@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { useDouit } from "@/app/providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
+import { SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/app/components/ui/ConfirmDialog";
 import { CustomDatePicker } from "@/app/components/ui/CustomDatePicker";
@@ -220,7 +221,9 @@ export default function NabungPage() {
         supabase
           .from('categories')
           .select('id')
-          .eq('name', 'Nabung')
+          .eq('name', SYSTEM_CATEGORY_NAMES.SAVING)
+          .eq('is_system', true)
+          .is('user_id', null)
           .maybeSingle(),
         supabase
           .from('notifications')

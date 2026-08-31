@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { ConfirmDialog } from "@/app/components/ui/ConfirmDialog";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
 import { CATEGORY_ICON_OPTIONS, CategoryIcon, resolveCategoryColor } from "@/app/components/CategoryIcon";
+import { SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
 
 type SettingsTab = 'email' | 'profile' | 'rules';
 
@@ -202,11 +203,11 @@ export default function SettingsPage() {
   const fetchRulesAndCategories = async () => {
     setIsFetchingRules(true);
     const supabase = createClient();
-    const { data: cats } = await supabase.from('categories').select('*, category_budgets(amount)').or(`user_id.eq.${user?.id},is_system.eq.true,user_id.is.null`).order('is_system', { ascending: false });
+    const { data: cats } = await supabase.from('categories').select('id, user_id, name, type, icon_name, color_hex, is_system, created_at, category_budgets(amount)').or(`user_id.eq.${user?.id},and(is_system.eq.true,user_id.is.null)`).order('is_system', { ascending: false });
     if (cats) {
-      setCategories(cats.filter((c: any) => c.name !== 'Nabung').map((c: any) => ({
+      setCategories(cats.filter((c: any) => c.name !== SYSTEM_CATEGORY_NAMES.SAVING).map((c: any) => ({
         ...c,
-        budget_limit: c.category_budgets && c.category_budgets.length > 0 ? c.category_budgets[0].amount : (c.budget_limit || 0)
+        budget_limit: c.category_budgets && c.category_budgets.length > 0 ? c.category_budgets[0].amount : 0
       })));
     }
 
@@ -224,13 +225,36 @@ export default function SettingsPage() {
     if (!user || !confirmDeleteCatId) return;
     const id = confirmDeleteCatId;
     const supabase = createClient();
-    const lainLain = categories.find(c => c.name === 'Lain-lain');
-    
-    if (lainLain) {
-      await supabase.from('transactions').update({ category_id: lainLain.id }).eq('category_id', id);
+    const category = categories.find(c =>
+      c.id === id && c.user_id === user.id && c.is_system === false,
+    );
+    const lainLain = categories.find(c =>
+      c.name === SYSTEM_CATEGORY_NAMES.OTHER && c.is_system === true && c.user_id === null,
+    );
+
+    if (!category || !lainLain) {
+      setConfirmDeleteCatId(null);
+      toast.error("Kategori tidak dapat dihapus dengan aman.");
+      return;
     }
-    
-    const { error } = await supabase.from('categories').delete().eq('id', id);
+
+    const { error: reassignError } = await supabase
+      .from('transactions')
+      .update({ category_id: lainLain.id })
+      .eq('user_id', user.id)
+      .eq('category_id', id);
+    if (reassignError) {
+      setConfirmDeleteCatId(null);
+      toast.error("Gagal memindahkan transaksi sebelum kategori dihapus.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from('categories')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .eq('is_system', false);
     setConfirmDeleteCatId(null);
     if (error) {
       toast.error("Gagal menghapus kategori: " + error.message);
@@ -242,16 +266,17 @@ export default function SettingsPage() {
 
   const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !newCatName) return;
+    const categoryName = newCatName.trim();
+    const categoryType = newCatType === 'INCOME' ? 'INCOME' : 'EXPENSE';
+    if (!user || !categoryName) return;
     const supabase = createClient();
     const { data: newCat, error } = await supabase.from('categories').insert({
       user_id: user.id,
-      name: newCatName,
-      type: newCatType,
+      name: categoryName,
+      type: categoryType,
       icon_name: newCatIcon,
       color_hex: newCatColor,
-      is_system: false,
-      budget_limit: Number(newCatBudget) || 0
+      is_system: false
     }).select().single();
 
     if (error) {
@@ -294,10 +319,20 @@ export default function SettingsPage() {
     e.preventDefault();
     if (!user || !editCatId) return;
     const supabase = createClient();
+    const category = categories.find((item) =>
+      item.id === editCatId && item.user_id === user.id && item.is_system === false,
+    );
+    const categoryName = editCatName.trim();
+    if (!category || !categoryName) {
+      toast.error("Kategori tidak dapat diperbarui.");
+      return;
+    }
     const { error: categoryError } = await supabase.from('categories').update({
-      budget_limit: Number(editCatBudget) || 0,
-      name: editCatName
-    }).eq('id', editCatId);
+      name: categoryName
+    })
+      .eq('id', editCatId)
+      .eq('user_id', user.id)
+      .eq('is_system', false);
 
     if (categoryError) {
       toast.error("Gagal menyimpan kategori: " + categoryError.message);

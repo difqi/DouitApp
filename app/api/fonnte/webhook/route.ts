@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { sendFonnteMessage, getWaProgressBarBlocks } from '@/lib/fonnte';
 import { calculateGoalMetrics, SavingsGoal as SavingsGoalCalc } from '@/lib/savings-calc';
 import { isAccountMatch } from '@/utils/bankAliases';
+import { resolveSystemCategory, SYSTEM_CATEGORY_NAMES } from '@/lib/categories';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 interface FonnteWebhookPayload {
   sender?: string;
@@ -12,20 +13,10 @@ interface FonnteWebhookPayload {
   [key: string]: any;
 }
 
-// Instantiate Supabase Admin Client using Service Role Key to bypass RLS for unauthenticated webhooks
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  }
-);
-
 export async function POST(req: Request) {
   try {
+    // The sender-to-user ownership lookup below validates the identity used by all admin mutations.
+    const supabaseAdmin = createAdminClient();
     let sender = '';
     let messageText = '';
 
@@ -362,28 +353,32 @@ Format: Nabung ${displayKeyword} ${amount} pakai [nama_rekening]`
 
       // 4. Persist transaction record into transactions table
       try {
-        const { data: nabungCategory } = await supabaseAdmin
-          .from('categories')
-          .select('id')
-          .eq('name', 'Nabung')
-          .maybeSingle();
-
-        const { error: txError } = await supabaseAdmin.from('transactions').insert({
-          user_id: userId,
-          amount: amount,
+        const nabungCategory = await resolveSystemCategory({
+          supabase: supabaseAdmin,
+          name: SYSTEM_CATEGORY_NAMES.SAVING,
           type: 'EXPENSE',
-          merchant: goal.title || 'Nabung Target',
-          category_id: nabungCategory?.id || null,
-          status: 'APPROVED',
-          source: 'MANUAL_CHAT',
-          sumber_dana: recordedSumberDana,
-          confidence_score: 1.0,
-          notes: `Setoran tabungan via WhatsApp untuk target: ${goal.title} (${recordedSumberDana})`,
-          transaction_date: new Date().toISOString(),
         });
 
-        if (txError) {
-          console.error('[Fonnte Webhook] Failed to insert transactions record:', txError);
+        if (nabungCategory.status !== 'matched') {
+          console.error('[Fonnte Webhook] System savings category resolution failed');
+        } else {
+          const { error: txError } = await supabaseAdmin.from('transactions').insert({
+            user_id: userId,
+            amount: amount,
+            type: 'EXPENSE',
+            merchant: goal.title || 'Nabung Target',
+            category_id: nabungCategory.category.id,
+            status: 'APPROVED',
+            source: 'MANUAL_CHAT',
+            sumber_dana: recordedSumberDana,
+            confidence_score: 1.0,
+            notes: `Setoran tabungan via WhatsApp untuk target: ${goal.title} (${recordedSumberDana})`,
+            transaction_date: new Date().toISOString(),
+          });
+
+          if (txError) {
+            console.error('[Fonnte Webhook] Failed to insert transactions record');
+          }
         }
       } catch (txErr) {
         console.error('[Fonnte Webhook] Error recording transaction:', txErr);

@@ -269,6 +269,7 @@ export default function LaporanPage() {
   
   const [editBudgetModalOpen, setEditBudgetModalOpen] = useState(false);
   const [editingCatName, setEditingCatName] = useState("");
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editingBudget, setEditingBudget] = useState("");
   
   const { user, business, membership } = useDouit();
@@ -302,7 +303,7 @@ export default function LaporanPage() {
       try {
         const [accRes, catRes, mrRes, txRes] = await Promise.all([
           supabase.from('payment_accounts').select('*').eq('user_id', user.id),
-          supabase.from('categories').select('id, name, type, is_system, budget_limit, user_id, category_budgets(amount)').or(`user_id.eq.${user.id},is_system.eq.true,user_id.is.null`),
+          supabase.from('categories').select('id, name, type, is_system, user_id, category_budgets(amount)').or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`),
           supabase.from('user_merchant_rules').select('*').eq('user_id', user.id),
           supabase.from('transactions').select(`*, categories(name)`).eq('user_id', user.id).eq('status', 'APPROVED')
         ]);
@@ -314,7 +315,7 @@ export default function LaporanPage() {
         if (catRes.data) {
           const formattedCats = catRes.data.map((c: any) => ({
             ...c,
-            budget_limit: c.category_budgets && c.category_budgets.length > 0 ? c.category_budgets[0].amount : (c.budget_limit || 0)
+            budget_limit: c.category_budgets && c.category_budgets.length > 0 ? c.category_budgets[0].amount : 0
           }));
           cachedLaporanCategories = formattedCats;
           setCategories(formattedCats);
@@ -361,7 +362,8 @@ export default function LaporanPage() {
     // Category Stats
     const catName = (t.categories as any)?.name || 'Lain-lain';
     if (!categoryStats[catName]) {
-      let dbCat = categories.find(c => c.name.toLowerCase() === catName.toLowerCase() && c.user_id === user?.id);
+      let dbCat = categories.find(c => c.id === t.category_id);
+      if (!dbCat) dbCat = categories.find(c => c.name.toLowerCase() === catName.toLowerCase() && c.user_id === user?.id);
       if (!dbCat) dbCat = categories.find(c => c.name.toLowerCase() === catName.toLowerCase());
       
       const limit = dbCat?.budget_limit || 0;
@@ -702,6 +704,7 @@ export default function LaporanPage() {
     if (isMerchant) {
       const mr = merchantRules.find(r => r.merchant_pattern.toLowerCase() === name.toLowerCase());
       setEditingCatName(name);
+      setEditingCategoryId(null);
       setEditingBudget(mr?.budget_limit ? mr.budget_limit.toString() : "");
       setEditingType("merchant");
       setEditBudgetModalOpen(true);
@@ -711,9 +714,11 @@ export default function LaporanPage() {
       
       if (dbCat) {
         setEditingCatName(dbCat.name);
+        setEditingCategoryId(dbCat.id);
         setEditingBudget(dbCat.budget_limit ? dbCat.budget_limit.toString() : "");
       } else {
         setEditingCatName(name);
+        setEditingCategoryId(null);
         setEditingBudget("");
       }
       setEditingType("category");
@@ -739,7 +744,7 @@ export default function LaporanPage() {
     
     try {
       if (editingType === "category") {
-        const targetCat = categories.find(c => c.name.toLowerCase() === editingCatName.toLowerCase());
+        const targetCat = categories.find(c => c.id === editingCategoryId);
         if (!targetCat) throw new Error("Kategori tidak ditemukan");
 
         const { error } = await supabase.from('category_budgets').upsert({
@@ -751,11 +756,11 @@ export default function LaporanPage() {
         if (error) throw error;
         
         // Re-fetch to ensure sync and close modal
-        const { data: catData } = await supabase.from('categories').select('id, name, type, is_system, budget_limit, user_id, category_budgets(amount)').or(`user_id.eq.${activeUserId},is_system.eq.true,user_id.is.null`);
+        const { data: catData } = await supabase.from('categories').select('id, name, type, is_system, user_id, category_budgets(amount)').or(`user_id.eq.${activeUserId},and(is_system.eq.true,user_id.is.null)`);
         if (catData) {
           const formatted = catData.map((c: any) => ({
             ...c,
-            budget_limit: c.category_budgets && c.category_budgets.length > 0 ? c.category_budgets[0].amount : (c.budget_limit || 0)
+            budget_limit: c.category_budgets && c.category_budgets.length > 0 ? c.category_budgets[0].amount : 0
           }));
           cachedLaporanCategories = formatted;
           setCategories(formatted);

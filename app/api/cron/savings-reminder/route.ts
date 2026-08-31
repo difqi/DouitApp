@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { sendFonnteMessageWithFailover } from '@/lib/fonnte';
 import { calculateGoalMetrics, SavingsGoal as SavingsGoalCalc } from '@/lib/savings-calc';
+import { resolveSystemCategory, SYSTEM_CATEGORY_NAMES } from '@/lib/categories';
 
 export async function GET(req: Request) {
   const isDev = process.env.NODE_ENV === 'development';
@@ -124,13 +125,14 @@ export async function GET(req: Request) {
       .eq('type', 'EXPENSE')
       .eq('status', 'APPROVED');
 
-    const { data: nabungCategory } = await supabase
-      .from('categories')
-      .select('id')
-      .eq('name', 'Nabung')
-      .maybeSingle();
-
-    const nabungCategoryId = nabungCategory?.id;
+    const nabungCategory = await resolveSystemCategory({
+      supabase,
+      name: SYSTEM_CATEGORY_NAMES.SAVING,
+      type: 'EXPENSE',
+    });
+    const nabungCategoryId = nabungCategory.status === 'matched'
+      ? nabungCategory.category.id
+      : undefined;
 
     const todayExpense = (userTxs || [])
       .filter((tx: any) => {

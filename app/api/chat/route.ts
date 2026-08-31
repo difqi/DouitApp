@@ -574,7 +574,7 @@ export async function POST(req: NextRequest) {
     timings.fastPathParseMs = elapsedMs(fastPathDetectionStartedAt);
     const preAiDbStartedAt = performance.now();
     const loadReferenceData = () => Promise.all([
-      supabase.from("categories").select("id, name, type").or(`user_id.eq.${user.id},is_system.eq.true`),
+      supabase.from("categories").select("id, name, type").or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`),
       supabase.from("merchant_rules").select("merchant_name, keyword, category_id, sumber_dana").eq("user_id", user.id),
       supabase.from("user_merchant_rules").select("merchant_pattern, keyword, category_id").eq("user_id", user.id),
       supabase.from("payment_accounts").select("name").eq("user_id", user.id),
@@ -704,7 +704,7 @@ export async function POST(req: NextRequest) {
       const needsAccounts = detectedFastPathFields!.includes("sumber_dana");
       const [fastCategoriesResult, fastAccountsResult] = await Promise.all([
         needsCategories
-          ? supabase.from("categories").select("id, name, type").or(`user_id.eq.${user.id},is_system.eq.true`)
+          ? supabase.from("categories").select("id, name, type").or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
           : Promise.resolve({ data: [] as CategoryRow[], error: null }),
         needsAccounts
           ? supabase.from("payment_accounts").select("name").eq("user_id", user.id)

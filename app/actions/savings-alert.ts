@@ -1,13 +1,9 @@
 'use server';
 
 import { checkAndSendOverBudgetAlert } from '@/lib/savingsAlert';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  { auth: { persistSession: false, autoRefreshToken: false } }
-);
+import { authorizeBudgetAlertUser } from '@/lib/budget-alert-authorization';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { createClient } from '@/lib/supabase/server';
 
 /**
  * Server Action to evaluate budget thresholds (75% warning & 100% over-budget)
@@ -15,13 +11,16 @@ const supabaseAdmin = createClient(
  * 
  * Safely accesses FONNTE_API_TOKEN without exposing secrets to the browser.
  */
-export async function triggerBudgetAlertCheck(userId: string) {
+export async function triggerBudgetAlertCheck() {
   try {
-    if (!userId) {
-      return { success: false, error: 'User ID is required' };
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    const authorization = authorizeBudgetAlertUser(authError ? null : user?.id);
+    if (!authorization.authorized) {
+      return { success: false, error: 'Unauthorized' };
     }
 
-    await checkAndSendOverBudgetAlert(userId, supabaseAdmin);
+    await checkAndSendOverBudgetAlert(authorization.userId, createAdminClient());
     return { success: true };
   } catch (err: any) {
     console.error('[Server Action: triggerBudgetAlertCheck] Error:', err?.message || err);
