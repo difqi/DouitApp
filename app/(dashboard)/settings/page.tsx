@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertCircle, AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronRight, Circle, CircleDashed, Clock, Copy, Edit2, Mail, Plus, RefreshCw, RotateCcw, Settings, Shield, ShieldAlert, Tags, Trash2, User, X } from "lucide-react";
-import { useState, useEffect, useSyncExternalStore } from "react";
+import { useState, useEffect, useMemo, useSyncExternalStore } from "react";
 import { useDouit } from "../../providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -9,9 +9,21 @@ import { toast } from "sonner";
 import { ConfirmDialog } from "@/app/components/ui/ConfirmDialog";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
 import { CATEGORY_ICON_OPTIONS, CategoryIcon, resolveCategoryColor } from "@/app/components/CategoryIcon";
-import { SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
+import {
+  groupSubcategoriesByParent,
+  listVisibleSubcategoriesForUser,
+  SYSTEM_CATEGORY_NAMES,
+} from "@/lib/categories";
+import type { CategoryRecord, SubcategoryRecord } from "@/types";
 
 type SettingsTab = 'email' | 'profile' | 'rules';
+
+type SettingsCategory = CategoryRecord & {
+  icon_name: string | null;
+  color_hex: string | null;
+  created_at: string;
+  budget_limit: number;
+};
 
 const SETTINGS_NAV: { id: SettingsTab; label: string; description: string; icon: typeof Mail }[] = [
   { id: 'email', label: 'Email otomatis', description: 'Pencatatan dari notifikasi bank', icon: Mail },
@@ -90,7 +102,8 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('email');
 
   // Tab 3 State
-  const [categories, setCategories] = useState<any[]>([]);
+  const [categories, setCategories] = useState<SettingsCategory[]>([]);
+  const [subcategories, setSubcategories] = useState<SubcategoryRecord[]>([]);
   const [rules, setRules] = useState<any[]>([]);
   const [isFetchingRules, setIsFetchingRules] = useState(false);
   const [newCatName, setNewCatName] = useState("");
@@ -201,19 +214,34 @@ export default function SettingsPage() {
   };
 
   const fetchRulesAndCategories = async () => {
+    if (!user?.id) return;
     setIsFetchingRules(true);
     const supabase = createClient();
-    const { data: cats } = await supabase.from('categories').select('id, user_id, name, type, icon_name, color_hex, is_system, created_at, category_budgets(amount)').or(`user_id.eq.${user?.id},and(is_system.eq.true,user_id.is.null)`).order('is_system', { ascending: false });
-    if (cats) {
-      setCategories(cats.filter((c: any) => c.name !== SYSTEM_CATEGORY_NAMES.SAVING).map((c: any) => ({
-        ...c,
-        budget_limit: c.category_budgets && c.category_budgets.length > 0 ? c.category_budgets[0].amount : 0
-      })));
-    }
+    try {
+      const [categoryResult, visibleSubcategories, merchantRuleResult] = await Promise.all([
+        supabase.from('categories').select('id, user_id, name, type, icon_name, color_hex, is_system, created_at, category_budgets(amount)').or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`).order('is_system', { ascending: false }),
+        listVisibleSubcategoriesForUser(supabase, user.id),
+        supabase.from('merchant_rules').select('id, merchant_name, keyword, category_id').eq('user_id', user.id),
+      ]);
 
-    const { data: mRules } = await supabase.from('merchant_rules').select('id, merchant_name, keyword, category_id').eq('user_id', user?.id);
-    if (mRules) setRules(mRules);
-    setIsFetchingRules(false);
+      if (categoryResult.error) throw categoryResult.error;
+      if (merchantRuleResult.error) throw merchantRuleResult.error;
+
+      const cats = categoryResult.data || [];
+      setCategories(cats.filter((category) => category.name !== SYSTEM_CATEGORY_NAMES.SAVING).map((category) => ({
+        ...category,
+        budget_limit: category.category_budgets && category.category_budgets.length > 0
+          ? Number(category.category_budgets[0].amount)
+          : 0,
+      })) as SettingsCategory[]);
+      setSubcategories(visibleSubcategories);
+      setRules(merchantRuleResult.data || []);
+    } catch (error) {
+      console.error("Error loading category settings:", error);
+      toast.error("Kategori belum dapat dimuat.");
+    } finally {
+      setIsFetchingRules(false);
+    }
   };
 
   const handleDeleteCategory = (id: string) => {
@@ -497,6 +525,26 @@ export default function SettingsPage() {
   const activeNavItem = SETTINGS_NAV.find((item) => item.id === activeTab) || SETTINGS_NAV[0];
   const systemCategories = categories.filter((category) => category.is_system || !category.user_id);
   const customCategories = categories.filter((category) => !category.is_system && category.user_id);
+  const subcategoriesByCategory = useMemo(
+    () => groupSubcategoriesByParent(subcategories),
+    [subcategories],
+  );
+
+  const renderSubcategories = (category: SettingsCategory) => {
+    const children = subcategoriesByCategory[category.id] || [];
+    if (children.length === 0) return null;
+
+    return (
+      <ul className="settings-subcategory-list" aria-label={`Subkategori ${category.name}`}>
+        {children.map((subcategory) => (
+          <li key={subcategory.id}>
+            <span>{subcategory.name}</span>
+            <small>{subcategory.is_system ? 'Sistem' : 'Pribadi'}</small>
+          </li>
+        ))}
+      </ul>
+    );
+  };
 
   return (
     <div className={`workspace-page settings-page ${mobileDetailOpen ? 'settings-mobile-detail-active' : ''}`}>
@@ -654,10 +702,13 @@ export default function SettingsPage() {
                   <div className="settings-group-heading"><span className="settings-group-title"><h3>Kategori sistem</h3><em>{systemCategories.length}</em></span></div>
                   <div className="settings-category-list">
                     {systemCategories.map((category) => (
-                      <div className="settings-category-row" key={category.id}>
-                        <span className="settings-category-mark"><CategoryIcon category={category.name} size={18} /></span>
-                        <span className="settings-list-copy"><b>{category.name}</b><small>{category.type === 'INCOME' ? 'Pemasukan' : 'Pengeluaran'} · {category.budget_limit > 0 ? `Anggaran ${formatRupiah(category.budget_limit)}` : 'Anggaran belum diatur'}</small></span>
-                        <span className="settings-system-badge">Sistem</span>
+                      <div className="settings-category-tree" key={category.id}>
+                        <div className="settings-category-row">
+                          <span className="settings-category-mark"><CategoryIcon category={category.name} size={18} /></span>
+                          <span className="settings-list-copy"><b>{category.name}</b><small>{category.type === 'INCOME' ? 'Pemasukan' : 'Pengeluaran'} · {category.budget_limit > 0 ? `Anggaran ${formatRupiah(category.budget_limit)}` : 'Anggaran belum diatur'}{subcategoriesByCategory[category.id]?.length ? ` · ${subcategoriesByCategory[category.id].length} subkategori` : ''}</small></span>
+                          <span className="settings-system-badge">Sistem</span>
+                        </div>
+                        {renderSubcategories(category)}
                       </div>
                     ))}
                   </div>
@@ -673,10 +724,13 @@ export default function SettingsPage() {
                   ) : (
                     <div className="settings-category-list">
                       {customCategories.map((category) => (
-                        <div className="settings-category-row" key={category.id}>
-                          <span className="settings-category-mark" style={{ color: resolveCategoryColor(category), backgroundColor: `${resolveCategoryColor(category)}14` }}><CategoryIcon category={category} size={18} /></span>
-                          <span className="settings-list-copy"><b>{category.name}</b><small>{category.type === 'INCOME' ? 'Pemasukan' : 'Pengeluaran'} · {category.budget_limit > 0 ? `Anggaran ${formatRupiah(category.budget_limit)}` : 'Anggaran belum diatur'}</small></span>
-                          <span className="settings-row-actions"><button type="button" onClick={() => openEditCategory(category)} aria-label={`Edit ${category.name}`}><Edit2 size={15} /></button><button type="button" className="danger" onClick={() => handleDeleteCategory(category.id)} aria-label={`Hapus ${category.name}`}><Trash2 size={15} /></button></span>
+                        <div className="settings-category-tree" key={category.id}>
+                          <div className="settings-category-row">
+                            <span className="settings-category-mark" style={{ color: resolveCategoryColor(category), backgroundColor: `${resolveCategoryColor(category)}14` }}><CategoryIcon category={category} size={18} /></span>
+                            <span className="settings-list-copy"><b>{category.name}</b><small>{category.type === 'INCOME' ? 'Pemasukan' : 'Pengeluaran'} · {category.budget_limit > 0 ? `Anggaran ${formatRupiah(category.budget_limit)}` : 'Anggaran belum diatur'}{subcategoriesByCategory[category.id]?.length ? ` · ${subcategoriesByCategory[category.id].length} subkategori` : ''}</small></span>
+                            <span className="settings-row-actions"><button type="button" onClick={() => openEditCategory(category)} aria-label={`Edit ${category.name}`}><Edit2 size={15} /></button><button type="button" className="danger" onClick={() => handleDeleteCategory(category.id)} aria-label={`Hapus ${category.name}`}><Trash2 size={15} /></button></span>
+                          </div>
+                          {renderSubcategories(category)}
                         </div>
                       ))}
                     </div>

@@ -73,6 +73,7 @@ const getCategoryIcon = (categoryName?: string) => {
 type ExplorerTransaction = {
   merchant?: unknown;
   amount?: unknown;
+  subcategory_id?: unknown;
   categories?: { name?: unknown } | null;
 };
 

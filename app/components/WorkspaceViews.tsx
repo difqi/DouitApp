@@ -424,7 +424,7 @@ export function TransactionsView() {
       let query = supabase
         .from('transactions')
         .select(`
-          id, amount, type, merchant, status, source, confidence_score, transaction_date, category_id, notes, sumber_dana,
+          id, amount, type, merchant, status, source, confidence_score, transaction_date, category_id, subcategory_id, notes, sumber_dana,
           categories (name)
         `)
         .eq('user_id', user.id)
@@ -582,8 +582,12 @@ export function TransactionsView() {
       return;
     }
     
+    const categoryChanged = editRow.category_id !== newCategoryId;
     await supabase.from('transactions').update({ 
       category_id: newCategoryId,
+      // Preserve a compatible future child selection; changing the parent must
+      // clear it because Phase 4.2A enforces parent-child consistency.
+      subcategory_id: categoryChanged ? null : (editRow.subcategory_id ?? null),
       sumber_dana: newSumberDana,
       notes: newNotes,
       status: 'APPROVED'
@@ -601,6 +605,9 @@ export function TransactionsView() {
       if (shouldRetroactive) {
         await supabase.from('transactions').update({
           category_id: newCategoryId,
+          // Retroactive rows can have different children, so a parent rewrite
+          // cannot safely retain their existing subcategory assignments.
+          subcategory_id: null,
           sumber_dana: newSumberDana,
           notes: newNotes,
           status: 'APPROVED'

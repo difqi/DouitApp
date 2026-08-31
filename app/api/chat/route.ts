@@ -1174,6 +1174,7 @@ export async function POST(req: NextRequest) {
             type: transaction.type,
             merchant: transaction.merchant,
             category_id: categoryResolution.category.id,
+            subcategory_id: null,
             category: categoryResolution.category.name,
             sumber_dana: resolvedSource,
             status: "pending",

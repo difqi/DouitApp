@@ -29,9 +29,10 @@ import { triggerBudgetAlertCheck } from "@/app/actions/savings-alert";
 import { SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
 import { BankLogo } from "@/app/components/BankLogo";
 import { CategoryIcon } from "@/app/components/CategoryIcon";
+import type { TransactionDraftPreview } from "@/types";
 
 type Message = { id: string; role: "user" | "assistant"; content: string; message_kind: string; action_draft_id: string | null; created_at: string };
-type ActionDraft = { id: string; action_type: string; status: "pending" | "approved" | "rejected" | "failed"; preview: Record<string, unknown>; executed_entity_id?: string | null };
+type ActionDraft = { id: string; action_type: string; status: "pending" | "approved" | "rejected" | "failed"; preview: TransactionDraftPreview; executed_entity_id?: string | null };
 type ChatSession = { id: string; title: string; created_at: string; is_pinned?: boolean };
 type ChatApiResponse = {
   sessionId?: string;
@@ -468,6 +469,7 @@ export default function ChatPage() {
         type: String(draft.preview.type),
         merchant: String(draft.preview.merchant || draft.preview.name || ""),
         category_id: draft.preview.category_id ? String(draft.preview.category_id) : null,
+        subcategory_id: null,
         sumber_dana: draft.preview.sumber_dana ? String(draft.preview.sumber_dana) : 'Tunai',
         status: 'APPROVED',
         source: 'MANUAL_CHAT',

@@ -150,6 +150,7 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
       type: transactionType,
       merchant: merchantName,
       category_id: selectedCategoryId,
+      subcategory_id: null,
       sumber_dana: selectedSource,
       notes: notes ? `${notes} [NO_TIME]` : "[NO_TIME]",
       status: "APPROVED",

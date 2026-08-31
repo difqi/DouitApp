@@ -5,14 +5,16 @@ import {
   type MissingField,
   type ValidatedDraftPatch,
 } from "@/lib/chat/validation";
+import type { TransactionDraftPreview } from "@/types";
 
 type DraftType = "INCOME" | "EXPENSE";
 
-export type DraftPreview = Record<string, unknown> & {
+export type DraftPreview = TransactionDraftPreview & {
   amount: number;
   type: DraftType;
   merchant: string;
   category_id: string;
+  subcategory_id: string | null;
   category: string;
   sumber_dana: string;
   status: "pending";
@@ -91,6 +93,7 @@ export function parsePendingDraftCandidate(row: DraftRow): PendingDraftCandidate
       type: raw.type,
       merchant: raw.merchant.trim(),
       category_id: raw.category_id,
+      subcategory_id: typeof raw.subcategory_id === "string" ? raw.subcategory_id : null,
       category: raw.category.trim(),
       sumber_dana: raw.sumber_dana.trim(),
       status: "pending",
@@ -181,6 +184,7 @@ export function applyDraftPatch(
       merchant: patch.fields.includes("merchant") ? patch.merchant! : existing.merchant,
       type: nextType,
       category_id: category.id,
+      subcategory_id: category.id === existing.category_id ? existing.subcategory_id : null,
       category: category.name,
       sumber_dana: source,
       status: "pending",

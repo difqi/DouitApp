@@ -368,6 +368,7 @@ Format: Nabung ${displayKeyword} ${amount} pakai [nama_rekening]`
             type: 'EXPENSE',
             merchant: goal.title || 'Nabung Target',
             category_id: nabungCategory.category.id,
+            subcategory_id: null,
             status: 'APPROVED',
             source: 'MANUAL_CHAT',
             sumber_dana: recordedSumberDana,

@@ -1566,6 +1566,12 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(22,130,93,.35); 
 .settings-category-list,.settings-rule-list,.settings-account-list { border-top: 1px solid #e8ebe7; }
 .settings-category-row,.settings-rule-row,.settings-account-row { position: relative; display: flex; min-width: 0; align-items: center; gap: 11px; padding: 11px 2px; border-bottom: 1px solid #e8ebe7; transition: background 150ms ease; }
 .settings-category-row:hover,.settings-rule-row:hover,.settings-account-row:hover { background: #fbfcf9; }
+.settings-category-tree { border-bottom: 1px solid #e8ebe7; }
+.settings-category-tree > .settings-category-row { border-bottom: 0; }
+.settings-subcategory-list { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: -2px 0 11px 47px; padding: 0; list-style: none; }
+.settings-subcategory-list li { display: inline-flex; align-items: center; gap: 5px; color: #56655d; font-size: 12px; line-height: 1.4; }
+.settings-subcategory-list li::before { width: 4px; height: 4px; content: ""; background: #91a299; border-radius: 50%; }
+.settings-subcategory-list small { color: #89948e; font-size: 10px; }
 .settings-category-mark { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; color: #5f7468; background: #f2f6f1; border: 1px solid #e4eae3; border-radius: 9px; }
 .settings-list-copy { display: block; min-width: 0; flex: 1; }.settings-list-copy b,.settings-list-copy small { display: block; }.settings-list-copy b { overflow: hidden; color: #26332d; font-size: 13.5px; font-weight: 600; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }.settings-list-copy small { margin-top: 3px; overflow-wrap: anywhere; color: #727e77; font-size: 12px; font-weight: 400; line-height: 1.45; }
 .settings-system-badge,.settings-account-name em { padding: 3px 7px; color: #596960; background: #f0f3ef; border-radius: 999px; font-size: 10px; font-style: normal; font-weight: 600; }

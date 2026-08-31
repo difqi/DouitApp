@@ -532,6 +532,7 @@ export async function POST(req: NextRequest) {
         type: transactionType,
         merchant: tx.merchant,
         category_id: categoryId,
+        subcategory_id: null,
         sumber_dana: rawSumberDana || "Tunai", // Preserve raw source name
         status: status,
         source: 'AUTOMATIC_EMAIL',
