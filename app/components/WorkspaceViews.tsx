@@ -26,7 +26,7 @@ import { FormEvent, useEffect, useRef, useState, useSyncExternalStore } from "re
 import { toast } from "sonner";
 import { useDouit } from "../providers/DouitProvider";
 import { mockTransactions } from "../../lib/mock-data";
-import { Transaction } from "../../types";
+import { CategoryRecord, Transaction } from "../../types";
 import { triggerBudgetAlertCheck } from "@/app/actions/savings-alert";
 import { BankLogo } from "@/app/components/BankLogo";
 import { exportCsv } from "@/lib/report-export-utils";
@@ -34,7 +34,14 @@ import { CustomSelect } from "@/app/components/ui/CustomSelect";
 import { CustomDatePicker } from "@/app/components/ui/CustomDatePicker";
 import { CategoryIcon } from "@/app/components/CategoryIcon";
 import { TransactionCreateModal, transactionSourceNames } from "@/app/components/TransactionCreateModal";
-import { SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
+import { SubcategorySelect } from "@/app/components/SubcategorySelect";
+import {
+  listSubcategoriesForParent,
+  normalizeTransactionSubcategory,
+  preserveSubcategoryForCategoryChange,
+  validateSubcategoryAssignmentFromRows,
+} from "@/lib/categories";
+import { formatTransactionCategoryLabel } from "@/lib/transaction-category-display";
 
 const formatMoney = (value: number | string) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value));
 const formatDate = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" });
@@ -96,7 +103,7 @@ function TransactionFeedRow({ row, onSelect }: { row: DisplayTransaction; onSele
         <strong>{row.merchant}</strong>
         <small>{getTransactionDateTimeLabel(row)}</small>
         <span className="transaction-feed-secondary">
-          <span>{row.category}</span>
+          <span>{formatTransactionCategoryLabel(row.category, row.subcategory?.name)}</span>
           {row.status === "PENDING_APPROVAL" && <span className="transaction-feed-pending">Menunggu</span>}
         </span>
       </span>
@@ -238,6 +245,7 @@ function TransactionDetailSections({ row }: { row: DisplayTransaction }) {
         <dl className="transaction-detail-list">
           <div><dt><CalendarDays size={14} />Tanggal & waktu</dt><dd>{getTransactionDateTimeLabel(row)}</dd></div>
           <div><dt><CategoryIcon category={row.category} size={13} />Kategori</dt><dd>{row.category}</dd></div>
+          {row.subcategory && <div><dt><CategoryIcon category={row.category} size={13} />Subkategori</dt><dd>{row.subcategory.name}</dd></div>}
           <div><dt><Wallet size={14} />Rekening</dt><dd>{row.sumber_dana || 'Tunai'}</dd></div>
           <div><dt><TransactionSourceIcon source={row.source} />Sumber pencatatan</dt><dd>{getTransactionSourceLabel(row.source)}</dd></div>
         </dl>
@@ -305,7 +313,7 @@ import { isAccountMatch } from "../../utils/bankAliases";
 
 let cachedWorkspaceTx: any[] = [];
 let cachedWorkspaceTodayTx: any[] = [];
-let cachedCategories: {id: string, name: string, type: string}[] = [];
+let cachedCategories: CategoryRecord[] = [];
 let cachedPrimaryAccount: any = null;
 
 const toLocalYYYYMMDD = (d: Date) => {
@@ -380,17 +388,20 @@ export function TransactionsView() {
   const [tempEnd, setTempEnd] = useState("");
 
   const [editCategoryId, setEditCategoryId] = useState("");
+  const [editSubcategoryId, setEditSubcategoryId] = useState<string | null>(null);
   const [editSumberDana, setEditSumberDana] = useState("Tunai");
+  const [isUpdatingTransaction, setIsUpdatingTransaction] = useState(false);
   
   const [rows, setRows] = useState<Transaction[]>(cachedWorkspaceTx);
   const [todayActivityRows, setTodayActivityRows] = useState<Transaction[]>(cachedWorkspaceTodayTx);
   const [isLoading, setIsLoading] = useState(cachedWorkspaceTx.length === 0);
   const [loadError, setLoadError] = useState(false);
-  const [categories, setCategories] = useState<{id: string, name: string, type: string}[]>(cachedCategories);
+  const [categories, setCategories] = useState<CategoryRecord[]>(cachedCategories);
   const [primaryAccount, setPrimaryAccount] = useState<any>(cachedPrimaryAccount);
   const { user } = useDouit();
   const listScrollPositionRef = useRef(0);
   const advancedOptionRef = useRef<HTMLLabelElement>(null);
+  const isUpdatingTransactionRef = useRef(false);
 
   useEffect(() => {
     if (!saveRule) return;
@@ -425,7 +436,8 @@ export function TransactionsView() {
         .from('transactions')
         .select(`
           id, amount, type, merchant, status, source, confidence_score, transaction_date, category_id, subcategory_id, notes, sumber_dana,
-          categories (name)
+          categories (name),
+          subcategories (id, category_id, user_id, name, is_system, system_key, icon_name, color_hex, created_at)
         `)
         .eq('user_id', user.id)
         .order('transaction_date', { ascending: false });
@@ -449,6 +461,12 @@ export function TransactionsView() {
           notes: d.notes,
           category: (d.categories as any)?.name || 'Lain-lain',
           category_id: d.category_id,
+          subcategory: normalizeTransactionSubcategory({
+            relation: d.subcategories,
+            categoryId: d.category_id,
+            subcategoryId: d.subcategory_id,
+            userId: user.id,
+          }),
           sumber_dana: d.sumber_dana || 'Tunai'
         })) as any as (Transaction & { category_id: string, sumber_dana: string })[];
         cachedWorkspaceTx = mapped as any;
@@ -465,7 +483,7 @@ export function TransactionsView() {
     
     fetchTransactions();
     
-    supabase.from('categories').select('id, name, type').or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`).then(({data}) => {
+    supabase.from('categories').select('id, user_id, name, type, is_system').or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`).then(({data}) => {
       if (data) {
         cachedCategories = data;
         setCategories(data);
@@ -492,8 +510,9 @@ export function TransactionsView() {
       const matchMerchant = row.merchant?.toLowerCase().includes(q);
       const matchNotes = row.notes?.toLowerCase().includes(q);
       const matchCategory = (row as any).category?.toLowerCase().includes(q);
+      const matchSubcategory = row.subcategory?.name.toLowerCase().includes(q);
       const matchAmount = String(row.amount).includes(q);
-      if (!matchMerchant && !matchNotes && !matchCategory && !matchAmount) return false;
+      if (!matchMerchant && !matchNotes && !matchCategory && !matchSubcategory && !matchAmount) return false;
     }
 
     return true;
@@ -552,71 +571,115 @@ export function TransactionsView() {
 
   async function updateTransaction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!user || !editRow) return;
+    if (!user || !editRow || isUpdatingTransactionRef.current) return;
+
+    isUpdatingTransactionRef.current = true;
+    setIsUpdatingTransaction(true);
     const data = new FormData(event.currentTarget);
     const supabase = createClient();
     
     const newCategoryId = String(data.get("category_id"));
+    const categoryChanged = editRow.category_id !== newCategoryId;
+    const newSubcategoryId = categoryChanged ? null : editSubcategoryId;
     const newSumberDana = String(data.get("sumber_dana") || "Tunai");
     const newNotes = String(data.get("notes") || "");
     const shouldSaveRule = data.get("save_rule") === "on";
     const shouldRetroactive = data.get("retroactive") === "on";
 
-    const selectedCategory = categories.find((category) =>
-      category.id === newCategoryId && category.type.toUpperCase() === editRow.type,
-    );
-    if (!selectedCategory) {
-      toast.error("Kategori tidak valid untuk tipe transaksi ini.");
-      return;
-    }
-
-    const { data: safeCategory, error: categoryError } = await supabase
-      .from('categories')
-      .select('id')
-      .eq('id', newCategoryId)
-      .eq('type', editRow.type)
-      .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
-      .maybeSingle();
-    if (categoryError || !safeCategory) {
-      toast.error("Kategori tidak dapat digunakan.");
-      return;
-    }
-    
-    const categoryChanged = editRow.category_id !== newCategoryId;
-    await supabase.from('transactions').update({ 
-      category_id: newCategoryId,
-      // Preserve a compatible future child selection; changing the parent must
-      // clear it because Phase 4.2A enforces parent-child consistency.
-      subcategory_id: categoryChanged ? null : (editRow.subcategory_id ?? null),
-      sumber_dana: newSumberDana,
-      notes: newNotes,
-      status: 'APPROVED'
-    }).eq('id', editRow.id);
-    
-    if (shouldSaveRule) {
-      await supabase.from('merchant_rules').upsert({
-        user_id: user.id,
-        merchant_name: editRow.merchant,
-        keyword: newNotes || null,
-        category_id: newCategoryId,
-        sumber_dana: newSumberDana
-      }, { onConflict: 'user_id, merchant_name' });
-      
-      if (shouldRetroactive) {
-        await supabase.from('transactions').update({
-          category_id: newCategoryId,
-          // Retroactive rows can have different children, so a parent rewrite
-          // cannot safely retain their existing subcategory assignments.
-          subcategory_id: null,
-          sumber_dana: newSumberDana,
-          notes: newNotes,
-          status: 'APPROVED'
-        }).match({ user_id: user.id, merchant: editRow.merchant });
+    try {
+      const selectedCategory = categories.find((category) =>
+        category.id === newCategoryId && category.type.toUpperCase() === editRow.type,
+      );
+      if (!selectedCategory) {
+        toast.error("Kategori tidak valid untuk tipe transaksi ini.");
+        return;
       }
+
+      const { data: safeCategory, error: categoryError } = await supabase
+        .from('categories')
+        .select('id, user_id, name, type, is_system')
+        .eq('id', newCategoryId)
+        .eq('type', editRow.type)
+        .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
+        .maybeSingle();
+      if (categoryError || !safeCategory) {
+        toast.error("Kategori tidak dapat digunakan.");
+        return;
+      }
+
+      if (newSubcategoryId) {
+        const subcategories = await listSubcategoriesForParent(
+          supabase,
+          newCategoryId,
+          user.id,
+        );
+        const validation = validateSubcategoryAssignmentFromRows({
+          subcategories,
+          categories: [safeCategory as CategoryRecord],
+          userId: user.id,
+          categoryId: newCategoryId,
+          subcategoryId: newSubcategoryId,
+          type: editRow.type,
+        });
+        if (validation.status !== 'matched') {
+          toast.error("Subkategori tidak valid untuk kategori yang dipilih.");
+          return;
+        }
+      }
+
+      const { error: transactionError } = await supabase.from('transactions').update({
+        category_id: newCategoryId,
+        subcategory_id: newSubcategoryId,
+        sumber_dana: newSumberDana,
+        notes: newNotes,
+        status: 'APPROVED'
+      }).eq('id', editRow.id).eq('user_id', user.id);
+      if (transactionError) throw transactionError;
+
+      if (shouldSaveRule) {
+        const { error: ruleError } = await supabase.from('merchant_rules').upsert({
+          user_id: user.id,
+          merchant_name: editRow.merchant,
+          keyword: newNotes || null,
+          category_id: newCategoryId,
+          sumber_dana: newSumberDana
+        }, { onConflict: 'user_id, merchant_name' });
+        if (ruleError) throw ruleError;
+
+        if (shouldRetroactive) {
+          const sharedRetroactivePayload = {
+            sumber_dana: newSumberDana,
+            notes: newNotes,
+            status: 'APPROVED'
+          };
+          const { error: unchangedCategoryError } = await supabase
+            .from('transactions')
+            .update(sharedRetroactivePayload)
+            .match({ user_id: user.id, merchant: editRow.merchant })
+            .eq('category_id', newCategoryId);
+          if (unchangedCategoryError) throw unchangedCategoryError;
+
+          const { error: changedCategoryError } = await supabase
+            .from('transactions')
+            .update({
+              ...sharedRetroactivePayload,
+              category_id: newCategoryId,
+              subcategory_id: null,
+            })
+            .match({ user_id: user.id, merchant: editRow.merchant })
+            .neq('category_id', newCategoryId);
+          if (changedCategoryError) throw changedCategoryError;
+        }
+      }
+
+      setEditRow(null);
+      setSaveRule(false);
+    } catch {
+      toast.error("Perubahan transaksi belum dapat disimpan. Silakan coba lagi.");
+    } finally {
+      isUpdatingTransactionRef.current = false;
+      setIsUpdatingTransaction(false);
     }
-    
-    setEditRow(null);
-    setSaveRule(false);
   }
 
   const handleExportCSV = () => {
@@ -657,7 +720,7 @@ export function TransactionsView() {
     const rowsData = filteredRows.map(row => [
       formatCsvDate(row.date),
       (row as any).sumber_dana || "Tunai",
-      (row as any).category || "Lain-lain",
+      formatTransactionCategoryLabel(row.category, row.subcategory?.name),
       row.merchant || row.notes || "-",
       row.type === "INCOME" ? "Pemasukan" : "Pengeluaran",
       Number(row.amount) || 0
@@ -677,6 +740,7 @@ export function TransactionsView() {
   const openEditModal = (row: any) => {
     setEditRow(row as any);
     setEditCategoryId(row.category_id || "");
+    setEditSubcategoryId(row.subcategory_id || null);
     setEditSumberDana((row as any).sumber_dana || 'Tunai');
     setSaveRule(false);
   };
@@ -711,7 +775,7 @@ export function TransactionsView() {
   };
 
   const categoryOptions = categories
-    .filter(c => c.name !== SYSTEM_CATEGORY_NAMES.SAVING && (!editRow || c.type.toUpperCase() === editRow.type))
+    .filter(c => !editRow || c.type.toUpperCase() === editRow.type)
     .map(c => ({ value: c.id, label: c.name, icon: <CategoryIcon category={c.name} /> }));
 
   const sumberDanaOptions = transactionSourceNames.map((source) => ({
@@ -1007,7 +1071,7 @@ export function TransactionsView() {
                       </div>
                     </div>
                   </td>
-                  <td className="transaction-category-cell"><span><CategoryIcon category={row.category} />{row.category}</span></td>
+                  <td className="transaction-category-cell"><span title={formatTransactionCategoryLabel(row.category, row.subcategory?.name)}><CategoryIcon category={row.category} />{formatTransactionCategoryLabel(row.category, row.subcategory?.name)}</span></td>
                   <td className="transaction-account-cell">
                     <div>
                       <TransactionBankLogo bankName={(row as any).sumber_dana || 'Tunai'} className="transaction-bank-logo" />
@@ -1101,13 +1165,29 @@ export function TransactionsView() {
                   <CustomSelect
                     name="category_id"
                     value={editCategoryId}
-                    onChange={setEditCategoryId}
+                    onChange={(nextCategoryId) => {
+                      setEditSubcategoryId((currentSubcategoryId) => preserveSubcategoryForCategoryChange({
+                        previousCategoryId: editCategoryId,
+                        nextCategoryId,
+                        subcategoryId: currentSubcategoryId,
+                      }));
+                      setEditCategoryId(nextCategoryId);
+                    }}
                     options={categoryOptions}
                     placeholder="Pilih Kategori"
+                    disabled={isUpdatingTransaction}
                     responsiveOverlay
                     selectionTitle="Pilih kategori"
                   />
                 </div>
+
+                <SubcategorySelect
+                  categoryId={editCategoryId}
+                  userId={user?.id || ""}
+                  value={editSubcategoryId}
+                  onChange={setEditSubcategoryId}
+                  disabled={isUpdatingTransaction}
+                />
                 
                 <div className="transaction-edit-field" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '13px', fontWeight: 500, color: '#475569' }}>Sumber Dana</span>
@@ -1146,7 +1226,7 @@ export function TransactionsView() {
               </div>
               <div className="modal-actions transaction-modal-actions rounded-b-2xl md:rounded-b-3xl" style={{ padding: '16px 24px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: '12px', background: '#f8fafc' }}>
                 <button type="button" className="button secondary" onClick={() => { setEditRow(null); setSaveRule(false); }}>Batal</button>
-                <button type="submit" className="button primary">Simpan perubahan</button>
+                <button type="submit" className="button primary" disabled={isUpdatingTransaction}>{isUpdatingTransaction ? "Menyimpan..." : "Simpan perubahan"}</button>
               </div>
             </form>
           </div>

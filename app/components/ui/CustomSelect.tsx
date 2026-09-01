@@ -27,6 +27,8 @@ interface CustomSelectProps {
   responsiveOverlay?: boolean;
   selectionTitle?: string;
   lockBodyScroll?: boolean;
+  ariaLabel?: string;
+  ariaBusy?: boolean;
 }
 
 const getPopoverStyle = (trigger: HTMLButtonElement): React.CSSProperties => {
@@ -66,6 +68,8 @@ export function CustomSelect({
   responsiveOverlay = false,
   selectionTitle = "Pilih opsi",
   lockBodyScroll = false,
+  ariaLabel,
+  ariaBusy = false,
 }: CustomSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isMobileSheet, setIsMobileSheet] = useState(false);
@@ -183,6 +187,8 @@ export function CustomSelect({
         }}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
+        aria-label={ariaLabel || label || selectionTitle}
+        aria-busy={ariaBusy}
         className={`w-full flex items-center justify-between rounded-xl text-sm font-medium shadow-sm transition-all cursor-pointer focus:outline-none ${
           isDarkEmerald
             ? "px-3.5 py-2.5 bg-gradient-to-r from-[#0F2A1D] to-[#163827] hover:from-[#133525] hover:to-[#1a4430] border border-white/10 text-white focus:ring-2 focus:ring-emerald-500/30"

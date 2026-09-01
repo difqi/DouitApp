@@ -1568,10 +1568,18 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(22,130,93,.35); 
 .settings-category-row:hover,.settings-rule-row:hover,.settings-account-row:hover { background: #fbfcf9; }
 .settings-category-tree { border-bottom: 1px solid #e8ebe7; }
 .settings-category-tree > .settings-category-row { border-bottom: 0; }
-.settings-subcategory-list { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: -2px 0 11px 47px; padding: 0; list-style: none; }
-.settings-subcategory-list li { display: inline-flex; align-items: center; gap: 5px; color: #56655d; font-size: 12px; line-height: 1.4; }
-.settings-subcategory-list li::before { width: 4px; height: 4px; content: ""; background: #91a299; border-radius: 50%; }
-.settings-subcategory-list small { color: #89948e; font-size: 10px; }
+.settings-subcategory-block { margin: -2px 0 11px 47px; }
+.settings-subcategory-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.settings-subcategory-list li { display: flex; min-width: 0; min-height: 34px; align-items: center; gap: 7px; color: #56655d; font-size: 12px; line-height: 1.4; }
+.settings-subcategory-list li::before { width: 4px; height: 4px; flex: 0 0 auto; content: ""; background: #91a299; border-radius: 50%; }
+.settings-subcategory-copy { display: flex; min-width: 0; flex: 1; align-items: baseline; gap: 7px; }
+.settings-subcategory-copy > span { min-width: 0; overflow-wrap: anywhere; }
+.settings-subcategory-list small { flex: 0 0 auto; color: #89948e; font-size: 10px; }
+.settings-subcategory-actions { display: flex; flex: 0 0 auto; gap: 2px; }
+.settings-subcategory-actions button { display: grid; width: 32px; height: 32px; place-items: center; padding: 0; color: #6f7c75; background: transparent; border: 0; border-radius: 8px; cursor: pointer; }
+.settings-subcategory-actions button:hover { background: #eef2ed; }.settings-subcategory-actions button.danger:hover { color: #b34d3e; background: #fff0ed; }.settings-subcategory-actions button:disabled { cursor: wait; opacity: .45; }
+.settings-subcategory-add-trigger { display: inline-flex; min-height: 32px; align-items: center; gap: 5px; margin-top: 4px; padding: 5px 7px; color: #39705a; background: transparent; border: 0; border-radius: 7px; cursor: pointer; font-size: 11.5px; font-weight: 600; }
+.settings-subcategory-add-trigger:hover { background: #edf6ee; }
 .settings-category-mark { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; color: #5f7468; background: #f2f6f1; border: 1px solid #e4eae3; border-radius: 9px; }
 .settings-list-copy { display: block; min-width: 0; flex: 1; }.settings-list-copy b,.settings-list-copy small { display: block; }.settings-list-copy b { overflow: hidden; color: #26332d; font-size: 13.5px; font-weight: 600; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }.settings-list-copy small { margin-top: 3px; overflow-wrap: anywhere; color: #727e77; font-size: 12px; font-weight: 400; line-height: 1.45; }
 .settings-system-badge,.settings-account-name em { padding: 3px 7px; color: #596960; background: #f0f3ef; border-radius: 999px; font-size: 10px; font-style: normal; font-weight: 600; }
@@ -1590,6 +1598,12 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(22,130,93,.35); 
 .settings-modal-scrim { position: fixed; z-index: 100; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(18,29,24,.5); backdrop-filter: blur(3px); }.settings-modal-dialog { width: min(440px,100%); max-height: calc(100dvh - 40px); overflow: visible; background: #fff; border: 1px solid #e2e7e1; border-radius: 16px; box-shadow: 0 24px 70px rgba(10,20,16,.25); }.settings-modal-header { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 18px 20px; border-bottom: 1px solid #e8ebe7; }.settings-modal-header h3 { margin: 0; font-size: 16px; font-weight: 620; line-height: 1.3; }.settings-modal-header p { margin: 4px 0 0; color: #727e77; font-size: 12.5px; line-height: 1.45; }.settings-modal-header button { display: grid; width: 38px; height: 38px; place-items: center; color: #68736d; background: transparent; border: 0; border-radius: 9px; cursor: pointer; }.settings-modal-header button:hover { background: #f0f3ef; }.settings-modal-body { display: flex; flex-direction: column; gap: 16px; padding: 20px; }.settings-checkbox { display: flex; align-items: center; gap: 9px; color: #53605a; cursor: pointer; font-size: 13px; }.settings-checkbox input { width: 17px; height: 17px; accent-color: #16825d; }.settings-modal-actions { display: flex; justify-content: flex-end; gap: 9px; padding: 15px 20px max(15px,env(safe-area-inset-bottom)); background: #f7f8f5; border-top: 1px solid #e8ebe7; border-radius: 0 0 16px 16px; }
 .settings-category-form-body > .settings-field:first-child { grid-column: auto; }.settings-budget-field { grid-column: 2; grid-row: 1; align-self: end; }
 .settings-custom-color.active { box-shadow: 0 0 0 2px #fff,0 0 0 4px #57977a; }
+.settings-color-swatches > button.settings-color-default { color: #627068; background: #eef1ed; }
+.settings-color-swatches > button.settings-color-default.active { color: #245b44; background: #e4f2e7; }
+.settings-subcategory-dialog .settings-form-error { max-width: none; }
+.settings-subcategory-dialog .settings-icon-grid { max-width: none; grid-template-columns: repeat(auto-fill,44px); }
+.settings-subcategory-appearance { margin-top: 0; }
+.settings-subcategory-appearance > small { display: block; margin-top: 8px; color: #7b8780; font-size: 11px; line-height: 1.4; }
 .settings-category-section .settings-list-copy b { font-size: 14px; }.settings-category-section .settings-list-copy small { font-size: 12px; line-height: 1.4; }
 
 @media (min-width: 761px) and (max-width: 900px) {
@@ -1612,6 +1626,7 @@ button:focus-visible, a:focus-visible { outline: 3px solid rgba(22,130,93,.35); 
   .settings-email-copy-row { flex-direction: column; }.settings-email-copy-row code { width: 100%; min-height: 46px; }.settings-email-copy-row .button { width: 100%; min-height: 44px; }.settings-email-status-row { align-items: flex-start; flex-direction: column; gap: 9px; }.settings-email-helper { font-size: 12.5px !important; }.settings-status { align-self: flex-start; }
   .settings-form-grid { grid-template-columns: 1fr; }.settings-field input { min-height: 45px; font-size: 16px; }.settings-save-row { position: sticky; bottom: calc(var(--mobile-bottom-nav-height) + env(safe-area-inset-bottom)); z-index: 5; margin-right: -16px; margin-left: -16px; padding: 12px 16px; background: rgba(255,255,255,.96); }.settings-save-row .button { width: 100%; min-height: 44px; }
   .settings-category-row,.settings-rule-row { padding: 12px 0; }.settings-system-badge { display: none; }.settings-row-actions button,.settings-overflow-trigger { width: 42px; height: 42px; }.settings-list-copy small { font-size: 12px; line-height: 1.45; }.settings-add-category-form { margin-right: -6px; margin-left: -6px; padding: 17px 12px; }.settings-icon-grid { grid-template-columns: repeat(6,44px); gap: 8px; }.settings-icon-grid button { width: 44px; height: 44px; }.settings-segmented-control { max-width: none; }.settings-rules-section { margin-top: 25px; }
+  .settings-subcategory-block { margin-left: 45px; }.settings-subcategory-list li { min-height: 42px; }.settings-subcategory-actions button { width: 40px; height: 40px; }.settings-subcategory-add-trigger { min-height: 40px; margin-top: 3px; }.settings-subcategory-dialog .settings-icon-grid { grid-template-columns: repeat(auto-fill,44px); justify-content: start; }
   .settings-account-row { min-height: 72px; padding: 11px 0; }.settings-account-logo { width: 52px; height: 38px; }.settings-overflow-menu { top: auto; right: 0; bottom: calc(100% + 4px); width: 160px; }.settings-overflow-menu button { min-height: 42px; }
   .settings-danger-zone { margin-top: 16px; background: #fff3f0; }.settings-danger-row { align-items: stretch; flex-direction: column; gap: 11px; }.settings-danger-button { min-height: 42px; align-self: flex-start; }
   .settings-modal-scrim { align-items: flex-end; padding: 0; }.settings-modal-dialog { width: 100%; max-height: 88dvh; overflow-y: auto; border-radius: 22px 22px 0 0; }.settings-modal-header { position: sticky; top: 0; z-index: 2; padding: 17px 18px; background: #fff; border-radius: 22px 22px 0 0; }.settings-modal-body { padding: 18px; }.settings-modal-actions { position: sticky; bottom: 0; padding: 12px 18px max(12px,env(safe-area-inset-bottom)); border-radius: 0; }.settings-modal-actions .button.primary { flex: 1; min-height: 44px; }

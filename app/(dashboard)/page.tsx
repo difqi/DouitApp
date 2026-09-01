@@ -37,6 +37,9 @@ import { getAccountCurrentBalance, getTotalCurrentBalance, PaymentAccount } from
 import { createClient } from "@/lib/supabase/client";
 import { isAccountMatch } from "../../utils/bankAliases";
 import { shouldDisplayTransactionTime } from "../components/WorkspaceViews";
+import { normalizeTransactionSubcategory } from "@/lib/categories";
+import { formatTransactionCategoryLabel } from "@/lib/transaction-category-display";
+import { aggregateApprovedTransactionsByParentCategory } from "@/lib/report-category-aggregation";
 const money = (value: number | string) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value));
 const formatDate = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 const formatTime = (value: string) => new Date(value).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }).replace('.', ':') + " WIB";
@@ -209,8 +212,9 @@ export default function DashboardPage() {
       const { data, error } = await supabase
         .from('transactions')
         .select(`
-          id, amount, type, merchant, status, source, confidence_score, transaction_date, sumber_dana, notes,
-          categories (name)
+          id, amount, type, merchant, status, source, confidence_score, transaction_date, category_id, subcategory_id, sumber_dana, notes,
+          categories (name),
+          subcategories (id, category_id, user_id, name, is_system, system_key, icon_name, color_hex, created_at)
         `)
         .eq('user_id', user.id)
         .order('transaction_date', { ascending: false });
@@ -221,6 +225,14 @@ export default function DashboardPage() {
           date: d.transaction_date,
           notes: d.notes,
           category: (d.categories as any)?.name || 'Lain-lain',
+          category_id: d.category_id,
+          subcategory_id: d.subcategory_id,
+          subcategory: normalizeTransactionSubcategory({
+            relation: d.subcategories,
+            categoryId: d.category_id,
+            subcategoryId: d.subcategory_id,
+            userId: user.id,
+          }),
           sumber_dana: d.sumber_dana || 'Tunai'
         })) as any as Transaction[];
         cachedDashboardTx = mapped;
@@ -284,13 +296,9 @@ export default function DashboardPage() {
     const expense = total(currentTransactions, "EXPENSE");
     const previousIncome = total(previousTransactions, "INCOME");
     const previousExpense = total(previousTransactions, "EXPENSE");
-    const expenseByCategory = currentTransactions
-      .filter(transaction => transaction.type === "EXPENSE")
-      .reduce<Record<string, number>>((categories, transaction) => {
-        categories[transaction.category] = (categories[transaction.category] || 0) + Number(transaction.amount);
-        return categories;
-      }, {});
-    const topExpense = Object.entries(expenseByCategory).sort(([, first], [, second]) => second - first)[0];
+    const topExpense = aggregateApprovedTransactionsByParentCategory(currentTransactions)
+      .filter((category) => category.expense > 0)
+      .sort((first, second) => second.expense - first.expense)[0];
 
     return {
       income,
@@ -308,7 +316,7 @@ export default function DashboardPage() {
         end,
         period === "Bulan ini" ? 16 : 20,
       ),
-      topExpense: topExpense ? { category: topExpense[0], amount: topExpense[1] } : null,
+      topExpense: topExpense ? { category: topExpense.name, amount: topExpense.expense } : null,
       net: income - expense,
     };
   }, [approvedAccountTransactions, initialBalance, period]);
@@ -722,7 +730,7 @@ export default function DashboardPage() {
                     <td className={`dashboard-recent-amount-cell ${tx.type === "INCOME" ? "income" : "expense"}`}>
                       <strong>{tx.type === "INCOME" ? "+" : "-"}{balanceText(tx.amount)}</strong>
                     </td>
-                    <td className="dashboard-recent-category-cell"><span>{tx.category}</span></td>
+                    <td className="dashboard-recent-category-cell"><span title={formatTransactionCategoryLabel(tx.category, tx.subcategory?.name)}>{formatTransactionCategoryLabel(tx.category, tx.subcategory?.name)}</span></td>
                     <td className="dashboard-recent-status-cell"><TransactionStatusBadge status={tx.status} /></td>
                   </tr>
                 ))}
@@ -747,7 +755,7 @@ export default function DashboardPage() {
                       {shouldDisplayTransactionTime(tx) && <> · {formatTime(tx.date)}</>}
                     </small>
                     <div className="dashboard-transaction-feed-footer">
-                      <em>{tx.category}</em>
+                      <em title={formatTransactionCategoryLabel(tx.category, tx.subcategory?.name)}>{formatTransactionCategoryLabel(tx.category, tx.subcategory?.name)}</em>
                       <TransactionStatusBadge status={tx.status} />
                     </div>
                   </div>

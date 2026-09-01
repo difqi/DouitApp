@@ -41,6 +41,11 @@ import {
 } from "@/lib/report-export-utils";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
 import { CategoryIcon } from "@/app/components/CategoryIcon";
+import {
+  aggregateApprovedTransactionsByParentCategory,
+  getParentCategoryKey,
+  getParentCategoryName,
+} from "@/lib/report-category-aggregation";
 
 const formatMoney = (value: number | string) =>
   new Intl.NumberFormat("id-ID", {
@@ -169,7 +174,7 @@ function BreakdownDimensionToggle({
 }
 
 type CompactDonutSlice = {
-  item: { name: string };
+  item: { key: string; name: string };
   color: string;
   strokeDasharray: string;
   strokeDashoffset: number;
@@ -191,7 +196,7 @@ function MobileDetailDonut({
           <svg viewBox="0 0 200 200" className="h-full w-full -rotate-90">
             {slices.map((slice) => (
               <circle
-                key={slice.item.name}
+                key={slice.item.key}
                 cx="100"
                 cy="100"
                 r="80"
@@ -353,31 +358,15 @@ export default function LaporanPage() {
   const netSurplus = totalIncome - totalExpense;
 
   // Breakdown Calculations
-  const categoryStats: Record<string, { name: string; income: number; expense: number; net: number; count: number; budget: number }> = {};
-  const merchantStats: Record<string, { name: string; income: number; expense: number; net: number; count: number; budget: number }> = {};
+  const categoryStats = Object.fromEntries(
+    aggregateApprovedTransactionsByParentCategory(filteredTx, categories)
+      .map((stat) => [stat.key, stat]),
+  );
+  const merchantStats: Record<string, { key: string; categoryId: null; name: string; income: number; expense: number; net: number; count: number; budget: number }> = {};
   
   filteredTx.forEach(t => {
     const isIncome = t.type === 'INCOME';
     const amount = Number(t.amount);
-    
-    // Category Stats
-    const catName = (t.categories as any)?.name || 'Lain-lain';
-    if (!categoryStats[catName]) {
-      let dbCat = categories.find(c => c.id === t.category_id);
-      if (!dbCat) dbCat = categories.find(c => c.name.toLowerCase() === catName.toLowerCase() && c.user_id === user?.id);
-      if (!dbCat) dbCat = categories.find(c => c.name.toLowerCase() === catName.toLowerCase());
-      
-      const limit = dbCat?.budget_limit || 0;
-      categoryStats[catName] = { name: catName, income: 0, expense: 0, net: 0, count: 0, budget: limit };
-    }
-    if (isIncome) {
-       categoryStats[catName].income += amount;
-       categoryStats[catName].net += amount;
-    } else {
-       categoryStats[catName].expense += amount;
-       categoryStats[catName].net -= amount;
-    }
-    categoryStats[catName].count += 1;
     
     // Merchant Stats
     const merchantName = (t.merchant || 'Unknown').trim();
@@ -385,7 +374,7 @@ export default function LaporanPage() {
     
     if (!merchantStats[key]) {
       const dbRule = merchantRules.find(r => r.merchant_pattern.toLowerCase() === key);
-      merchantStats[key] = { name: merchantName, income: 0, expense: 0, net: 0, count: 0, budget: dbRule?.budget_limit || 0 };
+      merchantStats[key] = { key, categoryId: null, name: merchantName, income: 0, expense: 0, net: 0, count: 0, budget: dbRule?.budget_limit || 0 };
     }
     if (isIncome) {
        merchantStats[key].income += amount;
@@ -455,6 +444,7 @@ export default function LaporanPage() {
 
   const annualStats = Array.from({ length: 12 }, (_, i) => ({ month: i, income: 0, expense: 0, net: 0 }));
   const annualCategoryStats: Record<string, number[]> = {};
+  const annualCategoryNames: Record<string, string> = {};
   const annualMerchantStats: Record<string, number[]> = {};
   const annualMerchantCounts: Record<string, number> = {};
 
@@ -463,6 +453,7 @@ export default function LaporanPage() {
     const m = txDate.getMonth();
     const amount = Number(t.amount);
     const catName = (t.categories as any)?.name || 'Lain-lain';
+    const catKey = getParentCategoryKey(t);
     const isTransfer = isInternalTransfer(catName);
 
     if (t.type === 'INCOME' && !isTransfer) {
@@ -472,8 +463,9 @@ export default function LaporanPage() {
       annualStats[m].expense += amount;
       annualStats[m].net -= amount;
       
-      if (!annualCategoryStats[catName]) annualCategoryStats[catName] = Array(12).fill(0);
-      annualCategoryStats[catName][m] += amount;
+      if (!annualCategoryStats[catKey]) annualCategoryStats[catKey] = Array(12).fill(0);
+      annualCategoryNames[catKey] = getParentCategoryName(t);
+      annualCategoryStats[catKey][m] += amount;
 
       const merchantName = (t.merchant || 'Unknown').trim();
       const mKey = merchantName.toLowerCase();
@@ -495,11 +487,12 @@ export default function LaporanPage() {
     : Object.entries(annualMerchantStats);
 
   const annualFullBreakdownData = heatmapDataRaw
-    .map(([name, months]) => ({
-      name,
+    .map(([key, months]) => ({
+      key,
+      name: annualBreakdownMode === "Kategori" ? annualCategoryNames[key] : key,
       months,
       total: months.reduce((a,b)=>a+b,0),
-      count: annualBreakdownMode === "Merchant" ? annualMerchantCounts[name] || 0 : null,
+      count: annualBreakdownMode === "Merchant" ? annualMerchantCounts[key] || 0 : null,
     }))
     .filter(row => row.total > 0)
     .sort((a,b) => b.total - a.total);
@@ -524,6 +517,7 @@ export default function LaporanPage() {
   activeYears.forEach(y => multiYearStats[y] = { income: 0, expense: 0, net: 0 });
 
   const multiYearCategoryStats: Record<string, number[]> = {};
+  const multiYearCategoryNames: Record<string, string> = {};
   const multiYearMerchantStats: Record<string, number[]> = {};
   const multiYearMerchantCounts: Record<string, number> = {};
 
@@ -533,6 +527,7 @@ export default function LaporanPage() {
     
     const amount = Number(t.amount);
     const catName = (t.categories as any)?.name || 'Lain-lain';
+    const catKey = getParentCategoryKey(t);
     const isTransfer = isInternalTransfer(catName);
 
     if (t.type === 'INCOME' && !isTransfer) {
@@ -542,9 +537,10 @@ export default function LaporanPage() {
       multiYearStats[y].expense += amount;
       lifetimeExpense += amount;
       
-      if (!multiYearCategoryStats[catName]) multiYearCategoryStats[catName] = Array(activeYears.length).fill(0);
+      if (!multiYearCategoryStats[catKey]) multiYearCategoryStats[catKey] = Array(activeYears.length).fill(0);
+      multiYearCategoryNames[catKey] = getParentCategoryName(t);
       const yearIdx = activeYears.indexOf(y);
-      multiYearCategoryStats[catName][yearIdx] += amount;
+      multiYearCategoryStats[catKey][yearIdx] += amount;
 
       const merchantName = (t.merchant || 'Unknown').trim();
       const mKey = merchantName.toLowerCase();
@@ -618,7 +614,7 @@ export default function LaporanPage() {
     : Object.entries(multiYearMerchantStats);
 
   const multiYearFullBreakdownData = myBreakdownRaw
-    .map(([name, yearsData]) => {
+    .map(([key, yearsData]) => {
       const currentVal = yearsData[selIdx] || 0;
       const prevVal = prevIdx !== -1 ? (yearsData[prevIdx] || 0) : null;
       let yoy = null;
@@ -628,11 +624,12 @@ export default function LaporanPage() {
         yoy = Infinity;
       }
       return {
-        name,
+        key,
+        name: multiYearBreakdownMode === "Kategori" ? multiYearCategoryNames[key] : key,
         currentVal,
         prevVal,
         yoy,
-        count: multiYearBreakdownMode === "Merchant" ? multiYearMerchantCounts[name] || 0 : null,
+        count: multiYearBreakdownMode === "Merchant" ? multiYearMerchantCounts[key] || 0 : null,
       };
     })
     .filter(row => row.currentVal > 0)
@@ -699,9 +696,9 @@ export default function LaporanPage() {
     };
   });
   
-  const activeHoveredSlice = hoveredSlice ? svgPaths.find(s => s.item.name === hoveredSlice) : null;
+  const activeHoveredSlice = hoveredSlice ? svgPaths.find(s => s.item.key === hoveredSlice) : null;
   
-  const openQuickEditBudget = (name: string, isMerchant: boolean = false) => {
+  const openQuickEditBudget = (name: string, isMerchant: boolean = false, categoryId: string | null = null) => {
     if (isMerchant) {
       const mr = merchantRules.find(r => r.merchant_pattern.toLowerCase() === name.toLowerCase());
       setEditingCatName(name);
@@ -710,7 +707,8 @@ export default function LaporanPage() {
       setEditingType("merchant");
       setEditBudgetModalOpen(true);
     } else {
-      let dbCat = categories.find(c => c.name.toLowerCase() === name.toLowerCase() && c.user_id === user?.id);
+      let dbCat = categoryId ? categories.find(c => c.id === categoryId) : undefined;
+      if (!dbCat) dbCat = categories.find(c => c.name.toLowerCase() === name.toLowerCase() && c.user_id === user?.id);
       if (!dbCat) dbCat = categories.find(c => c.name.toLowerCase() === name.toLowerCase());
       
       if (dbCat) {
@@ -1142,7 +1140,7 @@ export default function LaporanPage() {
     .filter((stat) => stat.count >= 2 && stat.expense > 0)
     .sort((a, b) => b.expense - a.expense)[0];
   const annualTopExpenseCategory = Object.entries(annualCategoryStats)
-    .map(([name, months]) => ({ name, total: months.reduce((sum, value) => sum + value, 0) }))
+    .map(([key, months]) => ({ name: annualCategoryNames[key], total: months.reduce((sum, value) => sum + value, 0) }))
     .filter((item) => item.total > 0)
     .sort((a, b) => b.total - a.total)[0];
 
@@ -1351,7 +1349,7 @@ export default function LaporanPage() {
               {fullActiveList.map((item, index) => {
                 const budgetState = getBudgetPresentation(item.expense, item.budget);
                 return (
-                  <article key={item.name} className="rounded-xl border border-slate-200 bg-white p-3.5 transition-[background-color,border-color] hover:border-emerald-200/80 hover:bg-emerald-50/20">
+                  <article key={item.key} className="rounded-xl border border-slate-200 bg-white p-3.5 transition-[background-color,border-color] hover:border-emerald-200/80 hover:bg-emerald-50/20">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 items-start gap-2.5">
                         <ExplorerMark categoryName={breakdownMode === "Kategori" ? item.name : undefined} merchantName={breakdownMode === "Merchant" ? item.name : undefined} dominantCategories={monthlyMerchantDominantCategories} rank={index + 1} />
@@ -1364,7 +1362,7 @@ export default function LaporanPage() {
                       {item.budget > 0 && <span className={`shrink-0 text-xs font-bold tabular-nums ${budgetState.textClass}`}>{budgetState.percentage.toFixed(0)}%</span>}
                     </div>
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${budgetState.barClass}`} style={{ width: `${budgetState.progressWidth}%` }} /></div>
-                    <div className="mt-2 flex items-center justify-between gap-3"><p className={`text-[10px] font-semibold ${budgetState.textClass}`}>{budgetState.detail}</p><button type="button" onClick={() => openQuickEditBudget(item.name, breakdownMode === "Merchant")} className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-50 hover:text-emerald-900"><Edit3 className="h-3.5 w-3.5" /> {item.budget > 0 ? "Ubah" : "Atur"}</button></div>
+                    <div className="mt-2 flex items-center justify-between gap-3"><p className={`text-[10px] font-semibold ${budgetState.textClass}`}>{budgetState.detail}</p><button type="button" onClick={() => openQuickEditBudget(item.name, breakdownMode === "Merchant", item.categoryId)} className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-50 hover:text-emerald-900"><Edit3 className="h-3.5 w-3.5" /> {item.budget > 0 ? "Ubah" : "Atur"}</button></div>
                   </article>
                 );
               })}
@@ -1375,7 +1373,7 @@ export default function LaporanPage() {
                 const value = getStatValue(item);
                 const percentage = detailChartSum > 0 ? (Math.abs(value) / detailChartSum) * 100 : 0;
                 return (
-                  <article key={item.name} className="border-b border-slate-100 px-3.5 py-3 transition-colors last:border-0 hover:bg-emerald-50/30 md:px-4">
+                  <article key={item.key} className="border-b border-slate-100 px-3.5 py-3 transition-colors last:border-0 hover:bg-emerald-50/30 md:px-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex min-w-0 items-start gap-3"><ExplorerMark categoryName={breakdownMode === "Kategori" ? item.name : undefined} merchantName={breakdownMode === "Merchant" ? item.name : undefined} dominantCategories={monthlyMerchantDominantCategories} rank={index + 1} /><div className="min-w-0"><h2 className="truncate text-sm font-bold text-slate-900">{item.name}</h2><p className="mt-0.5 text-[10px] text-slate-400">{percentage.toFixed(1)}% kontribusi · {item.count} transaksi</p></div></div>
                       <p className="max-w-[45%] break-words text-right text-sm font-bold text-slate-900 tabular-nums">{formatMoney(value)}</p>
@@ -1446,7 +1444,7 @@ export default function LaporanPage() {
               {annualFullBreakdownData.map((row, index) => {
                 const percentage = annualDetailGrandTotal > 0 ? (row.total / annualDetailGrandTotal) * 100 : 0;
                 return (
-                  <article key={row.name} className="overflow-hidden rounded-2xl border border-slate-200 bg-white transition-[background-color,border-color] hover:border-emerald-200/80 hover:bg-emerald-50/20">
+                  <article key={row.key} className="overflow-hidden rounded-2xl border border-slate-200 bg-white transition-[background-color,border-color] hover:border-emerald-200/80 hover:bg-emerald-50/20">
                     <div className="flex items-start justify-between gap-4 p-3.5 md:p-4"><div className="flex min-w-0 gap-3"><ExplorerMark categoryName={annualBreakdownMode === "Kategori" ? row.name : undefined} merchantName={annualBreakdownMode === "Merchant" ? row.name : undefined} dominantCategories={annualMerchantDominantCategories} rank={index + 1} /><div className="min-w-0"><h2 className="truncate text-sm font-bold text-slate-900">{row.name}</h2><p className="mt-0.5 text-[10px] text-slate-400">{percentage.toFixed(1)}% kontribusi{row.count !== null ? ` · ${row.count} transaksi` : ""}</p></div></div><p className="max-w-[42%] break-words text-right text-sm font-bold text-slate-900 tabular-nums">{formatMoney(row.total)}</p></div>
                     <div className="mx-3.5 h-1.5 overflow-hidden rounded-full bg-slate-100 md:mx-4"><div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(percentage, 100)}%` }} /></div>
                     <div className="mt-3 grid grid-cols-3 gap-px border-t border-slate-100 bg-slate-100 sm:grid-cols-6 lg:grid-cols-12">{row.months.map((value, monthIndex) => <div key={monthNames[monthIndex]} className="bg-[#FCFCF9] p-2.5"><p className="text-[10px] text-slate-400">{monthNames[monthIndex].slice(0, 3)}</p><p className={`mt-1 break-words text-[11px] font-semibold tabular-nums ${value > 0 ? "text-slate-700" : "text-slate-300"}`}>{value > 0 ? formatMoney(value) : "—"}</p></div>)}</div>
@@ -1493,7 +1491,7 @@ export default function LaporanPage() {
               {multiYearFullBreakdownData.map((item, index) => {
                 const percentage = multiYearDetailTotal > 0 ? (item.currentVal / multiYearDetailTotal) * 100 : 0;
                 const comparison = item.prevVal === null ? "Tahun pertama" : item.prevVal === 0 && item.currentVal > 0 ? `Baru di ${safeMultiYearSelected}` : item.yoy !== null && Number.isFinite(item.yoy) ? `${item.yoy > 0 ? "+" : ""}${Math.round(item.yoy)}% vs ${prevYear}` : "Belum ada pembanding valid";
-                return <article key={item.name} className="border-b border-slate-100 p-3.5 transition-colors last:border-0 hover:bg-emerald-50/30 md:p-4"><div className="flex items-start justify-between gap-4"><div className="flex min-w-0 gap-3"><ExplorerMark categoryName={multiYearBreakdownMode === "Kategori" ? item.name : undefined} merchantName={multiYearBreakdownMode === "Merchant" ? item.name : undefined} dominantCategories={multiYearMerchantDominantCategories} rank={index + 1} /><div className="min-w-0"><h2 className="truncate text-sm font-bold text-slate-900">{item.name}</h2><p className="mt-0.5 text-[10px] text-slate-400">{percentage.toFixed(1)}% kontribusi{item.count !== null ? ` · ${item.count} transaksi` : ""}</p><p className="mt-1 text-[10px] font-semibold text-slate-600">{comparison}</p></div></div><p className="max-w-[42%] break-words text-right text-sm font-bold text-slate-900 tabular-nums">{formatMoney(item.currentVal)}</p></div><div className="ml-11 mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(percentage, 100)}%` }} /></div></article>;
+                return <article key={item.key} className="border-b border-slate-100 p-3.5 transition-colors last:border-0 hover:bg-emerald-50/30 md:p-4"><div className="flex items-start justify-between gap-4"><div className="flex min-w-0 gap-3"><ExplorerMark categoryName={multiYearBreakdownMode === "Kategori" ? item.name : undefined} merchantName={multiYearBreakdownMode === "Merchant" ? item.name : undefined} dominantCategories={multiYearMerchantDominantCategories} rank={index + 1} /><div className="min-w-0"><h2 className="truncate text-sm font-bold text-slate-900">{item.name}</h2><p className="mt-0.5 text-[10px] text-slate-400">{percentage.toFixed(1)}% kontribusi{item.count !== null ? ` · ${item.count} transaksi` : ""}</p><p className="mt-1 text-[10px] font-semibold text-slate-600">{comparison}</p></div></div><p className="max-w-[42%] break-words text-right text-sm font-bold text-slate-900 tabular-nums">{formatMoney(item.currentVal)}</p></div><div className="ml-11 mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(percentage, 100)}%` }} /></div></article>;
               })}
             </section>
           )}
@@ -1914,7 +1912,7 @@ export default function LaporanPage() {
                     {budgetOverviewItems.map((item, index) => {
                       const budgetState = getBudgetPresentation(item.expense, item.budget);
                       return (
-                        <article key={item.name} className="rounded-xl border border-slate-200 bg-white p-3 transition-[background-color,border-color] hover:border-emerald-200/80 hover:bg-emerald-50/30">
+                        <article key={item.key} className="rounded-xl border border-slate-200 bg-white p-3 transition-[background-color,border-color] hover:border-emerald-200/80 hover:bg-emerald-50/30">
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex min-w-0 items-start gap-2.5">
                               <ExplorerMark categoryName={breakdownMode === "Kategori" ? item.name : undefined} merchantName={breakdownMode === "Merchant" ? item.name : undefined} dominantCategories={monthlyMerchantDominantCategories} rank={index + 1} />
@@ -1943,17 +1941,17 @@ export default function LaporanPage() {
                       <svg viewBox="0 0 200 200" className="w-full h-full transform -rotate-90">
                         {svgPaths.map((slice) => (
                           <circle
-                            key={slice.item.name}
+                            key={slice.item.key}
                             cx="100"
                             cy="100"
                             r={svgRadius}
                             fill="transparent"
                             stroke={slice.color}
-                            strokeWidth={hoveredSlice === slice.item.name ? strokeWidth + 6 : strokeWidth}
+                            strokeWidth={hoveredSlice === slice.item.key ? strokeWidth + 6 : strokeWidth}
                             strokeDasharray={slice.strokeDasharray}
                             strokeDashoffset={slice.strokeDashoffset}
                             className="transition-all duration-300 cursor-pointer"
-                            onMouseEnter={() => setHoveredSlice(slice.item.name)}
+                            onMouseEnter={() => setHoveredSlice(slice.item.key)}
                             onMouseLeave={() => setHoveredSlice(null)}
                           />
                         ))}
@@ -2008,7 +2006,7 @@ export default function LaporanPage() {
                         const color = pieColors[i % pieColors.length];
 
                         return (
-                          <div key={item.name} className={`report-ranked-item rounded-xl p-3 transition-colors ${i === 0 ? "bg-emerald-50/70" : "bg-white/70 hover:bg-white"}`}>
+                          <div key={item.key} className={`report-ranked-item rounded-xl p-3 transition-colors ${i === 0 ? "bg-emerald-50/70" : "bg-white/70 hover:bg-white"}`}>
                             <div className="flex items-start justify-between gap-3 text-sm">
                               <div className="flex min-w-0 items-start gap-2.5">
                                 <ExplorerMark categoryName={breakdownMode === "Kategori" ? item.name : undefined} merchantName={breakdownMode === "Merchant" ? item.name : undefined} dominantCategories={monthlyMerchantDominantCategories} rank={i + 1} />
@@ -2224,7 +2222,7 @@ export default function LaporanPage() {
                   annualOverviewItems.map((row, index) => {
                     const percentage = heatmapGrandTotal > 0 ? (row.total / heatmapGrandTotal) * 100 : 0;
                     return (
-                      <article key={row.name} className="rounded-xl border border-slate-100 bg-[#FCFCF9] p-3 transition-[background-color,border-color] hover:border-emerald-200/70 hover:bg-white">
+                      <article key={row.key} className="rounded-xl border border-slate-100 bg-[#FCFCF9] p-3 transition-[background-color,border-color] hover:border-emerald-200/70 hover:bg-white">
                         <div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-start gap-2.5"><ExplorerMark categoryName={annualBreakdownMode === "Kategori" ? row.name : undefined} merchantName={annualBreakdownMode === "Merchant" ? row.name : undefined} dominantCategories={annualMerchantDominantCategories} rank={index + 1} /><div className="min-w-0"><h4 className="truncate text-sm font-bold text-slate-900">{row.name}</h4><p className="mt-0.5 text-[10px] text-slate-400">{percentage.toFixed(1)}% kontribusi{row.count !== null ? ` · ${row.count} transaksi` : ""}</p></div></div><p className="max-w-[42%] break-words text-right text-sm font-bold text-slate-900 tabular-nums">{formatMoney(row.total)}</p></div>
                         <div className="ml-9 mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(percentage, 100)}%` }} /></div>
                       </article>
@@ -2255,7 +2253,7 @@ export default function LaporanPage() {
                     <svg viewBox="0 0 200 200" className="w-full h-full transform -rotate-90">
                       {annualSvgPaths.map((slice) => (
                         <circle
-                          key={slice.item.name}
+                          key={slice.item.key}
                           cx="100"
                           cy="100"
                           r={svgRadius}
@@ -2271,7 +2269,7 @@ export default function LaporanPage() {
                   </div>
                   <div className="w-full space-y-2 max-h-[300px] overflow-y-auto pr-2">
                     {annualSvgPaths.slice(0, 10).map(slice => (
-                      <div key={slice.item.name} className="flex justify-between items-center text-xs">
+                      <div key={slice.item.key} className="flex justify-between items-center text-xs">
                         <div className="flex items-center gap-1.5 truncate pr-2">
                           <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: slice.color }}></span>
                           <span className="truncate text-slate-600">{slice.item.name}</span>
@@ -2545,17 +2543,17 @@ export default function LaporanPage() {
                     <svg viewBox="0 0 200 200" className="w-full h-full transform -rotate-90">
                       {mySvgPaths.map((slice) => (
                         <circle
-                          key={slice.item.name}
+                          key={slice.item.key}
                           cx="100"
                           cy="100"
                           r={svgRadius}
                           fill="transparent"
                           stroke={slice.color}
-                          strokeWidth={myHoveredSlice === slice.item.name ? strokeWidth + 6 : strokeWidth}
+                          strokeWidth={myHoveredSlice === slice.item.key ? strokeWidth + 6 : strokeWidth}
                           strokeDasharray={slice.strokeDasharray}
                           strokeDashoffset={slice.strokeDashoffset}
                           className="transition-all duration-300 cursor-pointer"
-                          onMouseEnter={() => setMyHoveredSlice(slice.item.name)}
+                          onMouseEnter={() => setMyHoveredSlice(slice.item.key)}
                           onMouseLeave={() => setMyHoveredSlice(null)}
                         />
                       ))}
@@ -2570,7 +2568,7 @@ export default function LaporanPage() {
                       }}
                     >
                       {(() => {
-                        const activeMyHoveredSlice = myHoveredSlice ? mySvgPaths.find(s => s.item.name === myHoveredSlice) : null;
+                        const activeMyHoveredSlice = myHoveredSlice ? mySvgPaths.find(s => s.item.key === myHoveredSlice) : null;
                         if (activeMyHoveredSlice) {
                           return (
                             <>
@@ -2628,7 +2626,7 @@ export default function LaporanPage() {
                     }
 
                     return (
-                      <div key={item.name} className={`rounded-xl border p-3 transition-[background-color,border-color] ${i === 0 ? "border-emerald-200 bg-emerald-50/55" : "border-slate-100 bg-[#FCFCF9] hover:border-emerald-200/70 hover:bg-white"}`}>
+                      <div key={item.key} className={`rounded-xl border p-3 transition-[background-color,border-color] ${i === 0 ? "border-emerald-200 bg-emerald-50/55" : "border-slate-100 bg-[#FCFCF9] hover:border-emerald-200/70 hover:bg-white"}`}>
                         <div className="flex justify-between items-start gap-3 text-sm">
                           <div className="flex min-w-0 items-start gap-2.5">
                             <ExplorerMark categoryName={multiYearBreakdownMode === "Kategori" ? item.name : undefined} merchantName={multiYearBreakdownMode === "Merchant" ? item.name : undefined} dominantCategories={multiYearMerchantDominantCategories} rank={i + 1} />

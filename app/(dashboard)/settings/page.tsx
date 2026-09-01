@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertCircle, AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronRight, Circle, CircleDashed, Clock, Copy, Edit2, Mail, Plus, RefreshCw, RotateCcw, Settings, Shield, ShieldAlert, Tags, Trash2, User, X } from "lucide-react";
-import { useState, useEffect, useMemo, useSyncExternalStore } from "react";
+import { useState, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useDouit } from "../../providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -10,9 +10,19 @@ import { ConfirmDialog } from "@/app/components/ui/ConfirmDialog";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
 import { CATEGORY_ICON_OPTIONS, CategoryIcon, resolveCategoryColor } from "@/app/components/CategoryIcon";
 import {
+  buildCustomSubcategoryInsertPayload,
+  buildCustomSubcategoryUpdatePayload,
+  canManageSubcategory,
+  getSubcategoryParentEligibilityFromRows,
   groupSubcategoriesByParent,
+  isPostgresForeignKeyViolation,
+  isPostgresUniqueViolation,
+  isValidSubcategoryParentFromRows,
   listVisibleSubcategoriesForUser,
+  SUBCATEGORY_NAME_MAX_LENGTH,
   SYSTEM_CATEGORY_NAMES,
+  validateCustomSubcategoryCreate,
+  validateCustomSubcategoryUpdate,
 } from "@/lib/categories";
 import type { CategoryRecord, SubcategoryRecord } from "@/types";
 
@@ -23,6 +33,17 @@ type SettingsCategory = CategoryRecord & {
   color_hex: string | null;
   created_at: string;
   budget_limit: number;
+};
+
+type SubcategoryEditorState = {
+  mode: 'create' | 'edit';
+  parentId: string;
+  subcategoryId?: string;
+};
+
+type SubcategoryDeleteTarget = {
+  subcategory: SubcategoryRecord;
+  usageCount: number;
 };
 
 const SETTINGS_NAV: { id: SettingsTab; label: string; description: string; icon: typeof Mail }[] = [
@@ -40,6 +61,9 @@ const CATEGORY_COLOR_OPTIONS = [
   "#ca8a04",
   "#64748b",
 ] as const;
+
+const SUBCATEGORY_DUPLICATE_MESSAGE = "Subkategori dengan nama ini sudah ada di kategori tersebut.";
+const CATEGORY_HAS_CHILDREN_MESSAGE = "Kategori ini masih memiliki subkategori. Hapus subkategori terlebih dahulu sebelum menghapus kategori.";
 
 const formatRupiah = (value: number | string) => new Intl.NumberFormat("id-ID", {
   style: "currency",
@@ -67,6 +91,7 @@ export default function SettingsPage() {
 
   // Confirmation Dialog States
   const [confirmDeleteCatId, setConfirmDeleteCatId] = useState<string | null>(null);
+  const [subcategoryDeleteTarget, setSubcategoryDeleteTarget] = useState<SubcategoryDeleteTarget | null>(null);
   const [confirmDeleteRuleId, setConfirmDeleteRuleId] = useState<string | null>(null);
   const [confirmRegenerateOpen, setConfirmRegenerateOpen] = useState(false);
   const [confirmResetDataOpen, setConfirmResetDataOpen] = useState(false);
@@ -74,6 +99,18 @@ export default function SettingsPage() {
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [addCategoryOpen, setAddCategoryOpen] = useState(false);
   const [categoryIconPickerOpen, setCategoryIconPickerOpen] = useState(false);
+  const [subcategoryEditor, setSubcategoryEditor] = useState<SubcategoryEditorState | null>(null);
+  const [subcategoryName, setSubcategoryName] = useState("");
+  const [subcategoryIcon, setSubcategoryIcon] = useState<string | null>(null);
+  const [subcategoryColor, setSubcategoryColor] = useState<string | null>(null);
+  const [subcategoryFormError, setSubcategoryFormError] = useState<string | null>(null);
+  const [isSavingSubcategory, setIsSavingSubcategory] = useState(false);
+  const [checkingSubcategoryUsageId, setCheckingSubcategoryUsageId] = useState<string | null>(null);
+  const [isDeletingSubcategory, setIsDeletingSubcategory] = useState(false);
+  const [isDeletingCategory, setIsDeletingCategory] = useState(false);
+  const subcategoryNameInputRef = useRef<HTMLInputElement>(null);
+  const subcategoryReturnFocusRef = useRef<HTMLElement | null>(null);
+  const isSavingSubcategoryRef = useRef(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -94,6 +131,27 @@ export default function SettingsPage() {
       document.removeEventListener('keydown', handleEscape);
     };
   }, [addCategoryOpen, isMobileViewport]);
+
+  useEffect(() => {
+    if (!subcategoryEditor) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const focusTimer = window.setTimeout(() => subcategoryNameInputRef.current?.focus(), 0);
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isSavingSubcategoryRef.current) {
+        setSubcategoryEditor(null);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleEscape);
+      subcategoryReturnFocusRef.current?.focus();
+    };
+  }, [subcategoryEditor]);
 
   const [copied, setCopied] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
@@ -228,7 +286,7 @@ export default function SettingsPage() {
       if (merchantRuleResult.error) throw merchantRuleResult.error;
 
       const cats = categoryResult.data || [];
-      setCategories(cats.filter((category) => category.name !== SYSTEM_CATEGORY_NAMES.SAVING).map((category) => ({
+      setCategories(cats.map((category) => ({
         ...category,
         budget_limit: category.category_budgets && category.category_budgets.length > 0
           ? Number(category.category_budgets[0].amount)
@@ -249,8 +307,8 @@ export default function SettingsPage() {
     setConfirmDeleteCatId(id);
   };
 
-  const executeDeleteCategory = async () => {
-    if (!user || !confirmDeleteCatId) return;
+  const executeDeleteCategory = async (): Promise<boolean> => {
+    if (!user || !confirmDeleteCatId || isDeletingCategory) return false;
     const id = confirmDeleteCatId;
     const supabase = createClient();
     const category = categories.find(c =>
@@ -261,35 +319,57 @@ export default function SettingsPage() {
     );
 
     if (!category || !lainLain) {
-      setConfirmDeleteCatId(null);
       toast.error("Kategori tidak dapat dihapus dengan aman.");
-      return;
+      return true;
     }
 
-    const { error: reassignError } = await supabase
-      .from('transactions')
-      .update({ category_id: lainLain.id })
-      .eq('user_id', user.id)
-      .eq('category_id', id);
-    if (reassignError) {
-      setConfirmDeleteCatId(null);
-      toast.error("Gagal memindahkan transaksi sebelum kategori dihapus.");
-      return;
-    }
+    setIsDeletingCategory(true);
+    try {
+      const { count: childCount, error: childCountError } = await supabase
+        .from('subcategories')
+        .select('id', { count: 'exact', head: true })
+        .eq('category_id', id);
 
-    const { error } = await supabase
-      .from('categories')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .eq('is_system', false);
-    setConfirmDeleteCatId(null);
-    if (error) {
-      toast.error("Gagal menghapus kategori: " + error.message);
-      return;
+      if (childCountError) {
+        toast.error("Subkategori kategori ini belum dapat diperiksa.");
+        return false;
+      }
+      if ((childCount || 0) > 0) {
+        toast.error(CATEGORY_HAS_CHILDREN_MESSAGE);
+        return true;
+      }
+
+      const { error: reassignError } = await supabase
+        .from('transactions')
+        .update({ category_id: lainLain.id })
+        .eq('user_id', user.id)
+        .eq('category_id', id);
+      if (reassignError) {
+        toast.error("Gagal memindahkan transaksi sebelum kategori dihapus.");
+        return false;
+      }
+
+      const { error } = await supabase
+        .from('categories')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .eq('is_system', false);
+      if (error) {
+        toast.error(isPostgresForeignKeyViolation(error)
+          ? CATEGORY_HAS_CHILDREN_MESSAGE
+          : "Kategori belum dapat dihapus.");
+        return false;
+      }
+      toast.success("Kategori berhasil dihapus.");
+      await fetchRulesAndCategories();
+      return true;
+    } catch {
+      toast.error("Kategori belum dapat dihapus.");
+      return false;
+    } finally {
+      setIsDeletingCategory(false);
     }
-    toast.success("Kategori berhasil dihapus.");
-    fetchRulesAndCategories();
   };
 
   const handleAddCategory = async (e: React.FormEvent) => {
@@ -379,6 +459,220 @@ export default function SettingsPage() {
     setEditCatModalOpen(false);
     toast.success("Perubahan kategori tersimpan.");
     fetchRulesAndCategories();
+  };
+
+  const closeSubcategoryEditor = () => {
+    if (isSavingSubcategoryRef.current) return;
+    setSubcategoryEditor(null);
+    setSubcategoryFormError(null);
+  };
+
+  const openCreateSubcategory = (category: SettingsCategory) => {
+    if (!user) return;
+    const eligibility = getSubcategoryParentEligibilityFromRows({
+      categories,
+      userId: user.id,
+      categoryId: category.id,
+    });
+    if (eligibility.status !== 'eligible') {
+      toast.error(eligibility.status === 'blocked_parent'
+        ? "Subkategori pribadi belum tersedia untuk kategori khusus ini."
+        : "Kategori induk tidak valid atau tidak dapat diakses.");
+      return;
+    }
+
+    subcategoryReturnFocusRef.current = document.activeElement as HTMLElement | null;
+    setSubcategoryName("");
+    setSubcategoryIcon(null);
+    setSubcategoryColor(null);
+    setSubcategoryFormError(null);
+    setSubcategoryEditor({ mode: 'create', parentId: category.id });
+  };
+
+  const openEditSubcategory = (subcategory: SubcategoryRecord) => {
+    if (!user || !canManageSubcategory(subcategory, user.id)) {
+      toast.error("Subkategori sistem atau milik pengguna lain tidak dapat diubah.");
+      return;
+    }
+    if (!isValidSubcategoryParentFromRows({
+      categories,
+      userId: user.id,
+      categoryId: subcategory.category_id,
+    })) {
+      toast.error("Kategori induk tidak valid atau tidak dapat diakses.");
+      return;
+    }
+
+    subcategoryReturnFocusRef.current = document.activeElement as HTMLElement | null;
+    setSubcategoryName(subcategory.name);
+    setSubcategoryIcon(subcategory.icon_name);
+    setSubcategoryColor(subcategory.color_hex);
+    setSubcategoryFormError(null);
+    setSubcategoryEditor({
+      mode: 'edit',
+      parentId: subcategory.category_id,
+      subcategoryId: subcategory.id,
+    });
+  };
+
+  const handleSaveSubcategory = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!user || !subcategoryEditor || isSavingSubcategoryRef.current) return;
+
+    const validation = subcategoryEditor.mode === 'create'
+      ? validateCustomSubcategoryCreate({
+          categories,
+          subcategories,
+          userId: user.id,
+          categoryId: subcategoryEditor.parentId,
+          name: subcategoryName,
+        })
+      : validateCustomSubcategoryUpdate({
+          categories,
+          subcategories,
+          userId: user.id,
+          subcategoryId: subcategoryEditor.subcategoryId || '',
+          name: subcategoryName,
+        });
+
+    if (validation.status !== 'valid') {
+      const message = validation.status === 'duplicate_name'
+        ? SUBCATEGORY_DUPLICATE_MESSAGE
+        : validation.status === 'empty_name'
+          ? "Nama subkategori wajib diisi."
+          : validation.status === 'name_too_long'
+            ? `Nama subkategori maksimal ${SUBCATEGORY_NAME_MAX_LENGTH} karakter.`
+            : validation.status === 'blocked_parent'
+              ? "Subkategori pribadi belum tersedia untuk kategori khusus ini."
+              : validation.status === 'forbidden'
+                ? "Subkategori sistem atau milik pengguna lain tidak dapat diubah."
+                : "Kategori induk tidak valid atau tidak dapat diakses.";
+      setSubcategoryFormError(message);
+      return;
+    }
+
+    const supabase = createClient();
+    isSavingSubcategoryRef.current = true;
+    setIsSavingSubcategory(true);
+    setSubcategoryFormError(null);
+    try {
+      const mutation = subcategoryEditor.mode === 'create'
+        ? supabase.from('subcategories').insert(buildCustomSubcategoryInsertPayload({
+            categoryId: validation.parent.id,
+            userId: user.id,
+            name: validation.name,
+            iconName: subcategoryIcon,
+            colorHex: subcategoryColor,
+          }))
+        : supabase.from('subcategories').update(buildCustomSubcategoryUpdatePayload({
+            name: validation.name,
+            iconName: subcategoryIcon,
+            colorHex: subcategoryColor,
+          }))
+            .eq('id', subcategoryEditor.subcategoryId || '')
+            .eq('user_id', user.id)
+            .eq('is_system', false);
+
+      const { data, error } = await mutation
+        .select('id, category_id, user_id, name, is_system, system_key, icon_name, color_hex, created_at')
+        .single();
+
+      if (error || !data) {
+        setSubcategoryFormError(isPostgresUniqueViolation(error)
+          ? SUBCATEGORY_DUPLICATE_MESSAGE
+          : subcategoryEditor.mode === 'edit'
+            ? "Subkategori tidak dapat diubah. Pastikan subkategori masih menjadi milikmu."
+            : "Subkategori belum dapat ditambahkan pada kategori ini.");
+        return;
+      }
+
+      await fetchRulesAndCategories();
+      setSubcategoryEditor(null);
+      setSubcategoryFormError(null);
+      toast.success(subcategoryEditor.mode === 'create'
+        ? "Subkategori berhasil ditambahkan."
+        : "Perubahan subkategori tersimpan.");
+    } catch {
+      setSubcategoryFormError(subcategoryEditor.mode === 'create'
+        ? "Subkategori belum dapat ditambahkan pada kategori ini."
+        : "Subkategori belum dapat diubah.");
+    } finally {
+      isSavingSubcategoryRef.current = false;
+      setIsSavingSubcategory(false);
+    }
+  };
+
+  const handleDeleteSubcategory = async (subcategory: SubcategoryRecord) => {
+    if (!user || checkingSubcategoryUsageId) return;
+    if (!canManageSubcategory(subcategory, user.id)) {
+      toast.error("Subkategori sistem atau milik pengguna lain tidak dapat dihapus.");
+      return;
+    }
+    if (!isValidSubcategoryParentFromRows({
+      categories,
+      userId: user.id,
+      categoryId: subcategory.category_id,
+    })) {
+      toast.error("Kategori induk tidak valid atau tidak dapat diakses.");
+      return;
+    }
+
+    setCheckingSubcategoryUsageId(subcategory.id);
+    const supabase = createClient();
+    try {
+      const { count, error } = await supabase
+        .from('transactions')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('subcategory_id', subcategory.id);
+      if (error) {
+        toast.error("Pemakaian subkategori belum dapat diperiksa.");
+        return;
+      }
+      setSubcategoryDeleteTarget({ subcategory, usageCount: count || 0 });
+    } catch {
+      toast.error("Pemakaian subkategori belum dapat diperiksa.");
+    } finally {
+      setCheckingSubcategoryUsageId(null);
+    }
+  };
+
+  const executeDeleteSubcategory = async (): Promise<boolean> => {
+    if (!user || !subcategoryDeleteTarget || isDeletingSubcategory) return false;
+    const current = subcategories.find(
+      (subcategory) => subcategory.id === subcategoryDeleteTarget.subcategory.id,
+    );
+    if (!current || !canManageSubcategory(current, user.id)) {
+      toast.error("Subkategori sistem atau milik pengguna lain tidak dapat dihapus.");
+      return true;
+    }
+
+    setIsDeletingSubcategory(true);
+    const supabase = createClient();
+    try {
+      const { data, error } = await supabase
+        .from('subcategories')
+        .delete()
+        .eq('id', current.id)
+        .eq('user_id', user.id)
+        .eq('is_system', false)
+        .select('id')
+        .maybeSingle();
+      if (error || !data) {
+        toast.error("Subkategori tidak dapat dihapus. Pastikan subkategori masih menjadi milikmu.");
+        return false;
+      }
+
+      setSubcategories((rows) => rows.filter((subcategory) => subcategory.id !== current.id));
+      setSubcategoryDeleteTarget(null);
+      toast.success("Subkategori berhasil dihapus.");
+      return true;
+    } catch {
+      toast.error("Subkategori belum dapat dihapus.");
+      return false;
+    } finally {
+      setIsDeletingSubcategory(false);
+    }
   };
 
   const handleDeleteRule = (id: string) => {
@@ -529,20 +823,49 @@ export default function SettingsPage() {
     () => groupSubcategoriesByParent(subcategories),
     [subcategories],
   );
+  const subcategoryEditorParent = subcategoryEditor
+    ? categories.find((category) => category.id === subcategoryEditor.parentId) || null
+    : null;
 
   const renderSubcategories = (category: SettingsCategory) => {
     const children = subcategoriesByCategory[category.id] || [];
-    if (children.length === 0) return null;
+    const eligibility = user ? getSubcategoryParentEligibilityFromRows({
+      categories,
+      userId: user.id,
+      categoryId: category.id,
+    }) : { status: 'invalid_parent' as const };
+    const canCreate = eligibility.status === 'eligible';
+    if (children.length === 0 && !canCreate) return null;
 
     return (
-      <ul className="settings-subcategory-list" aria-label={`Subkategori ${category.name}`}>
-        {children.map((subcategory) => (
-          <li key={subcategory.id}>
-            <span>{subcategory.name}</span>
-            <small>{subcategory.is_system ? 'Sistem' : 'Pribadi'}</small>
-          </li>
-        ))}
-      </ul>
+      <div className="settings-subcategory-block">
+        {children.length > 0 && (
+          <ul className="settings-subcategory-list" aria-label={`Subkategori ${category.name}`}>
+            {children.map((subcategory) => {
+              const manageable = !!user && canManageSubcategory(subcategory, user.id);
+              return (
+                <li key={subcategory.id}>
+                  <span className="settings-subcategory-copy">
+                    <span>{subcategory.name}</span>
+                    <small>{subcategory.is_system ? 'Sistem' : 'Pribadi'}</small>
+                  </span>
+                  {manageable && (
+                    <span className="settings-subcategory-actions">
+                      <button type="button" onClick={() => openEditSubcategory(subcategory)} aria-label={`Edit subkategori ${subcategory.name}`}><Edit2 size={14} /></button>
+                      <button type="button" className="danger" onClick={() => handleDeleteSubcategory(subcategory)} disabled={checkingSubcategoryUsageId === subcategory.id} aria-label={`Hapus subkategori ${subcategory.name}`}><Trash2 size={14} /></button>
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {canCreate && (
+          <button type="button" className="settings-subcategory-add-trigger" onClick={() => openCreateSubcategory(category)}>
+            <Plus size={13} /> Tambah subkategori
+          </button>
+        )}
+      </div>
     );
   };
 
@@ -797,6 +1120,48 @@ export default function SettingsPage() {
           </div>
         )}
 
+        {subcategoryEditor && subcategoryEditorParent && (
+          <div className="settings-modal-scrim" onMouseDown={() => closeSubcategoryEditor()}>
+            <div className="settings-modal-dialog settings-subcategory-dialog" onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="subcategory-editor-title" aria-describedby="subcategory-editor-description">
+              <div className="settings-modal-header">
+                <div>
+                  <h3 id="subcategory-editor-title">{subcategoryEditor.mode === 'create' ? 'Tambah subkategori' : 'Edit subkategori'}</h3>
+                  <p id="subcategory-editor-description">Di bawah: <b>{subcategoryEditorParent.name}</b></p>
+                </div>
+                <button type="button" onClick={closeSubcategoryEditor} disabled={isSavingSubcategory} aria-label="Tutup form subkategori"><X size={19} /></button>
+              </div>
+              <form onSubmit={handleSaveSubcategory}>
+                <div className="settings-modal-body">
+                  {subcategoryFormError && <div className="settings-form-error" role="alert"><AlertCircle size={16} /><span>{subcategoryFormError}</span></div>}
+                  <label className="settings-field"><span>Nama subkategori</span><input ref={subcategoryNameInputRef} type="text" value={subcategoryName} onChange={(event) => { setSubcategoryFormError(null); setSubcategoryName(event.target.value); }} maxLength={SUBCATEGORY_NAME_MAX_LENGTH} placeholder="Contoh: Meal Prep" required disabled={isSavingSubcategory} /></label>
+
+                  <fieldset className="settings-choice-field settings-subcategory-appearance">
+                    <legend>Ikon (opsional)</legend>
+                    <div className="settings-icon-grid">
+                      <button type="button" className={!subcategoryIcon ? 'active' : ''} onClick={() => setSubcategoryIcon(null)} aria-label="Gunakan ikon bawaan kategori" aria-pressed={!subcategoryIcon}><CategoryIcon category={subcategoryEditorParent} size={19} /></button>
+                      {CATEGORY_ICON_OPTIONS.map((iconName) => <button key={iconName} type="button" className={subcategoryIcon === iconName ? 'active' : ''} onClick={() => setSubcategoryIcon(iconName)} aria-label={`Pilih ikon ${iconName}`} aria-pressed={subcategoryIcon === iconName}><CategoryIcon category={{ icon_name: iconName }} size={19} /></button>)}
+                    </div>
+                    <small>{subcategoryIcon ? `Ikon khusus: ${subcategoryIcon}` : 'Mengikuti ikon kategori induk.'}</small>
+                  </fieldset>
+
+                  <fieldset className="settings-choice-field settings-color-field settings-subcategory-appearance">
+                    <legend>Warna (opsional)</legend>
+                    <div className="settings-color-swatches">
+                      <button type="button" className={`settings-color-default ${!subcategoryColor ? 'active' : ''}`} onClick={() => setSubcategoryColor(null)} aria-label="Gunakan warna bawaan kategori" aria-pressed={!subcategoryColor}><RotateCcw size={14} /></button>
+                      {CATEGORY_COLOR_OPTIONS.map((color) => <button key={color} type="button" className={subcategoryColor?.toLowerCase() === color.toLowerCase() ? 'active' : ''} style={{ backgroundColor: color }} onClick={() => setSubcategoryColor(color)} aria-label={`Pilih warna ${color}`} aria-pressed={subcategoryColor?.toLowerCase() === color.toLowerCase()}>{subcategoryColor?.toLowerCase() === color.toLowerCase() && <Check size={14} />}</button>)}
+                      <label className={`settings-custom-color ${subcategoryColor && !CATEGORY_COLOR_OPTIONS.some((color) => color.toLowerCase() === subcategoryColor.toLowerCase()) ? 'active' : ''}`} title="Pilih warna lain"><input type="color" value={subcategoryColor || '#64748b'} onChange={(event) => setSubcategoryColor(event.target.value)} aria-label="Pilih warna lain" /><span style={{ backgroundColor: subcategoryColor || '#64748b' }} /></label>
+                    </div>
+                  </fieldset>
+                </div>
+                <div className="settings-modal-actions">
+                  <button type="button" className="button secondary" onClick={closeSubcategoryEditor} disabled={isSavingSubcategory}>Batal</button>
+                  <button type="submit" className="button primary" disabled={isSavingSubcategory}>{isSavingSubcategory ? 'Menyimpan...' : subcategoryEditor.mode === 'create' ? 'Tambah subkategori' : 'Simpan perubahan'}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {/* CONFIRMATION DIALOGS */}
         <ConfirmDialog
           isOpen={!!confirmDeleteCatId}
@@ -806,6 +1171,22 @@ export default function SettingsPage() {
           description="Hapus kategori ini? Transaksi yang menggunakannya akan dialihkan ke 'Lain-lain'."
           confirmLabel="Hapus Kategori"
           variant="danger"
+          isLoading={isDeletingCategory}
+        />
+
+        <ConfirmDialog
+          isOpen={!!subcategoryDeleteTarget}
+          onClose={() => setSubcategoryDeleteTarget(null)}
+          onConfirm={executeDeleteSubcategory}
+          title="Hapus subkategori"
+          description={subcategoryDeleteTarget
+            ? subcategoryDeleteTarget.usageCount > 0
+              ? `Subkategori ini digunakan oleh ${subcategoryDeleteTarget.usageCount} transaksi. Jika dihapus, transaksi tetap ada tetapi subkategorinya akan dikosongkan.`
+              : `Hapus subkategori "${subcategoryDeleteTarget.subcategory.name}"?`
+            : ''}
+          confirmLabel="Hapus subkategori"
+          variant="danger"
+          isLoading={isDeletingSubcategory}
         />
 
         <ConfirmDialog

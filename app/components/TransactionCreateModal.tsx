@@ -1,7 +1,7 @@
 "use client";
 
 import { CircleDollarSign, X } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { triggerBudgetAlertCheck } from "@/app/actions/savings-alert";
@@ -9,11 +9,17 @@ import { BankLogo } from "@/app/components/BankLogo";
 import { CategoryIcon } from "@/app/components/CategoryIcon";
 import { CustomDatePicker } from "@/app/components/ui/CustomDatePicker";
 import { CustomSelect } from "@/app/components/ui/CustomSelect";
+import { SubcategorySelect } from "@/app/components/SubcategorySelect";
 import { useDouit } from "@/app/providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
-import { SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
+import {
+  listSubcategoriesForParent,
+  preserveSubcategoryForCategoryChange,
+  validateSubcategoryAssignmentFromRows,
+} from "@/lib/categories";
+import type { CategoryRecord } from "@/types";
 
-type TransactionCategory = { id: string; name: string; type: string };
+type TransactionCategory = CategoryRecord;
 
 type TransactionCreateModalProps = {
   open: boolean;
@@ -59,14 +65,17 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
   const [type, setType] = useState("EXPENSE");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [categoryId, setCategoryId] = useState("");
+  const [subcategoryId, setSubcategoryId] = useState<string | null>(null);
   const [source, setSource] = useState("Tunai");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   useEffect(() => {
     if (!open || !user || providedCategories) return;
     const supabase = createClient();
     void supabase
       .from("categories")
-      .select("id, name, type")
+      .select("id, user_id, name, type, is_system")
       .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
       .then(({ data }) => {
         if (data) setFetchedCategories(data);
@@ -75,9 +84,7 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
 
   const categories = providedCategories ?? fetchedCategories;
   const categoryOptions = useMemo(() => categories
-    .filter((category) =>
-      category.name !== SYSTEM_CATEGORY_NAMES.SAVING && category.type.toUpperCase() === type,
-    )
+    .filter((category) => category.type.toUpperCase() === type)
     .map((category) => ({
       value: category.id,
       label: category.name,
@@ -87,82 +94,129 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
   useEffect(() => {
     if (!open || categoryOptions.length === 0) return;
     if (!categoryOptions.some((category) => category.value === categoryId)) {
+      setSubcategoryId(null);
       setCategoryId(categoryOptions[0].value);
     }
   }, [categoryId, categoryOptions, open]);
 
+  const handleCategoryChange = (nextCategoryId: string) => {
+    setSubcategoryId((currentSubcategoryId) => preserveSubcategoryForCategoryChange({
+      previousCategoryId: categoryId,
+      nextCategoryId,
+      subcategoryId: currentSubcategoryId,
+    }));
+    setCategoryId(nextCategoryId);
+  };
+
   async function createTransaction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!user) return;
+    if (!user || isSubmittingRef.current) return;
+
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
 
     const data = new FormData(event.currentTarget);
     const supabase = createClient();
     const merchantName = String(data.get("name"));
     let selectedCategoryId = String(data.get("category_id"));
+    let selectedSubcategoryId = String(data.get("subcategory_id") || "") || null;
     let selectedSource = String(data.get("sumber_dana") || "Tunai");
     let notes: string | null = null;
     const transactionType = String(data.get("type")) as "INCOME" | "EXPENSE";
 
-    const { data: rule } = await supabase
-      .from("merchant_rules")
-      .select("category_id, keyword, sumber_dana")
-      .eq("user_id", user.id)
-      .eq("merchant_name", merchantName)
-      .single();
+    try {
+      const { data: rule } = await supabase
+        .from("merchant_rules")
+        .select("category_id, keyword, sumber_dana")
+        .eq("user_id", user.id)
+        .eq("merchant_name", merchantName)
+        .single();
 
-    const ruleCategory = rule?.category_id
-      ? categories.find((category) =>
-          category.id === rule.category_id && category.type.toUpperCase() === transactionType,
-        )
-      : null;
+      const ruleCategory = rule?.category_id
+        ? categories.find((category) =>
+            category.id === rule.category_id && category.type.toUpperCase() === transactionType,
+          )
+        : null;
 
-    if (rule && ruleCategory) {
-      if (rule.category_id) selectedCategoryId = rule.category_id;
-      if (rule.keyword) notes = rule.keyword;
-      if (rule.sumber_dana) selectedSource = rule.sumber_dana;
-    }
+      if (rule && ruleCategory) {
+        selectedSubcategoryId = preserveSubcategoryForCategoryChange({
+          previousCategoryId: selectedCategoryId,
+          nextCategoryId: ruleCategory.id,
+          subcategoryId: selectedSubcategoryId,
+        });
+        selectedCategoryId = ruleCategory.id;
+        if (rule.keyword) notes = rule.keyword;
+        if (rule.sumber_dana) selectedSource = rule.sumber_dana;
+      }
 
-    const selectedCategory = categories.find((category) =>
-      category.id === selectedCategoryId && category.type.toUpperCase() === transactionType,
-    );
-    if (!selectedCategory) {
-      toast.error("Kategori tidak valid untuk tipe transaksi ini.");
-      return;
-    }
+      const selectedCategory = categories.find((category) =>
+        category.id === selectedCategoryId && category.type.toUpperCase() === transactionType,
+      );
+      if (!selectedCategory) {
+        toast.error("Kategori tidak valid untuk tipe transaksi ini.");
+        return;
+      }
 
-    const { data: safeCategory, error: categoryError } = await supabase
-      .from("categories")
-      .select("id")
-      .eq("id", selectedCategoryId)
-      .eq("type", transactionType)
-      .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
-      .maybeSingle();
-    if (categoryError || !safeCategory) {
-      toast.error("Kategori tidak dapat digunakan.");
-      return;
-    }
+      const { data: safeCategory, error: categoryError } = await supabase
+        .from("categories")
+        .select("id, user_id, name, type, is_system")
+        .eq("id", selectedCategoryId)
+        .eq("type", transactionType)
+        .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
+        .maybeSingle();
+      if (categoryError || !safeCategory) {
+        toast.error("Kategori tidak dapat digunakan.");
+        return;
+      }
 
-    const rawDate = String(data.get("date") || "");
-    const targetDate = rawDate || new Date().toISOString().slice(0, 10);
-    const transaction = {
-      user_id: user.id,
-      amount: Number(data.get("amount")),
-      type: transactionType,
-      merchant: merchantName,
-      category_id: selectedCategoryId,
-      subcategory_id: null,
-      sumber_dana: selectedSource,
-      notes: notes ? `${notes} [NO_TIME]` : "[NO_TIME]",
-      status: "APPROVED",
-      source: "MANUAL_FORM",
-      confidence_score: 1.0,
-      transaction_date: `${targetDate}T00:00:00.000Z`,
-    };
+      if (selectedSubcategoryId) {
+        const subcategories = await listSubcategoriesForParent(
+          supabase,
+          selectedCategoryId,
+          user.id,
+        );
+        const validation = validateSubcategoryAssignmentFromRows({
+          subcategories,
+          categories: [safeCategory as CategoryRecord],
+          userId: user.id,
+          categoryId: selectedCategoryId,
+          subcategoryId: selectedSubcategoryId,
+          type: transactionType,
+        });
+        if (validation.status !== "matched") {
+          toast.error("Subkategori tidak valid untuk kategori yang dipilih.");
+          return;
+        }
+      }
 
-    await supabase.from("transactions").insert(transaction);
-    onClose();
-    if (transaction.type === "EXPENSE") {
-      triggerBudgetAlertCheck().catch(console.error);
+      const rawDate = String(data.get("date") || "");
+      const targetDate = rawDate || new Date().toISOString().slice(0, 10);
+      const transaction = {
+        user_id: user.id,
+        amount: Number(data.get("amount")),
+        type: transactionType,
+        merchant: merchantName,
+        category_id: selectedCategoryId,
+        subcategory_id: selectedSubcategoryId,
+        sumber_dana: selectedSource,
+        notes: notes ? `${notes} [NO_TIME]` : "[NO_TIME]",
+        status: "APPROVED",
+        source: "MANUAL_FORM",
+        confidence_score: 1.0,
+        transaction_date: `${targetDate}T00:00:00.000Z`,
+      };
+
+      const { error: insertError } = await supabase.from("transactions").insert(transaction);
+      if (insertError) throw insertError;
+      onClose();
+      if (transaction.type === "EXPENSE") {
+        triggerBudgetAlertCheck().catch(console.error);
+      }
+    } catch {
+      toast.error("Transaksi belum dapat disimpan. Silakan coba lagi.");
+    } finally {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
     }
   }
 
@@ -195,8 +249,15 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
               <span style={{ fontSize: "13px", fontWeight: 500, color: "#475569" }}>Kategori</span>
-              <CustomSelect name="category_id" value={categoryId || (categoryOptions[0]?.value ?? "")} onChange={setCategoryId} options={categoryOptions} placeholder="Pilih Kategori" responsiveOverlay selectionTitle="Pilih kategori" />
+              <CustomSelect name="category_id" value={categoryId || (categoryOptions[0]?.value ?? "")} onChange={handleCategoryChange} options={categoryOptions} placeholder="Pilih Kategori" responsiveOverlay selectionTitle="Pilih kategori" />
             </div>
+            <SubcategorySelect
+              categoryId={categoryId}
+              userId={user?.id || ""}
+              value={subcategoryId}
+              onChange={setSubcategoryId}
+              disabled={isSubmitting}
+            />
             <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
               <span style={{ fontSize: "13px", fontWeight: 500, color: "#475569" }}>Sumber Dana</span>
               <CustomSelect name="sumber_dana" value={source} onChange={setSource} options={sourceOptions} placeholder="Pilih Sumber Dana" responsiveOverlay selectionTitle="Pilih sumber dana" />
@@ -204,7 +265,7 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
           </div>
           <div className="modal-actions transaction-modal-actions rounded-b-2xl md:rounded-b-3xl" style={{ padding: "16px 24px", borderTop: "1px solid #eee", display: "flex", justifyContent: "flex-end", gap: "12px", background: "#f8fafc" }}>
             <button type="button" className="button secondary" onClick={onClose}>Batal</button>
-            <button type="submit" className="button primary" disabled={!user || categoryOptions.length === 0}>Simpan transaksi</button>
+            <button type="submit" className="button primary" disabled={!user || categoryOptions.length === 0 || isSubmitting}>{isSubmitting ? "Menyimpan..." : "Simpan transaksi"}</button>
           </div>
         </form>
       </div>

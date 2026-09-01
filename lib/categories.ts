@@ -25,6 +25,52 @@ export const SYSTEM_CATEGORY_NAMES = {
   TRANSFER: "Transfer",
 } as const;
 
+export const SUBCATEGORY_NAME_MAX_LENGTH = 80;
+
+/**
+ * Canonical system parents whose semantics are not ready for user-defined
+ * children. Match both the system invariant and the display name so an owned
+ * custom category with the same label remains eligible.
+ */
+export const BLOCKED_SYSTEM_SUBCATEGORY_PARENT_NAMES = [
+  "Transfer",
+  "Nabung",
+  "Biaya Admin",
+  "Lain-lain",
+  "Bonus",
+] as const;
+
+export type SubcategoryParentEligibility =
+  | { status: "eligible"; parent: CategoryRecord }
+  | { status: "invalid_parent" | "blocked_parent" };
+
+export type CustomSubcategoryValidation =
+  | { status: "valid"; name: string; parent: CategoryRecord; subcategory?: SubcategoryRecord }
+  | {
+      status:
+        | "empty_name"
+        | "name_too_long"
+        | "invalid_parent"
+        | "blocked_parent"
+        | "duplicate_name"
+        | "forbidden";
+    };
+
+export type CustomSubcategoryInsertPayload = {
+  category_id: string;
+  user_id: string;
+  name: string;
+  is_system: false;
+  system_key: null;
+  icon_name: string | null;
+  color_hex: string | null;
+};
+
+export type CustomSubcategoryUpdatePayload = Pick<
+  CustomSubcategoryInsertPayload,
+  "name" | "icon_name" | "color_hex"
+>;
+
 export type TransactionType = "INCOME" | "EXPENSE";
 
 export type CategoryResolution =
@@ -44,6 +90,19 @@ type CategoryClient = Pick<SupabaseClient, "from">;
 
 export function normalizeCategoryName(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("id-ID");
+}
+
+export function normalizeSubcategoryDisplayName(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+export function validateSubcategoryName(
+  value: string,
+): { status: "valid"; name: string } | { status: "empty_name" | "name_too_long" } {
+  const name = normalizeSubcategoryDisplayName(value);
+  if (!name) return { status: "empty_name" };
+  if (name.length > SUBCATEGORY_NAME_MAX_LENGTH) return { status: "name_too_long" };
+  return { status: "valid", name };
 }
 
 export function getKnownSystemCategoryName(value: string): string | null {
@@ -77,6 +136,21 @@ export function isOwnedCustomSubcategory(
     && subcategory.system_key === null;
 }
 
+export function canManageSubcategory(
+  subcategory: SubcategoryRecord,
+  userId: string,
+): boolean {
+  return isOwnedCustomSubcategory(subcategory, userId);
+}
+
+export function isBlockedSystemSubcategoryParent(category: CategoryRecord): boolean {
+  if (!isCanonicalSystemCategory(category)) return false;
+  const normalizedName = normalizeCategoryName(category.name);
+  return BLOCKED_SYSTEM_SUBCATEGORY_PARENT_NAMES.some(
+    (name) => normalizeCategoryName(name) === normalizedName,
+  );
+}
+
 export function getCategoriesVisibleToUser(
   categories: CategoryRecord[],
   userId: string,
@@ -96,6 +170,46 @@ export function getSubcategoriesVisibleToUser(
   );
 }
 
+function isSubcategoryRecord(value: unknown): value is SubcategoryRecord {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.id === "string"
+    && typeof row.category_id === "string"
+    && (typeof row.user_id === "string" || row.user_id === null)
+    && typeof row.name === "string"
+    && typeof row.is_system === "boolean"
+    && (typeof row.system_key === "string" || row.system_key === null)
+    && (typeof row.icon_name === "string" || row.icon_name === null)
+    && (typeof row.color_hex === "string" || row.color_hex === null)
+    && typeof row.created_at === "string";
+}
+
+/**
+ * Normalizes Supabase to-one relation shapes and accepts only the exact child
+ * assigned to this transaction, with canonical system/owner visibility.
+ */
+export function normalizeTransactionSubcategory({
+  relation,
+  categoryId,
+  subcategoryId,
+  userId,
+}: {
+  relation: unknown;
+  categoryId?: string | null;
+  subcategoryId?: string | null;
+  userId: string;
+}): SubcategoryRecord | null {
+  if (!categoryId || !subcategoryId || !userId) return null;
+
+  const candidates = (Array.isArray(relation) ? relation : [relation])
+    .filter(isSubcategoryRecord)
+    .filter((subcategory) =>
+      subcategory.id === subcategoryId && subcategory.category_id === categoryId,
+    );
+  const visible = getSubcategoriesVisibleToUser(candidates, userId);
+  return visible.length === 1 ? visible[0] : null;
+}
+
 export function getSubcategoriesForParentFromRows(
   subcategories: SubcategoryRecord[],
   categoryId: string,
@@ -104,6 +218,29 @@ export function getSubcategoriesForParentFromRows(
   return getSubcategoriesVisibleToUser(subcategories, userId).filter(
     (subcategory) => subcategory.category_id === categoryId,
   );
+}
+
+/** Stable picker order: canonical system rows, then owned custom rows, alphabetically. */
+export function sortSubcategoriesForSelection(
+  subcategories: SubcategoryRecord[],
+): SubcategoryRecord[] {
+  return [...subcategories].sort((left, right) => {
+    if (left.is_system !== right.is_system) return left.is_system ? -1 : 1;
+    const nameOrder = left.name.localeCompare(right.name, "id-ID", { sensitivity: "base" });
+    return nameOrder || left.id.localeCompare(right.id);
+  });
+}
+
+export function preserveSubcategoryForCategoryChange({
+  previousCategoryId,
+  nextCategoryId,
+  subcategoryId,
+}: {
+  previousCategoryId: string;
+  nextCategoryId: string;
+  subcategoryId: string | null;
+}): string | null {
+  return previousCategoryId === nextCategoryId ? subcategoryId : null;
 }
 
 export function groupSubcategoriesByParent(
@@ -138,6 +275,185 @@ export function isValidSubcategoryParentFromRows({
   return getCategoriesVisibleToUser(categories, userId).some(
     (category) => category.id === categoryId,
   );
+}
+
+export function getSubcategoryParentEligibilityFromRows({
+  categories,
+  userId,
+  categoryId,
+}: {
+  categories: CategoryRecord[];
+  userId: string;
+  categoryId: string;
+}): SubcategoryParentEligibility {
+  const parent = getCategoriesVisibleToUser(categories, userId).find(
+    (category) => category.id === categoryId,
+  );
+  if (!parent) return { status: "invalid_parent" };
+  if (isBlockedSystemSubcategoryParent(parent)) return { status: "blocked_parent" };
+  return { status: "eligible", parent };
+}
+
+export function findSubcategoryNameCollision({
+  subcategories,
+  userId,
+  categoryId,
+  name,
+  excludeSubcategoryId,
+}: {
+  subcategories: SubcategoryRecord[];
+  userId: string;
+  categoryId: string;
+  name: string;
+  excludeSubcategoryId?: string;
+}): SubcategoryRecord | null {
+  const normalizedName = normalizeCategoryName(name);
+  return getSubcategoriesForParentFromRows(subcategories, categoryId, userId).find(
+    (subcategory) => subcategory.id !== excludeSubcategoryId
+      && normalizeCategoryName(subcategory.name) === normalizedName,
+  ) || null;
+}
+
+export function validateCustomSubcategoryCreate({
+  categories,
+  subcategories,
+  userId,
+  categoryId,
+  name,
+}: {
+  categories: CategoryRecord[];
+  subcategories: SubcategoryRecord[];
+  userId: string;
+  categoryId: string;
+  name: string;
+}): CustomSubcategoryValidation {
+  const nameValidation = validateSubcategoryName(name);
+  if (nameValidation.status !== "valid") return nameValidation;
+
+  const parentValidation = getSubcategoryParentEligibilityFromRows({
+    categories,
+    userId,
+    categoryId,
+  });
+  if (parentValidation.status !== "eligible") return parentValidation;
+
+  if (findSubcategoryNameCollision({
+    subcategories,
+    userId,
+    categoryId,
+    name: nameValidation.name,
+  })) {
+    return { status: "duplicate_name" };
+  }
+
+  return {
+    status: "valid",
+    name: nameValidation.name,
+    parent: parentValidation.parent,
+  };
+}
+
+export function validateCustomSubcategoryUpdate({
+  categories,
+  subcategories,
+  userId,
+  subcategoryId,
+  name,
+}: {
+  categories: CategoryRecord[];
+  subcategories: SubcategoryRecord[];
+  userId: string;
+  subcategoryId: string;
+  name: string;
+}): CustomSubcategoryValidation {
+  const subcategory = subcategories.find((row) => row.id === subcategoryId);
+  if (!subcategory || !canManageSubcategory(subcategory, userId)) {
+    return { status: "forbidden" };
+  }
+
+  const parent = getCategoriesVisibleToUser(categories, userId).find(
+    (category) => category.id === subcategory.category_id,
+  );
+  if (!parent) return { status: "invalid_parent" };
+
+  const nameValidation = validateSubcategoryName(name);
+  if (nameValidation.status !== "valid") return nameValidation;
+
+  if (findSubcategoryNameCollision({
+    subcategories,
+    userId,
+    categoryId: subcategory.category_id,
+    name: nameValidation.name,
+    excludeSubcategoryId: subcategory.id,
+  })) {
+    return { status: "duplicate_name" };
+  }
+
+  return { status: "valid", name: nameValidation.name, parent, subcategory };
+}
+
+function normalizeOptionalIconName(value?: string | null): string | null {
+  const normalized = value?.trim() || "";
+  return normalized && normalized.length <= 50 ? normalized : null;
+}
+
+function normalizeOptionalColorHex(value?: string | null): string | null {
+  const normalized = value?.trim() || "";
+  return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized.toLowerCase() : null;
+}
+
+export function buildCustomSubcategoryInsertPayload({
+  categoryId,
+  userId,
+  name,
+  iconName,
+  colorHex,
+}: {
+  categoryId: string;
+  userId: string;
+  name: string;
+  iconName?: string | null;
+  colorHex?: string | null;
+}): CustomSubcategoryInsertPayload {
+  return {
+    category_id: categoryId,
+    user_id: userId,
+    name,
+    is_system: false,
+    system_key: null,
+    icon_name: normalizeOptionalIconName(iconName),
+    color_hex: normalizeOptionalColorHex(colorHex),
+  };
+}
+
+export function buildCustomSubcategoryUpdatePayload({
+  name,
+  iconName,
+  colorHex,
+}: {
+  name: string;
+  iconName?: string | null;
+  colorHex?: string | null;
+}): CustomSubcategoryUpdatePayload {
+  return {
+    name,
+    icon_name: normalizeOptionalIconName(iconName),
+    color_hex: normalizeOptionalColorHex(colorHex),
+  };
+}
+
+export function isPostgresUniqueViolation(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && error.code === "23505";
+}
+
+export function isPostgresForeignKeyViolation(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && error.code === "23503";
 }
 
 function hasCompatibleType(category: CategoryRecord, type?: TransactionType): boolean {
@@ -352,13 +668,16 @@ export async function listSubcategoriesForParent(
     .select(VISIBLE_SUBCATEGORY_COLUMNS)
     .eq("category_id", categoryId)
     .or(`and(is_system.eq.true,user_id.is.null),and(is_system.eq.false,user_id.eq.${userId})`)
+    .order("is_system", { ascending: false })
     .order("name", { ascending: true });
 
   if (error) throw error;
-  return getSubcategoriesForParentFromRows(
-    (data || []) as SubcategoryRecord[],
-    categoryId,
-    userId,
+  return sortSubcategoriesForSelection(
+    getSubcategoriesForParentFromRows(
+      (data || []) as SubcategoryRecord[],
+      categoryId,
+      userId,
+    ),
   );
 }
 
