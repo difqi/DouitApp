@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronRight, Circle, CircleDashed, Clock, Copy, Edit2, Mail, Plus, RefreshCw, RotateCcw, Settings, Shield, ShieldAlert, Tags, Trash2, User, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronRight, Circle, CircleDashed, Clock, Copy, Edit2, LogOut, Mail, Plus, RefreshCw, RotateCcw, Settings, Shield, ShieldAlert, Tags, Trash2, User, X } from "lucide-react";
 import { useState, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useDouit } from "../../providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
@@ -108,9 +108,11 @@ export default function SettingsPage() {
   const [checkingSubcategoryUsageId, setCheckingSubcategoryUsageId] = useState<string | null>(null);
   const [isDeletingSubcategory, setIsDeletingSubcategory] = useState(false);
   const [isDeletingCategory, setIsDeletingCategory] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const subcategoryNameInputRef = useRef<HTMLInputElement>(null);
   const subcategoryReturnFocusRef = useRef<HTMLElement | null>(null);
   const isSavingSubcategoryRef = useRef(false);
+  const logoutInProgressRef = useRef(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -811,6 +813,23 @@ export default function SettingsPage() {
     toast.info("Penghapusan akun sedang diproses. (Fitur ini mungkin memerlukan konfigurasi sisi server lebih lanjut)");
   };
 
+  const handleLogout = async () => {
+    if (logoutInProgressRef.current) return;
+
+    logoutInProgressRef.current = true;
+    setIsLoggingOut(true);
+
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      window.location.href = '/login';
+    } catch (error) {
+      console.error("Logout error:", error);
+      logoutInProgressRef.current = false;
+      setIsLoggingOut(false);
+    }
+  };
+
   const openSettingsTab = (tab: SettingsTab, mobile = false) => {
     setActiveTab(tab);
     if (mobile) setMobileDetailOpen(true);
@@ -883,18 +902,30 @@ export default function SettingsPage() {
 
       <div className="settings-container">
         {isMobileViewport ? (!mobileDetailOpen ? (
-          <nav className="settings-mobile-index" aria-label="Bagian pengaturan">
-            {SETTINGS_NAV.map((item) => {
-              const ItemIcon = item.icon;
-              return (
-                <button key={item.id} type="button" onClick={() => openSettingsTab(item.id, true)}>
-                  <span className="settings-nav-icon"><ItemIcon size={19} /></span>
-                  <span><b>{item.label}</b><small>{item.description}</small></span>
-                  <ChevronRight size={18} />
-                </button>
-              );
-            })}
-          </nav>
+          <>
+            <nav className="settings-mobile-index" aria-label="Bagian pengaturan">
+              {SETTINGS_NAV.map((item) => {
+                const ItemIcon = item.icon;
+                return (
+                  <button key={item.id} type="button" onClick={() => openSettingsTab(item.id, true)}>
+                    <span className="settings-nav-icon"><ItemIcon size={19} /></span>
+                    <span><b>{item.label}</b><small>{item.description}</small></span>
+                    <ChevronRight size={18} />
+                  </button>
+                );
+              })}
+            </nav>
+            <button
+              type="button"
+              className="settings-mobile-logout"
+              onClick={handleLogout}
+              disabled={isLoggingOut}
+              aria-label="Logout"
+            >
+              <LogOut size={19} aria-hidden="true" />
+              <span>{isLoggingOut ? 'Logout...' : 'Logout'}</span>
+            </button>
+          </>
         ) : null) : (
           <nav className="settings-desktop-nav" aria-label="Bagian pengaturan">
             {SETTINGS_NAV.map((item) => {
