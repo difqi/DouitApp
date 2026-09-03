@@ -1,22 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Type, Schema } from "@google/genai";
 import { executeWithGenAIFailover } from "@/lib/gemini";
+import {
+  buildEmailClassificationInstruction,
+  emailParseSchema,
+} from "@/lib/email-classification";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import crypto from "crypto";
 import { isDeterministicSavingsAccountMatch } from "@/utils/bankAliases";
 import {
+  buildCategoryHierarchy,
   listCategoriesForUser,
-  getKnownSystemCategoryName,
-  resolveCategoryFromRows,
-  resolveCategoryIdFromRows,
+  listVisibleSubcategoriesForUser,
+  resolveHierarchicalCategoryFromRows,
   resolveSystemCategoryFromRows,
+  serializeCategoryHierarchyForModel,
   SYSTEM_CATEGORY_NAMES,
   type TransactionType,
 } from "@/lib/categories";
 import {
   findDeterministicSavingsGoalMatch,
   resolveNormalTransactionKind,
+  shouldExposeCategoryInOrdinaryTransactionPicker,
 } from "@/lib/transaction-semantics";
 import {
   buildSavingsOperationKey,
@@ -31,33 +36,6 @@ import { sendFonnteMessageWithFailover, generateWaProgressBar } from "@/lib/fonn
 import { checkAndSendOverBudgetAlert } from "@/lib/savingsAlert";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
-
-const emailParseSchema: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    is_transaction_notification: {
-      type: Type.BOOLEAN,
-      description: "True jika email ini adalah notifikasi transaksi bank."
-    },
-    transaction_details: {
-      type: Type.OBJECT,
-      nullable: true,
-      description: "Detail transaksi jika is_transaction_notification = true",
-      properties: {
-        amount: { type: Type.NUMBER, description: "Nominal uang" },
-        merchant: { type: Type.STRING, description: "Nama entitas, toko, atau sumber transaksi" },
-        type: { type: Type.STRING, enum: ["INCOME", "EXPENSE"] },
-        category: { type: Type.STRING, description: "Kategori transaksi" },
-        sumber_dana: { type: Type.STRING, description: "Bank atau e-wallet asal (misal: 'Bank BCA', 'Bank Mandiri', 'GoPay', 'ShopeePay'). Ekstrak dari teks email atau pengirim." },
-        admin_fee: { type: Type.NUMBER, nullable: true, description: "Biaya admin, biaya transfer, atau fee yang dikenakan. Ekstrak angkanya saja. Jika tidak ada, isi null." },
-        notes: { type: Type.STRING, nullable: true, description: "Catatan, remark, keterangan, atau berita transfer yang menyertai transaksi" },
-        confidence_score: { type: Type.NUMBER, description: "Nilai keyakinan antara 0.0 sampai 1.0. Berikan nilai di bawah 0.85 jika ada bagian teks yang buram/meragukan." }
-      },
-      required: ["amount", "merchant", "type", "category", "sumber_dana", "confidence_score"]
-    }
-  },
-  required: ["is_transaction_notification"]
-};
 
 // Resend Webhook handler
 export async function POST(req: NextRequest) {
@@ -269,10 +247,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, note: "Already processed" });
     }
 
-    const categories = await listCategoriesForUser(supabase, profile.id);
-    const categoryNames = categories.length > 0
-      ? categories.map((category) => category.name).join(", ")
-      : SYSTEM_CATEGORY_NAMES.OTHER;
+    const [categories, visibleSubcategories] = await Promise.all([
+      listCategoriesForUser(supabase, profile.id),
+      listVisibleSubcategoriesForUser(supabase, profile.id),
+    ]);
+    const ordinaryCategories = categories.filter((category) =>
+      shouldExposeCategoryInOrdinaryTransactionPicker(category),
+    );
+    const ordinaryCategoryIds = new Set(ordinaryCategories.map((category) => category.id));
+    const ordinarySubcategories = visibleSubcategories.filter((subcategory) =>
+      ordinaryCategoryIds.has(subcategory.category_id),
+    );
+    const taxonomyContext = serializeCategoryHierarchyForModel(
+      buildCategoryHierarchy(ordinaryCategories, ordinarySubcategories),
+    );
 
     const fullEmailContent = `
       From: ${emailData.from || payload.from || ''}
@@ -287,7 +275,7 @@ export async function POST(req: NextRequest) {
         config: {
           responseMimeType: "application/json",
           responseSchema: emailParseSchema,
-          systemInstruction: `Anda bertugas membaca notifikasi email dari bank/e-wallet dan mengekstrak rincian transaksi. Perhatikan secara spesifik label "Berita:", "Catatan:", "Remark:", "Keterangan:", atau "Description:" untuk diekstrak ke dalam 'notes'. Prioritaskan isi 'notes' untuk menentukan 'category'. Kategori HARUS dipilih dari daftar berikut: [${categoryNames}]. Ekstrak nama bank/e-wallet ke 'sumber_dana'. Jika terdapat biaya admin atau transfer fee terpisah dari jumlah pokok, pisahkan angkanya ke dalam 'admin_fee' dan keluarkan dari 'amount'. 'amount' hanya untuk jumlah utama transaksi.`
+          systemInstruction: buildEmailClassificationInstruction(taxonomyContext),
         }
       });
     });
@@ -324,6 +312,7 @@ export async function POST(req: NextRequest) {
 
       let status = tx.confidence_score >= 0.85 ? 'APPROVED' : 'PENDING_APPROVAL';
       let categoryId = null;
+      let subcategoryId = null;
 
       // 0. Check for Active Savings Goal Matching (Score >= 80%)
       let matchedGoal: any = null;
@@ -420,45 +409,27 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        const matchedRuleCategory = matchedRule?.category_id
-          ? resolveCategoryIdFromRows({
-              categories,
-              userId: profile.id,
-              categoryId: matchedRule.category_id,
-              type: transactionType,
-            })
-          : null;
+        const categoryResolution = resolveHierarchicalCategoryFromRows({
+          categories: ordinaryCategories,
+          subcategories: ordinarySubcategories,
+          userId: profile.id,
+          type: transactionType,
+          categoryName: typeof tx.category === 'string' ? tx.category : '',
+          subcategoryName: typeof tx.subcategory === 'string' ? tx.subcategory : null,
+          trustedCategoryId: matchedRule?.category_id || null,
+        });
 
-        if (matchedRule && matchedRuleCategory?.status === 'matched') {
-          // Bypass AI category and force approve
-          categoryId = matchedRuleCategory.category.id;
-          status = 'APPROVED';
-          if (matchedRule.keyword) tx.notes = matchedRule.keyword;
-          if (matchedRule.sumber_dana) tx.sumber_dana = matchedRule.sumber_dana;
-        } else {
-          // 2. Lookup Category ID from AI's category string
-          const requestedCategoryName = String(tx.category || '');
-          const knownSystemName = getKnownSystemCategoryName(requestedCategoryName);
-          const categoryRow = knownSystemName
-            ? resolveSystemCategoryFromRows(categories, knownSystemName, transactionType)
-            : resolveCategoryFromRows({
-                categories,
-                userId: profile.id,
-                name: requestedCategoryName,
-                type: transactionType,
-              });
-          
-          if (categoryRow.status === 'matched') {
-            categoryId = categoryRow.category.id;
-          } else {
-            // Fallback to "Lain-lain"
-            const fallbackCategory = resolveSystemCategoryFromRows(
-              categories,
-              SYSTEM_CATEGORY_NAMES.OTHER,
-              transactionType,
-            );
-            if (fallbackCategory.status === 'matched') categoryId = fallbackCategory.category.id;
+        if (categoryResolution.status === 'matched') {
+          categoryId = categoryResolution.category.id;
+          subcategoryId = categoryResolution.subcategory?.id || null;
+          if (matchedRule && categoryResolution.categorySource === 'trusted_override') {
+            status = 'APPROVED';
+            if (matchedRule.keyword) tx.notes = matchedRule.keyword;
+            if (matchedRule.sumber_dana) tx.sumber_dana = matchedRule.sumber_dana;
           }
+        } else {
+          // Keep unresolved model taxonomy pending; never silently reinterpret it as Lain-lain.
+          status = 'PENDING_APPROVAL';
         }
       }
 
@@ -612,7 +583,7 @@ _Tabungan impian Anda makin dekat! Tetap konsisten!_ 💪`;
         type: transactionType,
         merchant: tx.merchant,
         category_id: categoryId,
-        subcategory_id: null,
+        subcategory_id: subcategoryId,
         transaction_kind: resolveNormalTransactionKind(
           categories.find((category) => category.id === categoryId),
         ),
@@ -640,6 +611,7 @@ _Tabungan impian Anda makin dekat! Tetap konsisten!_ 💪`;
           type: 'EXPENSE',
           merchant: "Biaya Admin " + (rawSumberDana || "Bank"),
           category_id: adminCat.status === 'matched' ? adminCat.category.id : null,
+          subcategory_id: null,
           transaction_kind: 'FEE',
           status: adminCat.status === 'matched' ? txPayload.status : 'PENDING_APPROVAL',
           idempotency_key: `${messageId}-adminfee`
