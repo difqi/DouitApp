@@ -26,8 +26,18 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useDouit } from "../../providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
 import { triggerBudgetAlertCheck } from "@/app/actions/savings-alert";
-import { SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
-import { resolveNormalTransactionKind } from "@/lib/transaction-semantics";
+import {
+  listCategoriesForUser,
+  listVisibleSubcategoriesForUser,
+  SYSTEM_CATEGORY_NAMES,
+  validateSubcategoryAssignmentFromRows,
+  type CategoryRecord,
+  type SubcategoryRecord,
+} from "@/lib/categories";
+import {
+  resolveNormalTransactionKind,
+  shouldExposeCategoryInOrdinaryTransactionPicker,
+} from "@/lib/transaction-semantics";
 import { BankLogo } from "@/app/components/BankLogo";
 import { CategoryIcon } from "@/app/components/CategoryIcon";
 import type { TransactionDraftPreview } from "@/types";
@@ -470,7 +480,7 @@ export default function ChatPage() {
         type: String(draft.preview.type),
         merchant: String(draft.preview.merchant || draft.preview.name || ""),
         category_id: draft.preview.category_id ? String(draft.preview.category_id) : null,
-        subcategory_id: null,
+        subcategory_id: draft.preview.subcategory_id ? String(draft.preview.subcategory_id) : null,
         sumber_dana: draft.preview.sumber_dana ? String(draft.preview.sumber_dana) : 'Tunai',
         status: 'APPROVED',
         source: 'MANUAL_CHAT',
@@ -508,23 +518,61 @@ export default function ChatPage() {
         return;
       }
       {
-        const { data: safeCategory, error: categoryError } = await supabase
-          .from('categories')
-          .select('id, user_id, name, type, is_system')
-          .eq('id', txPayload.category_id)
-          .eq('type', txPayload.type)
-          .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
-          .maybeSingle();
-        if (categoryError || !safeCategory) {
+        let visibleCategories: CategoryRecord[];
+        let visibleSubcategories: SubcategoryRecord[];
+        try {
+          [visibleCategories, visibleSubcategories] = await Promise.all([
+            listCategoriesForUser(supabase, user.id),
+            txPayload.subcategory_id
+              ? listVisibleSubcategoriesForUser(supabase, user.id)
+              : Promise.resolve([]),
+          ]);
+        } catch (taxonomyError) {
+          setDrafts(prev => ({ ...prev, [actionId]: { ...prev[actionId], status: "failed" } }));
+          logChatClient(approvalRequestId, "approval_failed", {
+            reason: "taxonomy_validation",
+            authMs,
+            totalMs: elapsedMs(approvalStartedAt),
+            errorCode: typeof taxonomyError === "object" && taxonomyError !== null && "code" in taxonomyError
+              ? String(taxonomyError.code)
+              : null,
+          }, "error");
+          return;
+        }
+
+        const safeCategory = visibleCategories.find((category) =>
+          category.id === txPayload.category_id && category.type.toUpperCase() === txPayload.type,
+        );
+        if (!safeCategory || !shouldExposeCategoryInOrdinaryTransactionPicker(safeCategory)) {
           setDrafts(prev => ({ ...prev, [actionId]: { ...prev[actionId], status: "failed" } }));
           logChatClient(approvalRequestId, "approval_failed", {
             reason: "category_validation",
             authMs,
             totalMs: elapsedMs(approvalStartedAt),
-            errorCode: categoryError?.code || null,
+            errorCode: null,
           }, "error");
           return;
         }
+
+        const subcategoryValidation = validateSubcategoryAssignmentFromRows({
+          categories: visibleCategories,
+          subcategories: visibleSubcategories,
+          userId: user.id,
+          categoryId: safeCategory.id,
+          subcategoryId: txPayload.subcategory_id,
+          type: txPayload.type,
+        });
+        if (subcategoryValidation.status !== "matched" && subcategoryValidation.status !== "valid") {
+          setDrafts(prev => ({ ...prev, [actionId]: { ...prev[actionId], status: "failed" } }));
+          logChatClient(approvalRequestId, "approval_failed", {
+            reason: "subcategory_validation",
+            authMs,
+            totalMs: elapsedMs(approvalStartedAt),
+            errorCode: null,
+          }, "error");
+          return;
+        }
+        txPayload.subcategory_id = subcategoryValidation.subcategory?.id || null;
         txPayload.transaction_kind = resolveNormalTransactionKind(safeCategory);
       }
       const payloads = [txPayload];
@@ -991,6 +1039,7 @@ function DraftCard({ draft, disabled, onDecision, onEdit, onOpenSaved }: { draft
   const preview = draft.preview ?? {};
   const merchant = String(preview.merchant ?? preview.name ?? "Transaksi");
   const category = String(preview.category ?? "Lain-lain");
+  const subcategory = typeof preview.subcategory === "string" ? preview.subcategory : null;
   const account = String(preview.sumber_dana ?? "Tunai");
   const transactionType = String(preview.type).toUpperCase() === "INCOME" ? "Pemasukan" : "Pengeluaran";
   const transactionDate = preview.transaction_date
@@ -1036,7 +1085,7 @@ function DraftCard({ draft, disabled, onDecision, onEdit, onOpenSaved }: { draft
       </div>
 
       <div className="draft-details">
-        <div><span className="draft-detail-icon"><CategoryIcon category={category} /></span><span><small>Kategori</small><b>{category}</b></span></div>
+        <div><span className="draft-detail-icon"><CategoryIcon category={category} /></span><span><small>Kategori</small><b>{category}{subcategory ? ` · ${subcategory}` : ""}</b></span></div>
         <div><span className="draft-account-logo"><BankLogo bankName={account} className="draft-bank-logo" /></span><span><small>Rekening / sumber dana</small><b>{account}</b></span></div>
       </div>
 

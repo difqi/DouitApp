@@ -86,6 +86,16 @@ export type SubcategoryAssignmentValidation =
   | { status: "valid"; subcategory: null }
   | { status: "not_found" | "ambiguous" | "invalid_parent" | "wrong_type" };
 
+export type HierarchicalCategoryResolution =
+  | {
+      status: "matched";
+      category: CategoryRecord;
+      subcategory: SubcategoryRecord | null;
+      categorySource: "model" | "trusted_override";
+      subcategoryStatus: "matched" | "omitted" | "cleared_not_found" | "cleared_ambiguous" | "cleared_invalid_parent";
+    }
+  | { status: "not_found" | "ambiguous" | "wrong_type" };
+
 type CategoryClient = Pick<SupabaseClient, "from">;
 
 export function normalizeCategoryName(value: string): string {
@@ -261,6 +271,34 @@ export function buildCategoryHierarchy(
     category,
     subcategories: grouped[category.id] || [],
   }));
+}
+
+/** Compact, deterministic model context. Callers must pass only visible parents and children. */
+export function serializeCategoryHierarchyForModel(
+  hierarchy: CategoryWithSubcategories[],
+): string {
+  const safeLabel = (value: string) => value.replace(/[\r\n\t]/g, " ").trim().slice(0, 120);
+  const rows = [...hierarchy]
+    .sort((left, right) => {
+      const typeOrder = left.category.type.localeCompare(right.category.type);
+      const nameOrder = left.category.name.localeCompare(right.category.name, "id-ID", { sensitivity: "base" });
+      return typeOrder || nameOrder || left.category.id.localeCompare(right.category.id);
+    })
+    .map(({ category, subcategories }) => ({
+      t: category.type.toUpperCase(),
+      p: safeLabel(category.name),
+      s: isCanonicalSystemCategory(category) ? "system" : "custom",
+      c: [...subcategories]
+        .sort((left, right) => {
+          const nameOrder = left.name.localeCompare(right.name, "id-ID", { sensitivity: "base" });
+          return nameOrder || left.id.localeCompare(right.id);
+        })
+        .map((subcategory) => ({
+          n: safeLabel(subcategory.name),
+          s: isCanonicalSystemSubcategory(subcategory) ? "system" : "custom",
+        })),
+    }));
+  return JSON.stringify(rows);
 }
 
 export function isValidSubcategoryParentFromRows({
@@ -592,6 +630,86 @@ export function resolveSubcategoryFromRows({
     status: "matched",
     subcategory,
     matchedScope: isCanonicalSystemSubcategory(subcategory) ? "system" : "user",
+  };
+}
+
+/**
+ * Resolves an untrusted model parent plus optional child against the visible
+ * taxonomy. A trusted parent override (for example a merchant rule) wins only
+ * when its ID is valid; an incompatible or unknown child is cleared, never
+ * replaced with a different child.
+ */
+export function resolveHierarchicalCategoryFromRows({
+  categories,
+  subcategories,
+  userId,
+  type,
+  categoryName,
+  subcategoryName,
+  trustedCategoryId,
+}: {
+  categories: CategoryRecord[];
+  subcategories: SubcategoryRecord[];
+  userId: string;
+  type: TransactionType;
+  categoryName: string;
+  subcategoryName?: string | null;
+  trustedCategoryId?: string | null;
+}): HierarchicalCategoryResolution {
+  const trustedResolution = trustedCategoryId
+    ? resolveCategoryIdFromRows({
+        categories,
+        userId,
+        categoryId: trustedCategoryId,
+        type,
+      })
+    : null;
+  const modelResolution = trustedResolution?.status === "matched"
+    ? null
+    : resolveCategoryFromRows({ categories, userId, name: categoryName, type });
+  const parentResolution = trustedResolution?.status === "matched"
+    ? trustedResolution
+    : modelResolution!;
+
+  if (parentResolution.status !== "matched") return { status: parentResolution.status };
+
+  const categorySource = trustedResolution?.status === "matched"
+    ? "trusted_override" as const
+    : "model" as const;
+  const candidateChild = typeof subcategoryName === "string" ? subcategoryName.trim() : "";
+  if (!candidateChild) {
+    return {
+      status: "matched",
+      category: parentResolution.category,
+      subcategory: null,
+      categorySource,
+      subcategoryStatus: "omitted",
+    };
+  }
+
+  const childResolution = resolveSubcategoryFromRows({
+    subcategories,
+    categories,
+    userId,
+    categoryId: parentResolution.category.id,
+    name: candidateChild,
+  });
+  if (childResolution.status === "matched") {
+    return {
+      status: "matched",
+      category: parentResolution.category,
+      subcategory: childResolution.subcategory,
+      categorySource,
+      subcategoryStatus: "matched",
+    };
+  }
+
+  return {
+    status: "matched",
+    category: parentResolution.category,
+    subcategory: null,
+    categorySource,
+    subcategoryStatus: `cleared_${childResolution.status}`,
   };
 }
 

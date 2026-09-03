@@ -202,6 +202,9 @@ export function pendingDraftModelContext(candidate: PendingDraftCandidate): Reco
     merchant: candidate.preview.merchant,
     type: candidate.preview.type,
     category: candidate.preview.category,
+    subcategory: typeof candidate.preview.subcategory === "string"
+      ? candidate.preview.subcategory
+      : null,
     sumber_dana: candidate.preview.sumber_dana,
     transaction_date: candidate.preview.transaction_date.slice(0, 10),
     transaction_time: candidate.preview.transaction_time,

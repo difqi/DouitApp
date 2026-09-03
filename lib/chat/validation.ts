@@ -65,6 +65,7 @@ export type ValidatedTransactionDetails = {
   merchant: string;
   type: "INCOME" | "EXPENSE";
   category: string;
+  subcategory: string | null;
   sumberDana: string | null;
   sourceWasExplicit: boolean;
   adminFee: number | null;
@@ -406,6 +407,10 @@ export function parseAndValidateChatOutput(rawText: string): ChatOutputValidatio
   if (!isNonEmptyString(details.merchant)) invalidFields.push("merchant");
   if (details.type !== "INCOME" && details.type !== "EXPENSE") invalidFields.push("type");
   if (!isNonEmptyString(details.category)) invalidFields.push("category");
+  if (!isNullableString(details.subcategory)
+    || (typeof details.subcategory === "string" && !details.subcategory.trim())) {
+    invalidFields.push("category");
+  }
   if (typeof details.source_was_explicit !== "boolean") invalidFields.push("sumber_dana");
   if (details.source_was_explicit === true && !isNonEmptyString(details.sumber_dana)) {
     invalidFields.push("sumber_dana");
@@ -457,6 +462,7 @@ export function parseAndValidateChatOutput(rawText: string): ChatOutputValidatio
         merchant: (details.merchant as string).trim(),
         type: details.type as "INCOME" | "EXPENSE",
         category: (details.category as string).trim(),
+        subcategory: typeof details.subcategory === "string" ? details.subcategory.trim() : null,
         sumberDana: isNonEmptyString(details.sumber_dana) ? details.sumber_dana.trim() : null,
         sourceWasExplicit: details.source_was_explicit as boolean,
         adminFee: typeof adminFee === "number" ? adminFee : null,

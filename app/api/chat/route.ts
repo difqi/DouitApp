@@ -27,8 +27,18 @@ import {
   parseAndValidateChatOutput,
   resolveKnownPaymentSource,
   ValidatedChatOutput,
-  ValidatedTransactionDetails,
 } from "@/lib/chat/validation";
+import {
+  buildCategoryHierarchy,
+  listCategoriesForUser,
+  listVisibleSubcategoriesForUser,
+  resolveCategoryFromRows,
+  resolveHierarchicalCategoryFromRows,
+  serializeCategoryHierarchyForModel,
+  type CategoryRecord,
+  type SubcategoryRecord,
+} from "@/lib/categories";
+import { shouldExposeCategoryInOrdinaryTransactionPicker } from "@/lib/transaction-semantics";
 
 const OFF_TOPIC_REPLY = "Aku fokus bantu urusan keuangan. Coba tanyakan soal pencatatan atau pengelolaan uang, ya.";
 const MAX_MESSAGE_LENGTH = 4_000;
@@ -38,7 +48,8 @@ const DRAFT_ID_PATTERN = /^draft-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab]
 const GEMINI_ATTEMPT_TIMEOUT_MS = 20_000;
 const GEMINI_TOTAL_TIMEOUT_MS = 35_000;
 
-type CategoryRow = { id: string; name: string; type: string };
+type CategoryRow = CategoryRecord;
+type SubcategoryRow = SubcategoryRecord;
 type PaymentAccountRow = { name: string };
 type HistoryRow = { role: string; content: string };
 type LatestMessageRow = { role: string; draft_data: unknown };
@@ -50,6 +61,14 @@ type MerchantRule = {
   sumber_dana: string | null;
   source: "canonical" | "legacy";
 };
+
+async function loadRowsResult<T>(load: () => Promise<T[]>): Promise<DbRowsResult<T>> {
+  try {
+    return { data: await load(), error: null };
+  } catch (error) {
+    return { data: null, error };
+  }
+}
 
 type ChatTimings = {
   authMs: number;
@@ -71,6 +90,7 @@ type ChatTimings = {
   approximatePromptChars: number;
   approximatePromptTokens: number;
   categoryCount: number;
+  subcategoryCount: number;
   accountCount: number;
   merchantRuleCount: number;
   draftLookupMs: number;
@@ -113,6 +133,11 @@ const transactionDetailsProperty: Schema = {
     merchant: { type: Type.STRING },
     type: { type: Type.STRING, enum: ["INCOME", "EXPENSE"] },
     category: { type: Type.STRING },
+    subcategory: {
+      type: Type.STRING,
+      nullable: true,
+      description: "Nama child persis di bawah category, atau null bila tidak ada yang sesuai.",
+    },
     sumber_dana: { type: Type.STRING, nullable: true },
     source_was_explicit: { type: Type.BOOLEAN },
     admin_fee: { type: Type.NUMBER, nullable: true },
@@ -331,15 +356,12 @@ function safePromptLabel(value: string): string {
 
 function resolveUnambiguousCategory(
   categories: CategoryRow[],
+  userId: string,
   categoryName: string,
   type: "INCOME" | "EXPENSE",
 ): string | null {
-  const normalizedName = categoryName.trim().toLocaleLowerCase("id-ID");
-  const matches = categories.filter((category) =>
-    category.name.toLocaleLowerCase("id-ID") === normalizedName
-    && category.type.toUpperCase() === type,
-  );
-  return matches.length === 1 ? matches[0].name : null;
+  const resolution = resolveCategoryFromRows({ categories, userId, name: categoryName, type });
+  return resolution.status === "matched" ? resolution.category.name : null;
 }
 
 function responseSchemaForMode(mode: PromptMode): Schema {
@@ -352,7 +374,7 @@ function responseSchemaForMode(mode: PromptMode): Schema {
 
 type SystemInstructionInput = {
   mode: PromptMode;
-  categoryOptions: string;
+  taxonomyContext: string;
   availableSources: string;
   activeDraftContext: string | null;
   activeDraftCount: number;
@@ -363,7 +385,7 @@ type SystemInstructionInput = {
 
 function buildSystemInstruction({
   mode,
-  categoryOptions,
+  taxonomyContext,
   availableSources,
   activeDraftContext,
   activeDraftCount,
@@ -406,7 +428,9 @@ Target edit sudah approved, rejected, atau tidak valid untuk sesi ini. Jangan me
   const extraction = `
 
 EKSTRAKSI:
-- Kategori valid: ${categoryOptions}. Kategori harus kompatibel dengan type; fallback Lain-lain hanya jika aman.
+- Taksonomi valid berbentuk JSON ringkas dengan t=type, p=parent, c=children, s=system/custom: ${taxonomyContext}.
+- category wajib sama persis dengan satu parent p yang kompatibel dengan type. subcategory harus sama persis dengan child n di dalam parent itu, atau null jika tidak ada child yang jelas.
+- Gunakan child yang paling spesifik bila transaksi jelas cocok. Jangan mengarang parent/child. Pilih Lain-lain hanya untuk gap taksonomi yang sungguh tidak memiliki parent lebih tepat.
 - Sumber valid: ${availableSources}. Jika tidak disebut: source_was_explicit=false dan sumber_dana=null. Jika disebut: true dan pertahankan namanya; sumber tak tersedia wajib diklarifikasi, bukan diganti Tunai.
 - amount positif; merchant/keperluan tidak kosong; type INCOME/EXPENSE; admin_fee terpisah dari amount.
 - Gunakan history untuk jawaban singkat atas klarifikasi sebelumnya. Rekonstruksi menjadi NEW_TRANSACTION lengkap hanya jika semua field wajib sudah aman.`;
@@ -432,37 +456,6 @@ Intent yang boleh: NEW_TRANSACTION, REQUIRED_CLARIFICATION, OPTIONAL_ENRICHMENT,
 ${extraction}`;
 }
 
-function resolveCategory(
-  categories: CategoryRow[],
-  transaction: ValidatedTransactionDetails,
-  rule: MerchantRule | null,
-): { category: CategoryRow | null; requiresClarification: boolean } {
-  const expectedType = transaction.type.toUpperCase();
-  if (rule?.category_id) {
-    const ruleCategory = categories.find((category) => category.id === rule.category_id);
-    if (ruleCategory?.type?.toUpperCase() === expectedType) {
-      return { category: ruleCategory, requiresClarification: false };
-    }
-  }
-
-  const normalizedCategory = transaction.category.toLocaleLowerCase("id-ID");
-  const nameMatches = categories.filter(
-    (category) => category.name.toLocaleLowerCase("id-ID") === normalizedCategory,
-  );
-  const compatibleMatch = nameMatches.find((category) => category.type?.toUpperCase() === expectedType);
-  if (compatibleMatch) return { category: compatibleMatch, requiresClarification: false };
-
-  if (nameMatches.length > 0) {
-    return { category: null, requiresClarification: true };
-  }
-
-  const safeFallback = categories.find(
-    (category) => category.name.toLocaleLowerCase("id-ID") === "lain-lain"
-      && category.type?.toUpperCase() === expectedType,
-  );
-  return { category: safeFallback || null, requiresClarification: !safeFallback };
-}
-
 export async function POST(req: NextRequest) {
   const requestStartedAt = performance.now();
   const requestId = requestIdFrom(req);
@@ -486,6 +479,7 @@ export async function POST(req: NextRequest) {
     approximatePromptChars: 0,
     approximatePromptTokens: 0,
     categoryCount: 0,
+    subcategoryCount: 0,
     accountCount: 0,
     merchantRuleCount: 0,
     draftLookupMs: 0,
@@ -574,7 +568,8 @@ export async function POST(req: NextRequest) {
     timings.fastPathParseMs = elapsedMs(fastPathDetectionStartedAt);
     const preAiDbStartedAt = performance.now();
     const loadReferenceData = () => Promise.all([
-      supabase.from("categories").select("id, name, type").or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`),
+      loadRowsResult(() => listCategoriesForUser(supabase, user.id)),
+      loadRowsResult(() => listVisibleSubcategoriesForUser(supabase, user.id)),
       supabase.from("merchant_rules").select("merchant_name, keyword, category_id, sumber_dana").eq("user_id", user.id),
       supabase.from("user_merchant_rules").select("merchant_pattern, keyword, category_id").eq("user_id", user.id),
       supabase.from("payment_accounts").select("name").eq("user_id", user.id),
@@ -694,6 +689,7 @@ export async function POST(req: NextRequest) {
     const canAttemptFastPath = Boolean(contextualActiveDraft && detectedFastPathFields);
 
     let categoriesResult: DbRowsResult<CategoryRow>;
+    let subcategoriesResult: DbRowsResult<SubcategoryRow>;
     let canonicalRulesResult: DbRowsResult<unknown>;
     let legacyRulesResult: DbRowsResult<unknown>;
     let accountsResult: DbRowsResult<PaymentAccountRow>;
@@ -704,13 +700,14 @@ export async function POST(req: NextRequest) {
       const needsAccounts = detectedFastPathFields!.includes("sumber_dana");
       const [fastCategoriesResult, fastAccountsResult] = await Promise.all([
         needsCategories
-          ? supabase.from("categories").select("id, name, type").or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
+          ? loadRowsResult(() => listCategoriesForUser(supabase, user.id))
           : Promise.resolve({ data: [] as CategoryRow[], error: null }),
         needsAccounts
           ? supabase.from("payment_accounts").select("name").eq("user_id", user.id)
           : Promise.resolve({ data: [] as PaymentAccountRow[], error: null }),
       ]);
       categoriesResult = fastCategoriesResult as DbRowsResult<CategoryRow>;
+      subcategoriesResult = { data: [], error: null };
       accountsResult = fastAccountsResult as DbRowsResult<PaymentAccountRow>;
       canonicalRulesResult = { data: [], error: null };
       legacyRulesResult = { data: [], error: null };
@@ -725,14 +722,16 @@ export async function POST(req: NextRequest) {
           : loadHistory(),
       ]);
       categoriesResult = referenceData[0] as DbRowsResult<CategoryRow>;
-      canonicalRulesResult = referenceData[1] as DbRowsResult<unknown>;
-      legacyRulesResult = referenceData[2] as DbRowsResult<unknown>;
-      accountsResult = referenceData[3] as DbRowsResult<PaymentAccountRow>;
+      subcategoriesResult = referenceData[1] as DbRowsResult<SubcategoryRow>;
+      canonicalRulesResult = referenceData[2] as DbRowsResult<unknown>;
+      legacyRulesResult = referenceData[3] as DbRowsResult<unknown>;
+      accountsResult = referenceData[4] as DbRowsResult<PaymentAccountRow>;
       historyResult = loadedHistory as DbRowsResult<HistoryRow>;
     }
     timings.preAiDbMs = elapsedMs(preAiDbStartedAt);
 
     const requiredDbError = categoriesResult.error
+      || subcategoriesResult.error
       || canonicalRulesResult.error
       || accountsResult.error
       || historyResult.error;
@@ -772,13 +771,18 @@ export async function POST(req: NextRequest) {
       return result;
     })();
 
-    let categories = (categoriesResult.data || []) as CategoryRow[];
+    let categories = ((categoriesResult.data || []) as CategoryRow[])
+      .filter((category) => shouldExposeCategoryInOrdinaryTransactionPicker(category));
+    let visibleCategoryIds = new Set(categories.map((category) => category.id));
+    let subcategories = ((subcategoriesResult.data || []) as SubcategoryRow[])
+      .filter((subcategory) => visibleCategoryIds.has(subcategory.category_id));
     let accounts = (accountsResult.data || []) as PaymentAccountRow[];
     let rules = mergeMerchantRules(
       canonicalRulesResult.data,
       legacyRulesResult.error ? null : legacyRulesResult.data,
     );
     timings.categoryCount = categories.length;
+    timings.subcategoryCount = subcategories.length;
     timings.accountCount = accounts.length;
     timings.merchantRuleCount = rules.length;
 
@@ -813,7 +817,7 @@ export async function POST(req: NextRequest) {
           now,
           allowBareAmount: Boolean(suppliedTargetDraftId),
           resolveSource: (source) => resolveUnambiguousPaymentSource(source, accounts),
-          resolveCategory: (category, type) => resolveUnambiguousCategory(categories, category, type),
+          resolveCategory: (category, type) => resolveUnambiguousCategory(categories, user.id, category, type),
         })
         : { kind: "none" as const };
     timings.fastPathParseMs += elapsedMs(fastPathStartedAt);
@@ -824,7 +828,8 @@ export async function POST(req: NextRequest) {
       ]);
       const fallbackRequiredError = fallbackReferenceData[0].error
         || fallbackReferenceData[1].error
-        || fallbackReferenceData[3].error
+        || fallbackReferenceData[2].error
+        || fallbackReferenceData[4].error
         || fallbackHistoryResult.error;
       if (fallbackRequiredError) {
         logChat(requestId, "chat_failed", {
@@ -835,16 +840,21 @@ export async function POST(req: NextRequest) {
         return jsonResponse(requestId, { error: "Tidak dapat menyiapkan konteks chat", errorKind: "database" }, 500);
       }
       categoriesResult = fallbackReferenceData[0] as DbRowsResult<CategoryRow>;
-      canonicalRulesResult = fallbackReferenceData[1] as DbRowsResult<unknown>;
-      legacyRulesResult = fallbackReferenceData[2] as DbRowsResult<unknown>;
-      accountsResult = fallbackReferenceData[3] as DbRowsResult<PaymentAccountRow>;
+      subcategoriesResult = fallbackReferenceData[1] as DbRowsResult<SubcategoryRow>;
+      canonicalRulesResult = fallbackReferenceData[2] as DbRowsResult<unknown>;
+      legacyRulesResult = fallbackReferenceData[3] as DbRowsResult<unknown>;
+      accountsResult = fallbackReferenceData[4] as DbRowsResult<PaymentAccountRow>;
       historyResult = fallbackHistoryResult as DbRowsResult<HistoryRow>;
       if (legacyRulesResult.error) {
         logChat(requestId, "legacy_merchant_rules_unavailable", {
           errorCode: safeErrorCode(legacyRulesResult.error),
         }, "warn");
       }
-      categories = (categoriesResult.data || []) as CategoryRow[];
+      categories = ((categoriesResult.data || []) as CategoryRow[])
+        .filter((category) => shouldExposeCategoryInOrdinaryTransactionPicker(category));
+      visibleCategoryIds = new Set(categories.map((category) => category.id));
+      subcategories = ((subcategoriesResult.data || []) as SubcategoryRow[])
+        .filter((subcategory) => visibleCategoryIds.has(subcategory.category_id));
       accounts = (accountsResult.data || []) as PaymentAccountRow[];
       rules = mergeMerchantRules(
         canonicalRulesResult.data,
@@ -856,6 +866,7 @@ export async function POST(req: NextRequest) {
       }));
       timings.preAiDbMs = elapsedMs(preAiDbStartedAt);
       timings.categoryCount = categories.length;
+      timings.subcategoryCount = subcategories.length;
       timings.accountCount = accounts.length;
       timings.merchantRuleCount = rules.length;
       timings.historyRows = priorHistory.length;
@@ -874,12 +885,8 @@ export async function POST(req: NextRequest) {
 
     const responseSchema = fastEdit.kind === "none" ? responseSchemaForMode(promptMode) : null;
     const chatContents = fastEdit.kind === "none" ? buildModelContents(priorHistory, message) : [];
-    const categoryOptions = fastEdit.kind === "none"
-      ? JSON.stringify(
-          categories.length > 0
-            ? categories.map((category) => ({ name: safePromptLabel(category.name), type: category.type.toUpperCase() }))
-            : [{ name: "Lain-lain", type: "EXPENSE" }],
-        )
+    const taxonomyContext = fastEdit.kind === "none"
+      ? serializeCategoryHierarchyForModel(buildCategoryHierarchy(categories, subcategories))
       : "";
     const availableSources = fastEdit.kind === "none"
       ? JSON.stringify([
@@ -908,7 +915,7 @@ export async function POST(req: NextRequest) {
     const systemInstruction = fastEdit.kind === "none"
       ? buildSystemInstruction({
           mode: promptMode,
-          categoryOptions,
+          taxonomyContext,
           availableSources,
           activeDraftContext: contextualActiveDraft
             ? JSON.stringify(pendingDraftModelContext(contextualActiveDraft))
@@ -944,6 +951,7 @@ export async function POST(req: NextRequest) {
         approximatePromptChars: timings.approximatePromptChars,
         approximatePromptTokens: timings.approximatePromptTokens,
         categoryCount: timings.categoryCount,
+        subcategoryCount: timings.subcategoryCount,
         accountCount: timings.accountCount,
         merchantRuleCount: timings.merchantRuleCount,
       });
@@ -1152,8 +1160,16 @@ export async function POST(req: NextRequest) {
           availableSourceMessage(transaction.sumberDana, accounts),
         );
       } else {
-        const categoryResolution = resolveCategory(categories, transaction, matchedRule);
-        if (categoryResolution.requiresClarification || !categoryResolution.category) {
+        const categoryResolution = resolveHierarchicalCategoryFromRows({
+          categories,
+          subcategories,
+          userId: user.id,
+          type: transaction.type,
+          categoryName: transaction.category,
+          subcategoryName: transaction.subcategory,
+          trustedCategoryId: matchedRule?.category_id,
+        });
+        if (categoryResolution.status !== "matched") {
           outcome = clarificationOutcome(
             "category",
             "Kategorinya belum bisa aku pastikan. Transaksi ini untuk keperluan apa?",
@@ -1174,8 +1190,9 @@ export async function POST(req: NextRequest) {
             type: transaction.type,
             merchant: transaction.merchant,
             category_id: categoryResolution.category.id,
-            subcategory_id: null,
+            subcategory_id: categoryResolution.subcategory?.id || null,
             category: categoryResolution.category.name,
+            subcategory: categoryResolution.subcategory?.name || null,
             sumber_dana: resolvedSource,
             status: "pending",
             source: "MANUAL_CHAT",
