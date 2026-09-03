@@ -4,6 +4,7 @@ import { sendFonnteMessageWithFailover } from '@/lib/fonnte';
 import { calculateGoalMetrics, SavingsGoal as SavingsGoalCalc } from '@/lib/savings-calc';
 import { resolveSystemCategory, SYSTEM_CATEGORY_NAMES } from '@/lib/categories';
 import { isSavingsTransactionForExpenseCompatibility } from '@/lib/transaction-semantics';
+import { filterUnsentReminderSlots, resolveEligibleReminderSlots } from '@/lib/savings-reminder-schedule';
 
 export async function GET(req: Request) {
   const isDev = process.env.NODE_ENV === 'development';
@@ -11,7 +12,8 @@ export async function GET(req: Request) {
   const force = isDev && (url.searchParams.get('force') === 'true' || url.searchParams.get('test') === 'true');
 
   const authHeader = req.headers.get('authorization');
-  if (!isDev && process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!isDev && (!cronSecret || authHeader !== `Bearer ${cronSecret}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -52,68 +54,74 @@ export async function GET(req: Request) {
   const dispatched = [];
 
   for (const goal of goals) {
+    let scheduledIdentities = [{ slot: currentWibTime, date: todayWIB }];
+
     if (!force) {
-      // 1. Skip if user already deposited today
-      if (goal.last_deposit_date === todayWIB) {
-        continue;
-      }
-
-      // 2. Exact HH:mm matching against scheduled reminder times
+      // 1. Match the non-overlapping recent five-minute scheduling window.
       const times: string[] = goal.reminder_times || (goal.reminder_time ? [goal.reminder_time.slice(0, 5)] : ['08:00']);
-      const matchedSlot = times.find((t) => t.trim().padStart(5, '0') === currentWibTime);
+      scheduledIdentities = resolveEligibleReminderSlots(times, now);
 
-      if (!matchedSlot) {
+      if (scheduledIdentities.length === 0) {
         continue;
       }
 
-      // 3. Deduplication safeguard & Skip Suppression
+      // 2. Skip if user already deposited on the scheduled reminder date.
+      scheduledIdentities = scheduledIdentities.filter(
+        (scheduledIdentity) => goal.last_deposit_date !== scheduledIdentity.date,
+      );
+      if (scheduledIdentities.length === 0) {
+        continue;
+      }
+
+      // 3. Per-slot deduplication safeguard & Skip Suppression
       const { data: existingNotifications } = await supabase
         .from('notifications')
         .select('id, created_at, metadata')
         .eq('user_id', goal.user_id)
         .eq('type', 'INFO');
 
-      // Requirement A: Skip Suppression - check if user already confirmed "Skip" for this goal today
-      const alreadySkippedToday = existingNotifications?.some((n: any) => {
-        if (!n.created_at) return false;
-        const nDateWIB = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'Asia/Jakarta',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        }).format(new Date(n.created_at));
+      scheduledIdentities = scheduledIdentities.filter((scheduledIdentity) => {
+        const alreadySkippedOnScheduledDate = existingNotifications?.some((n: any) => {
+          if (!n.created_at) return false;
+          const notificationDateWIB = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Jakarta',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(new Date(n.created_at));
 
-        if (nDateWIB !== todayWIB) return false;
-        if (n.metadata?.action_type !== 'SKIP_SAVINGS') return false;
+          if (notificationDateWIB !== scheduledIdentity.date) return false;
+          if (n.metadata?.action_type !== 'SKIP_SAVINGS') return false;
 
-        // Check if skip covers this specific goal or all goals
-        if (n.metadata?.goal_id === goal.id) return true;
-        if (Array.isArray(n.metadata?.goal_ids) && n.metadata.goal_ids.includes(goal.id)) return true;
-        return false;
+          if (n.metadata?.goal_id === goal.id) return true;
+          if (Array.isArray(n.metadata?.goal_ids) && n.metadata.goal_ids.includes(goal.id)) return true;
+          return false;
+        });
+        return !alreadySkippedOnScheduledDate;
       });
 
-      if (alreadySkippedToday) {
-        // User already confirmed skip for this goal today; suppress subsequent reminders
-        continue;
-      }
+      const sentScheduledIdentities = (existingNotifications || []).flatMap((n: any) => {
+        if (n.metadata?.action_type !== 'SAVINGS_REMINDER' || n.metadata?.goal_id !== goal.id) {
+          return [];
+        }
 
-      const alreadySentSlotToday = existingNotifications?.some((n: any) => {
-        if (!n.created_at) return false;
-        const nDateWIB = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'Asia/Jakarta',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        }).format(new Date(n.created_at));
-        return (
-          nDateWIB === todayWIB &&
-          n.metadata?.action_type === 'SAVINGS_REMINDER' &&
-          n.metadata?.goal_id === goal.id &&
-          n.metadata?.slot === currentWibTime
-        );
+        const notificationDateWIB = n.metadata?.date || (n.created_at
+          ? new Intl.DateTimeFormat('en-CA', {
+              timeZone: 'Asia/Jakarta',
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+            }).format(new Date(n.created_at))
+          : null);
+        const notificationSlot = n.metadata?.slot;
+
+        return notificationDateWIB && typeof notificationSlot === 'string'
+          ? [{ date: notificationDateWIB, slot: notificationSlot }]
+          : [];
       });
+      scheduledIdentities = filterUnsentReminderSlots(scheduledIdentities, sentScheduledIdentities);
 
-      if (alreadySentSlotToday) {
+      if (scheduledIdentities.length === 0) {
         continue;
       }
     }
@@ -135,35 +143,14 @@ export async function GET(req: Request) {
       ? nabungCategory.category.id
       : undefined;
 
-    const todayExpense = (userTxs || [])
-      .filter((tx: any) => {
-        const rawDate = tx.transaction_date || tx.created_at;
-        if (!rawDate) return false;
-        const txDateWIB = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'Asia/Jakarta',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        }).format(new Date(rawDate));
-        if (txDateWIB !== todayWIB) return false;
-
-        if (isSavingsTransactionForExpenseCompatibility({
-          transaction: tx,
-          canonicalSavingCategoryId: nabungCategoryId,
-        })) return false;
-
-        return true;
-      })
-      .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
-
-    // Fetch user profile daily_expense_limit
+    // Fetch user profile daily_expense_limit once for all eligible slots.
     const { data: userProfile } = await supabase
       .from('profiles')
       .select('id, daily_expense_limit')
       .eq('id', goal.user_id)
       .maybeSingle();
 
-    // Calculate total daily commitment for all active goals of this user
+    // Calculate total daily commitment for all active goals of this user.
     const userActiveGoals = goals.filter((g: any) => g.user_id === goal.user_id);
     const activeGoalsCommitment = userActiveGoals.reduce(
       (sum: number, g: any) => sum + (Number(g.daily_target) || 0),
@@ -174,18 +161,6 @@ export async function GET(req: Request) {
       Number(userProfile?.daily_expense_limit) ||
       Number(userActiveGoals.find((g: any) => Number(g.max_daily_expense) > 0)?.max_daily_expense) ||
       0;
-
-    const safeDailyLimit = Math.max(0, baseBudget - activeGoalsCommitment);
-    const safeRemaining = Math.max(0, safeDailyLimit - todayExpense);
-
-    // Dynamic contextual warning note if expenses exceed safe daily limit (Requirement B)
-    let overBudgetNote = "";
-    if (safeDailyLimit > 0 && todayExpense > safeDailyLimit) {
-      const overAmount = todayExpense - safeDailyLimit;
-      overBudgetNote = `\n\n⚠️ *Perhatian Pengeluaran:*
-Pengeluaran hari ini telah melampaui batas aman sebesar *Rp ${overAmount.toLocaleString("id-ID")}*. Jika kondisi keuangan sedang padat, Anda disarankan untuk istirahat menabung hari ini.
-_Ketik *"Skip"* atau *"Skip ${goal.title}"* jika ingin melewati setoran hari ini._`;
-    }
 
     // 5. Build Goal Object & Calculate Metrics
     const goalAccount = goal.storage_detail || goal.account_name || (goal.storage_type === 'BANK_TRANSFER' ? 'Bank' : goal.storage_type === 'GOPAY_MERCHANT' ? 'QRIS' : 'Tunai');
@@ -240,8 +215,43 @@ _Ketik *"Skip"* atau *"Skip ${goal.title}"* jika ingin melewati setoran hari ini
       destinationAccount = "rekening *QRIS/GoPay*";
     }
 
-    // Gambar 1 Clean Message Layout with contextual Over-Budget Note
-    const reminderMessage = `*Pengingat Menabung Douit AI* 🎯
+    for (const scheduledIdentity of scheduledIdentities) {
+      const effectiveReminderDate = scheduledIdentity.date;
+      const todayExpense = (userTxs || [])
+        .filter((tx: any) => {
+          const rawDate = tx.transaction_date || tx.created_at;
+          if (!rawDate) return false;
+          const txDateWIB = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Jakarta',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(new Date(rawDate));
+          if (txDateWIB !== effectiveReminderDate) return false;
+
+          if (isSavingsTransactionForExpenseCompatibility({
+            transaction: tx,
+            canonicalSavingCategoryId: nabungCategoryId,
+          })) return false;
+
+          return true;
+        })
+        .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
+
+      const safeDailyLimit = Math.max(0, baseBudget - activeGoalsCommitment);
+      const safeRemaining = Math.max(0, safeDailyLimit - todayExpense);
+
+      // Dynamic contextual warning note if expenses exceed safe daily limit (Requirement B)
+      let overBudgetNote = "";
+      if (safeDailyLimit > 0 && todayExpense > safeDailyLimit) {
+        const overAmount = todayExpense - safeDailyLimit;
+        overBudgetNote = `\n\n⚠️ *Perhatian Pengeluaran:*
+Pengeluaran hari ini telah melampaui batas aman sebesar *Rp ${overAmount.toLocaleString("id-ID")}*. Jika kondisi keuangan sedang padat, Anda disarankan untuk istirahat menabung hari ini.
+_Ketik *"Skip"* atau *"Skip ${goal.title}"* jika ingin melewati setoran hari ini._`;
+      }
+
+      // Gambar 1 Clean Message Layout with contextual Over-Budget Note
+      const reminderMessage = `*Pengingat Menabung Douit AI* 🎯
 
 Target: *${goal.title}*
 Terkumpul: *Rp ${goalForCalc.currentAmount.toLocaleString("id-ID")}* / *Rp ${goalForCalc.targetAmount.toLocaleString("id-ID")}*
@@ -258,27 +268,28 @@ _Ketik "Nabung ${goal.title.toLowerCase()} [nominal]" untuk mencatat setoran man
 🔗 *Link Produk:*
 ${publicProxyUrl}`;
 
-    const res = await sendFonnteMessageWithFailover({
-      target: goal.whatsapp_number,
-      message: reminderMessage,
-      imageUrl: goal.image_url,
-    });
+      const res = await sendFonnteMessageWithFailover({
+        target: goal.whatsapp_number,
+        message: reminderMessage,
+        imageUrl: goal.image_url,
+      });
 
-    // Record deduplication notification log
-    await supabase.from('notifications').insert({
-      user_id: goal.user_id,
-      title: `Pengingat Menabung: ${goal.title}`,
-      message: `Setoran harian Rp ${goalForCalc.dailyTarget.toLocaleString("id-ID")} untuk target ${goal.title}.`,
-      type: 'INFO',
-      metadata: {
-        action_type: 'SAVINGS_REMINDER',
-        goal_id: goal.id,
-        slot: currentWibTime,
-        date: todayWIB,
-      },
-    });
+      // Record deduplication notification log
+      await supabase.from('notifications').insert({
+        user_id: goal.user_id,
+        title: `Pengingat Menabung: ${goal.title}`,
+        message: `Setoran harian Rp ${goalForCalc.dailyTarget.toLocaleString("id-ID")} untuk target ${goal.title}.`,
+        type: 'INFO',
+        metadata: {
+          action_type: 'SAVINGS_REMINDER',
+          goal_id: goal.id,
+          slot: scheduledIdentity.slot,
+          date: scheduledIdentity.date,
+        },
+      });
 
-    dispatched.push({ goalId: goal.id, success: res.success, slot: currentWibTime });
+      dispatched.push({ goalId: goal.id, success: res.success, slot: scheduledIdentity.slot });
+    }
   }
 
   return NextResponse.json({ success: true, count: dispatched.length, dispatched, timeWIB: currentWibTime });

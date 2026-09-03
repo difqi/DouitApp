@@ -4,7 +4,8 @@ import { createClient } from '@supabase/supabase-js';
 export async function GET(req: Request) {
   const isDev = process.env.NODE_ENV === 'development';
   const authHeader = req.headers.get('authorization');
-  if (!isDev && process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!isDev && (!cronSecret || authHeader !== `Bearer ${cronSecret}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

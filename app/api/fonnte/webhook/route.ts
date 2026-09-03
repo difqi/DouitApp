@@ -16,6 +16,7 @@ interface FonnteWebhookPayload {
   message?: string;
   name?: string;
   device?: string;
+  secret?: string;
   inboxid?: string | number;
   inbox_id?: string | number;
   [key: string]: any;
@@ -23,11 +24,16 @@ interface FonnteWebhookPayload {
 
 export async function POST(req: Request) {
   try {
-    // The sender-to-user ownership lookup below validates the identity used by all admin mutations.
-    const supabaseAdmin = createAdminClient();
+    const isProduction = process.env.NODE_ENV === 'production';
+    const expectedWebhookSecret = process.env.FONNTE_WEBHOOK_SECRET?.trim();
+    if (isProduction && !expectedWebhookSecret) {
+      return NextResponse.json({ status: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     let sender = '';
     let messageText = '';
     let providerEventId = '';
+    let webhookSecret = '';
 
     const contentType = req.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
@@ -35,25 +41,37 @@ export async function POST(req: Request) {
       sender = body?.sender || '';
       messageText = body?.message || '';
       providerEventId = String(body?.inboxid || body?.inbox_id || '').trim();
+      webhookSecret = String(body?.secret || '').trim();
     } else if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
       sender = (formData.get('sender') as string) || '';
       messageText = (formData.get('message') as string) || '';
       providerEventId = String(formData.get('inboxid') || formData.get('inbox_id') || '').trim();
+      webhookSecret = String(formData.get('secret') || '').trim();
     } else {
       try {
-        const body = (await req.json()) as FonnteWebhookPayload;
+        const body = (await req.clone().json()) as FonnteWebhookPayload;
         sender = body?.sender || '';
         messageText = body?.message || '';
         providerEventId = String(body?.inboxid || body?.inbox_id || '').trim();
+        webhookSecret = String(body?.secret || '').trim();
       } catch {
         const text = await req.text();
         const params = new URLSearchParams(text);
         sender = params.get('sender') || '';
         messageText = params.get('message') || '';
         providerEventId = params.get('inboxid') || params.get('inbox_id') || '';
+        webhookSecret = params.get('secret') || '';
       }
     }
+
+    webhookSecret = webhookSecret.trim();
+    if (expectedWebhookSecret && webhookSecret !== expectedWebhookSecret) {
+      return NextResponse.json({ status: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // The sender-to-user ownership lookup below validates the identity used by all admin mutations.
+    const supabaseAdmin = createAdminClient();
 
     sender = String(sender).trim();
     messageText = String(messageText).trim();

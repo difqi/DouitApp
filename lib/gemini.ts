@@ -61,10 +61,6 @@ export function getGeminiApiKeys(): string[] {
     keys.push(process.env.GEMINI_API_KEY.trim());
   }
 
-  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY && !keys.includes(process.env.NEXT_PUBLIC_GEMINI_API_KEY.trim())) {
-    keys.push(process.env.NEXT_PUBLIC_GEMINI_API_KEY.trim());
-  }
-
   return keys.filter(Boolean);
 }
 

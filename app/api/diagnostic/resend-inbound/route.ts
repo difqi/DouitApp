@@ -4,6 +4,10 @@ import { Resend } from "resend";
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 export async function GET(req: NextRequest) {
+  if (process.env.NODE_ENV === "production") {
+    return new NextResponse(null, { status: 404 });
+  }
+
   try {
     const searchParams = req.nextUrl.searchParams;
     const emailId = searchParams.get("emailId");
