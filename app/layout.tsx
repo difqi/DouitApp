@@ -24,11 +24,11 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: new URL(origin),
-    title: "Douit — Asisten Keuangan Pribadi",
+    title: "Douit",
     description,
-    icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
+    icons: { icon: "/douit.png", shortcut: "/douit.png" },
     openGraph: {
-      title: "Douit — Keuanganmu, lebih terarah.",
+      title: "Douit - Keuanganmu, lebih terarah.",
       description,
       locale: "id_ID",
       type: "website",
@@ -36,7 +36,7 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     twitter: {
       card: "summary_large_image",
-      title: "Douit — Keuanganmu, lebih terarah.",
+      title: "Douit - Keuanganmu, lebih terarah.",
       description,
       images: [`${origin}/og.png`],
     },
