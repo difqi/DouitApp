@@ -24,11 +24,7 @@ interface FonnteWebhookPayload {
 
 export async function POST(req: Request) {
   try {
-    const isProduction = process.env.NODE_ENV === 'production';
     const expectedWebhookSecret = process.env.FONNTE_WEBHOOK_SECRET?.trim();
-    if (isProduction && !expectedWebhookSecret) {
-      return NextResponse.json({ status: false, error: 'Unauthorized' }, { status: 401 });
-    }
 
     let sender = '';
     let messageText = '';
@@ -70,7 +66,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    // The sender-to-user ownership lookup below validates the identity used by all admin mutations.
+    // The sender-to-user ownership lookup below scopes admin mutations to one account.
+    // It does not authenticate the webhook when FONNTE_WEBHOOK_SECRET is unavailable.
     const supabaseAdmin = createAdminClient();
 
     sender = String(sender).trim();
