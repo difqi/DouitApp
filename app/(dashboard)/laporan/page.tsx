@@ -46,6 +46,7 @@ import {
   getParentCategoryKey,
   getParentCategoryName,
 } from "@/lib/report-category-aggregation";
+import { isTransferExcludedFromLegacyReport } from "@/lib/transaction-semantics";
 
 const formatMoney = (value: number | string) =>
   new Intl.NumberFormat("id-ID", {
@@ -437,11 +438,6 @@ export default function LaporanPage() {
     return matchesYear && matchesAccount;
   });
 
-  const isInternalTransfer = (catName: string) => {
-    const name = catName.toLowerCase();
-    return name === 'pindah saldo' || name === 'transfer antar rekening';
-  };
-
   const annualStats = Array.from({ length: 12 }, (_, i) => ({ month: i, income: 0, expense: 0, net: 0 }));
   const annualCategoryStats: Record<string, number[]> = {};
   const annualCategoryNames: Record<string, string> = {};
@@ -454,7 +450,10 @@ export default function LaporanPage() {
     const amount = Number(t.amount);
     const catName = (t.categories as any)?.name || 'Lain-lain';
     const catKey = getParentCategoryKey(t);
-    const isTransfer = isInternalTransfer(catName);
+    const isTransfer = isTransferExcludedFromLegacyReport({
+      transactionKind: t.transaction_kind,
+      categoryName: catName,
+    });
 
     if (t.type === 'INCOME' && !isTransfer) {
       annualStats[m].income += amount;
@@ -528,7 +527,10 @@ export default function LaporanPage() {
     const amount = Number(t.amount);
     const catName = (t.categories as any)?.name || 'Lain-lain';
     const catKey = getParentCategoryKey(t);
-    const isTransfer = isInternalTransfer(catName);
+    const isTransfer = isTransferExcludedFromLegacyReport({
+      transactionKind: t.transaction_kind,
+      categoryName: catName,
+    });
 
     if (t.type === 'INCOME' && !isTransfer) {
       multiYearStats[y].income += amount;
@@ -578,8 +580,8 @@ export default function LaporanPage() {
           return d.getFullYear() === singleYear && d.getMonth() === i;
         });
         
-        const income = monthTx.filter(t => t.type === 'INCOME' && !isInternalTransfer((t.categories as any)?.name || '')).reduce((sum, t) => sum + Number(t.amount), 0);
-        const expense = monthTx.filter(t => t.type === 'EXPENSE' && !isInternalTransfer((t.categories as any)?.name || '') && t.is_internal_transfer !== true).reduce((sum, t) => sum + Number(t.amount), 0);
+        const income = monthTx.filter(t => t.type === 'INCOME' && !isTransferExcludedFromLegacyReport({ transactionKind: t.transaction_kind, categoryName: (t.categories as any)?.name || '' })).reduce((sum, t) => sum + Number(t.amount), 0);
+        const expense = monthTx.filter(t => t.type === 'EXPENSE' && !isTransferExcludedFromLegacyReport({ transactionKind: t.transaction_kind, categoryName: (t.categories as any)?.name || '' }) && t.is_internal_transfer !== true).reduce((sum, t) => sum + Number(t.amount), 0);
         
         return {
           name: ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"][i],
@@ -1200,14 +1202,14 @@ export default function LaporanPage() {
 
   const monthlyMerchantDominantCategories = getDominantMerchantCategories(filteredTx);
   const annualMerchantDominantCategories = getDominantMerchantCategories(
-    annualTx.filter((transaction) => transaction.type === "EXPENSE" && !isInternalTransfer(transaction.categories?.name || ""))
+    annualTx.filter((transaction) => transaction.type === "EXPENSE" && !isTransferExcludedFromLegacyReport({ transactionKind: transaction.transaction_kind, categoryName: transaction.categories?.name || "" }))
   );
   const multiYearMerchantDominantCategories = getDominantMerchantCategories(
     multiYearTx.filter((transaction) => {
       const categoryName = transaction.categories?.name || "";
       return transaction.type === "EXPENSE"
         && new Date(transaction.transaction_date).getFullYear() === safeMultiYearSelected
-        && !isInternalTransfer(categoryName)
+        && !isTransferExcludedFromLegacyReport({ transactionKind: transaction.transaction_kind, categoryName })
         && transaction.is_internal_transfer !== true;
     })
   );

@@ -4,7 +4,7 @@ import { executeWithGenAIFailover } from "@/lib/gemini";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import crypto from "crypto";
-import { normalizeSumberDana } from "@/utils/bankAliases";
+import { isDeterministicSavingsAccountMatch } from "@/utils/bankAliases";
 import {
   listCategoriesForUser,
   getKnownSystemCategoryName,
@@ -14,64 +14,23 @@ import {
   SYSTEM_CATEGORY_NAMES,
   type TransactionType,
 } from "@/lib/categories";
+import {
+  findDeterministicSavingsGoalMatch,
+  resolveNormalTransactionKind,
+} from "@/lib/transaction-semantics";
+import {
+  buildSavingsOperationKey,
+  findUniqueOwnedSavingsAccount,
+  getSingleRpcRow,
+  parseProviderReceivedAt,
+  type SavingsEvidenceReconciliationResult,
+  type SavingsSourceAccount,
+} from "@/lib/savings-contributions";
 
 import { sendFonnteMessageWithFailover, generateWaProgressBar } from "@/lib/fonnte";
 import { checkAndSendOverBudgetAlert } from "@/lib/savingsAlert";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
-
-// Helper: Clean and calculate similarity using Dice Coefficient
-function calculateSimilarity(str1: string, str2: string): number {
-  if (str1 === str2) return 1.0;
-  if (!str1 || !str2) return 0.0;
-  if (str1.length < 2 || str2.length < 2) return 0.0;
-
-  const getBigrams = (str: string) => {
-    const bigrams = new Map<string, number>();
-    for (let i = 0; i < str.length - 1; i++) {
-      const bigram = str.substring(i, i + 2);
-      bigrams.set(bigram, (bigrams.get(bigram) || 0) + 1);
-    }
-    return bigrams;
-  };
-
-  const bigrams1 = getBigrams(str1);
-  const bigrams2 = getBigrams(str2);
-
-  let intersection = 0;
-  for (const [bigram, count1] of bigrams1.entries()) {
-    const count2 = bigrams2.get(bigram);
-    if (count2) {
-      intersection += Math.min(count1, count2);
-    }
-  }
-
-  const totalBigrams = (str1.length - 1) + (str2.length - 1);
-  return (2.0 * intersection) / totalBigrams;
-}
-
-// Helper: Determine similarity score between two merchant/account strings
-function getMerchantSimilarityScore(incomingMerchant: string, targetMerchant: string): number {
-  if (!incomingMerchant || !targetMerchant) return 0.0;
-
-  const cleanA = incomingMerchant.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const cleanB = targetMerchant.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-  if (!cleanA || !cleanB) return 0.0;
-  if (cleanA === cleanB) return 1.0;
-
-  if (cleanA.length >= 4 && cleanB.length >= 4) {
-    if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) return 1.0;
-  }
-
-  // Levenshtein / Dice Coefficient check
-  return calculateSimilarity(cleanA, cleanB);
-}
-
-// Helper: Determine if incoming merchant matches target storage_detail with >= 80% confidence
-function isMerchantMatch(incomingMerchant: string, targetMerchant: string): boolean {
-  return getMerchantSimilarityScore(incomingMerchant, targetMerchant) >= 0.80;
-}
 
 const emailParseSchema: Schema = {
   type: Type.OBJECT,
@@ -118,7 +77,7 @@ export async function POST(req: NextRequest) {
     const fromField = payload.data?.from || payload.from || "";
     const toField = payload.data?.to || payload.to || payload.data?.received_for || "";
     const subjectField = payload.data?.subject || payload.subject || "";
-    const createdAt = payload.data?.created_at || payload.created_at || new Date().toISOString();
+    const webhookCreatedAt = payload.data?.created_at || payload.created_at;
 
     // --- DIAGNOSTIC STEP: QUERY OFFICIAL RESEND RECEIVING API ---
     let receivingData: any = null;
@@ -133,6 +92,14 @@ export async function POST(req: NextRequest) {
         receivingError = e?.message || e;
       }
     }
+
+    // Only the authenticated Resend Receiving API response is strong enough for
+    // automatic manual->email evidence reconciliation. The webhook timestamp is
+    // still retained as a compatibility fallback for generic email transactions.
+    const providerReceivedAt = parseProviderReceivedAt(receivingData?.created_at);
+    const createdAt = providerReceivedAt
+      || parseProviderReceivedAt(webhookCreatedAt)
+      || new Date().toISOString();
 
     // --- DIAGNOSTIC LOG PRINTING ---
     console.log("============================================================");
@@ -370,12 +337,10 @@ export async function POST(req: NextRequest) {
           .not('storage_detail', 'is', null);
 
         if (activeGoals && activeGoals.length > 0) {
-          matchedGoal = activeGoals.find((g) => {
-            if (!g.storage_detail) return false;
-            return (
-              isMerchantMatch(tx.merchant, g.storage_detail) ||
-              (tx.notes && isMerchantMatch(tx.notes, g.storage_detail))
-            );
+          matchedGoal = findDeterministicSavingsGoalMatch({
+            goals: activeGoals,
+            merchant: tx.merchant,
+            notes: tx.notes,
           });
         }
       } catch (err) {
@@ -385,6 +350,33 @@ export async function POST(req: NextRequest) {
       // Nabung is currently an EXPENSE-only system category. Do not create a
       // category/type mismatch if an inbound income happens to match goal text.
       if (matchedGoal && transactionType !== 'EXPENSE') matchedGoal = null;
+
+      const { data: accounts } = await supabase
+        .from('payment_accounts')
+        .select('id, user_id, name, type')
+        .eq('user_id', profile.id)
+        .not('user_id', 'is', null)
+        .order('created_at', { ascending: true });
+
+      const rawSumberDana = tx.sumber_dana || "";
+      const savingsAccount = matchedGoal
+        ? findUniqueOwnedSavingsAccount({
+            accounts: (accounts || []) as SavingsSourceAccount[],
+            actorUserId: profile.id,
+            matches: (account) => isDeterministicSavingsAccountMatch(
+              account.name,
+              rawSumberDana,
+            ),
+          })
+        : null;
+      const savingsOperationKey = matchedGoal
+        ? buildSavingsOperationKey({ namespace: 'resend', stableId: emailId })
+        : null;
+
+      if (matchedGoal && (!savingsAccount || !savingsOperationKey || !providerReceivedAt)) {
+        console.warn('[Resend Webhook] Savings match downgraded: stable email/account/timestamp identity is unavailable');
+        matchedGoal = null;
+      }
 
       if (matchedGoal) {
         console.log(`🎯 Savings Goal Matched! Goal: "${matchedGoal.title}" (${matchedGoal.id}) matched with incoming "${tx.merchant}"`);
@@ -472,16 +464,8 @@ export async function POST(req: NextRequest) {
 
       if (!categoryId) status = 'PENDING_APPROVAL';
 
-      // Fetch user's payment accounts for matching
-      const { data: accounts } = await supabase
-        .from('payment_accounts')
-        .select('id, name, type')
-        .eq('user_id', profile.id)
-        .order('created_at', { ascending: true }); // ensure consistent ordering
-
       let targetAccountName = 'Tunai';
       let isFallback = false;
-      const rawSumberDana = tx.sumber_dana || "";
       
       const extractBankKeyword = (sumberDana: string) => {
         if (!sumberDana) return "";
@@ -526,6 +510,102 @@ export async function POST(req: NextRequest) {
         finalNotes = finalNotes ? `${finalNotes} [UNMATCHED_BANK:${keyword}]` : `[UNMATCHED_BANK:${keyword}]`;
       }
 
+      if (matchedGoal) {
+        const sourceAccount = savingsAccount!;
+        const operationKey = savingsOperationKey!;
+        const occurredAt = providerReceivedAt!;
+
+        const { data: reconciliationData, error: reconciliationError } = await supabase.rpc(
+          'reconcile_savings_contribution_evidence',
+          {
+            p_actor_user_id: profile.id,
+            p_goal_id: matchedGoal.id,
+            p_amount: tx.amount,
+            p_source_account_id: sourceAccount.id,
+            p_external_event_id: operationKey,
+            p_notes: `Setoran otomatis QRIS/Bank via email (${tx.merchant})`,
+            p_occurred_at: occurredAt,
+            p_raw_email_body: emailBody,
+          },
+        );
+
+        if (reconciliationError) {
+          console.error('[Resend Webhook] Savings evidence reconciliation failed:', reconciliationError.message);
+          return NextResponse.json({ error: 'Savings evidence reconciliation failed' }, { status: 500 });
+        }
+
+        const reconciliation = getSingleRpcRow<SavingsEvidenceReconciliationResult>(reconciliationData);
+        if (!reconciliation) {
+          return NextResponse.json({ error: 'Savings evidence result missing' }, { status: 500 });
+        }
+        if (reconciliation.out_outcome === 'AMBIGUOUS') {
+          console.warn('[Resend Webhook] Ambiguous manual savings evidence; no duplicate created');
+          return NextResponse.json({ success: true, note: 'Savings evidence requires review' });
+        }
+
+        const currentAmount = Number(reconciliation.out_current_amount || 0);
+        const createdContribution = reconciliation.out_outcome === 'CREATED';
+
+        if (tx.admin_fee && tx.admin_fee > 0) {
+          const adminCat = resolveSystemCategoryFromRows(
+            categories,
+            SYSTEM_CATEGORY_NAMES.ADMIN_FEE,
+            'EXPENSE',
+          );
+          const { error: feeError } = await supabase.from('transactions').upsert({
+            user_id: profile.id,
+            amount: tx.admin_fee,
+            type: 'EXPENSE',
+            merchant: `Biaya Admin ${sourceAccount.name}`,
+            category_id: adminCat.status === 'matched' ? adminCat.category.id : null,
+            subcategory_id: null,
+            transaction_kind: 'FEE',
+            sumber_dana: sourceAccount.name,
+            status: adminCat.status === 'matched' ? 'APPROVED' : 'PENDING_APPROVAL',
+            source: 'AUTOMATIC_EMAIL',
+            confidence_score: 1.0,
+            idempotency_key: `${operationKey}:adminfee`,
+            raw_email_body: emailBody,
+            notes: finalNotes || null,
+            transaction_date: occurredAt,
+          }, { onConflict: 'idempotency_key', ignoreDuplicates: true });
+          if (feeError) console.error('[Resend Webhook] Admin fee insert failed:', feeError.message);
+        }
+
+        if (createdContribution) {
+          checkAndSendOverBudgetAlert(profile.id, supabase).catch(err =>
+            console.error('Over budget check failed in resend webhook:', err)
+          );
+        }
+
+        const targetPhone = matchedGoal.whatsapp_number;
+        if (targetPhone) {
+          const formatRupiah = (value: number) => new Intl.NumberFormat('id-ID').format(value);
+          const percentage = Math.min(100, Math.round((currentAmount / matchedGoal.target_amount) * 100));
+          const evidenceLabel = reconciliation.out_outcome === 'UPGRADED'
+            ? 'Setoran Manual Terverifikasi'
+            : 'Setoran Otomatis Terverifikasi';
+          const waMessage = `🎉 *${evidenceLabel}!*
+
+Target: *${matchedGoal.title}*
+Setoran: *Rp ${formatRupiah(tx.amount)}* (via ${tx.merchant})
+Total Terkumpul: *Rp ${formatRupiah(currentAmount)}* / Rp ${formatRupiah(matchedGoal.target_amount)}
+Progress: ${generateWaProgressBar(percentage)}
+
+_Tabungan impian Anda makin dekat! Tetap konsisten!_ 💪`;
+          await sendFonnteMessageWithFailover({
+            target: targetPhone,
+            message: waMessage,
+            url: matchedGoal.image_url || undefined,
+          });
+        }
+
+        return NextResponse.json({
+          success: true,
+          savings_outcome: reconciliation.out_outcome,
+        });
+      }
+
       const txPayload = {
         user_id: profile.id,
         amount: tx.amount,
@@ -533,10 +613,13 @@ export async function POST(req: NextRequest) {
         merchant: tx.merchant,
         category_id: categoryId,
         subcategory_id: null,
+        transaction_kind: resolveNormalTransactionKind(
+          categories.find((category) => category.id === categoryId),
+        ),
         sumber_dana: rawSumberDana || "Tunai", // Preserve raw source name
         status: status,
         source: 'AUTOMATIC_EMAIL',
-        confidence_score: matchedGoal ? 1.0 : tx.confidence_score,
+        confidence_score: tx.confidence_score,
         idempotency_key: messageId,
         raw_email_body: emailBody,
         notes: finalNotes || null
@@ -557,6 +640,7 @@ export async function POST(req: NextRequest) {
           type: 'EXPENSE',
           merchant: "Biaya Admin " + (rawSumberDana || "Bank"),
           category_id: adminCat.status === 'matched' ? adminCat.category.id : null,
+          transaction_kind: 'FEE',
           status: adminCat.status === 'matched' ? txPayload.status : 'PENDING_APPROVAL',
           idempotency_key: `${messageId}-adminfee`
         });
@@ -577,66 +661,6 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // --- SAVINGS GOALS PROGRESS SYNC & WHATSAPP NOTIFICATION ---
-      if (matchedGoal) {
-        try {
-          // 1. Insert into savings_logs
-          await supabase.from('savings_logs').insert({
-            goal_id: matchedGoal.id,
-            user_id: profile.id,
-            amount: tx.amount,
-            notes: `Setoran otomatis QRIS/Bank via email (${tx.merchant})`,
-            source_type: 'INBOUND_EMAIL'
-          });
-
-          // 2. Update current_amount, streak & status on savings_goals
-          const newCurrent = (matchedGoal.current_amount || 0) + tx.amount;
-          const isCompleted = newCurrent >= matchedGoal.target_amount;
-          const todayStr = new Date().toISOString().split('T')[0];
-
-          let newStreak = matchedGoal.streak_count || 0;
-          if (matchedGoal.last_deposit_date !== todayStr) {
-            newStreak += 1;
-          }
-
-          await supabase
-            .from('savings_goals')
-            .update({
-              current_amount: newCurrent,
-              streak_count: newStreak,
-              last_deposit_date: todayStr,
-              status: isCompleted ? 'COMPLETED' : matchedGoal.status,
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', matchedGoal.id);
-
-          // 3. Send WhatsApp Notification via Fonnte
-          const targetPhone = matchedGoal.whatsapp_number;
-          if (targetPhone) {
-            const formatRupiah = (val: number) => new Intl.NumberFormat('id-ID').format(val);
-            const percentage = Math.min(100, Math.round((newCurrent / matchedGoal.target_amount) * 100));
-
-            const waMessage = `🎉 *Setoran Otomatis QRIS Terdeteksi!*
-
-Target: *${matchedGoal.title}*
-Setoran Masuk: *Rp ${formatRupiah(tx.amount)}* (via ${tx.merchant})
-Total Terkumpul: *Rp ${formatRupiah(newCurrent)}* / Rp ${formatRupiah(matchedGoal.target_amount)}
-Progress: ${generateWaProgressBar(percentage)}
-Streak: 🔥 *${newStreak} Hari Aktif*
-
-_Tabungan impian Anda makin dekat! Tetap konsisten!_ 💪`;
-
-            await sendFonnteMessageWithFailover({
-              target: targetPhone,
-              message: waMessage,
-              url: matchedGoal.image_url || undefined,
-            });
-            console.log(`📱 WhatsApp auto-notification sent for goal "${matchedGoal.title}" to ${targetPhone}`);
-          }
-        } catch (savingsErr) {
-          console.error("Error processing savings goal auto-deposit sync:", savingsErr);
-        }
-      }
     }
 
     return NextResponse.json({ success: true });

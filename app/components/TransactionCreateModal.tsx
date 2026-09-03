@@ -17,6 +17,10 @@ import {
   preserveSubcategoryForCategoryChange,
   validateSubcategoryAssignmentFromRows,
 } from "@/lib/categories";
+import {
+  resolveNormalTransactionKind,
+  shouldExposeCategoryInOrdinaryTransactionPicker,
+} from "@/lib/transaction-semantics";
 import type { CategoryRecord } from "@/types";
 
 type TransactionCategory = CategoryRecord;
@@ -84,7 +88,10 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
 
   const categories = providedCategories ?? fetchedCategories;
   const categoryOptions = useMemo(() => categories
-    .filter((category) => category.type.toUpperCase() === type)
+    .filter((category) =>
+      category.type.toUpperCase() === type
+      && shouldExposeCategoryInOrdinaryTransactionPicker(category),
+    )
     .map((category) => ({
       value: category.id,
       label: category.name,
@@ -134,7 +141,9 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
 
       const ruleCategory = rule?.category_id
         ? categories.find((category) =>
-            category.id === rule.category_id && category.type.toUpperCase() === transactionType,
+            category.id === rule.category_id
+            && category.type.toUpperCase() === transactionType
+            && shouldExposeCategoryInOrdinaryTransactionPicker(category),
           )
         : null;
 
@@ -168,6 +177,10 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
         toast.error("Kategori tidak dapat digunakan.");
         return;
       }
+      if (!shouldExposeCategoryInOrdinaryTransactionPicker(safeCategory)) {
+        toast.error("Kategori ini hanya dapat digunakan melalui fitur Nabung.");
+        return;
+      }
 
       if (selectedSubcategoryId) {
         const subcategories = await listSubcategoriesForParent(
@@ -198,6 +211,7 @@ export function TransactionCreateModal({ open, onClose, categories: providedCate
         merchant: merchantName,
         category_id: selectedCategoryId,
         subcategory_id: selectedSubcategoryId,
+        transaction_kind: resolveNormalTransactionKind(safeCategory),
         sumber_dana: selectedSource,
         notes: notes ? `${notes} [NO_TIME]` : "[NO_TIME]",
         status: "APPROVED",

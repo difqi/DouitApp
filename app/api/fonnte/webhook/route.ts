@@ -1,15 +1,23 @@
 import { NextResponse } from 'next/server';
 import { sendFonnteMessage, getWaProgressBarBlocks } from '@/lib/fonnte';
 import { calculateGoalMetrics, SavingsGoal as SavingsGoalCalc } from '@/lib/savings-calc';
-import { isAccountMatch } from '@/utils/bankAliases';
-import { resolveSystemCategory, SYSTEM_CATEGORY_NAMES } from '@/lib/categories';
+import { isDeterministicSavingsAccountMatch } from '@/utils/bankAliases';
 import { createAdminClient } from '@/lib/supabase/admin';
+import {
+  buildSavingsOperationKey,
+  findUniqueOwnedSavingsAccount,
+  getSingleRpcRow,
+  type SavingsContributionResult,
+  type SavingsSourceAccount,
+} from '@/lib/savings-contributions';
 
 interface FonnteWebhookPayload {
   sender?: string;
   message?: string;
   name?: string;
   device?: string;
+  inboxid?: string | number;
+  inbox_id?: string | number;
   [key: string]: any;
 }
 
@@ -19,26 +27,31 @@ export async function POST(req: Request) {
     const supabaseAdmin = createAdminClient();
     let sender = '';
     let messageText = '';
+    let providerEventId = '';
 
     const contentType = req.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
       const body = (await req.json()) as FonnteWebhookPayload;
       sender = body?.sender || '';
       messageText = body?.message || '';
+      providerEventId = String(body?.inboxid || body?.inbox_id || '').trim();
     } else if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
       const formData = await req.formData();
       sender = (formData.get('sender') as string) || '';
       messageText = (formData.get('message') as string) || '';
+      providerEventId = String(formData.get('inboxid') || formData.get('inbox_id') || '').trim();
     } else {
       try {
         const body = (await req.json()) as FonnteWebhookPayload;
         sender = body?.sender || '';
         messageText = body?.message || '';
+        providerEventId = String(body?.inboxid || body?.inbox_id || '').trim();
       } catch {
         const text = await req.text();
         const params = new URLSearchParams(text);
         sender = params.get('sender') || '';
         messageText = params.get('message') || '';
+        providerEventId = params.get('inboxid') || params.get('inbox_id') || '';
       }
     }
 
@@ -73,27 +86,48 @@ export async function POST(req: Request) {
     let userId: string | null = null;
 
     const phoneFilter = `whatsapp_number.eq.${phone62},whatsapp_number.eq.${phone08},whatsapp_number.eq.${phonePlus62},whatsapp_number.eq.${digitsOnly}`;
-    const { data: goalMatch, error: goalMatchErr } = await supabaseAdmin
+    const { data: goalMatches, error: goalMatchErr } = await supabaseAdmin
       .from('savings_goals')
       .select('user_id')
-      .or(phoneFilter)
-      .limit(1)
-      .maybeSingle();
+      .or(phoneFilter);
 
-    if (goalMatch?.user_id) {
-      userId = goalMatch.user_id;
+    const goalOwnerIds = [...new Set(
+      (goalMatches || [])
+        .map((goalRow: { user_id?: string | null }) => goalRow.user_id)
+        .filter((ownerId): ownerId is string => typeof ownerId === 'string' && ownerId.length > 0),
+    )];
+
+    if (goalMatchErr) {
+      console.error('[Fonnte Webhook] Failed to resolve sender ownership:', goalMatchErr.message);
+      return NextResponse.json({ status: false, error: 'Sender ownership lookup failed' }, { status: 500 });
+    }
+
+    if (goalOwnerIds.length > 1) {
+      console.error('[Fonnte Webhook] Ambiguous sender ownership; refusing financial mutation');
+      return NextResponse.json({ status: true, note: 'Ambiguous sender ownership' }, { status: 200 });
+    }
+
+    if (goalOwnerIds.length === 1) {
+      userId = goalOwnerIds[0];
     } else {
       // Fallback: check profiles if phone column exists
       try {
-        const { data: profile } = await supabaseAdmin
+        const { data: profiles } = await supabaseAdmin
           .from('profiles')
           .select('id')
           .or(`phone.eq.${phone62},phone.eq.${phone08},phone.eq.${phonePlus62},phone.eq.${digitsOnly}`)
-          .limit(1)
-          .maybeSingle();
+          .limit(2);
 
-        if (profile?.id) {
-          userId = profile.id;
+        const profileIds = [...new Set(
+          (profiles || [])
+            .map((profile: { id?: string | null }) => profile.id)
+            .filter((profileId): profileId is string => typeof profileId === 'string' && profileId.length > 0),
+        )];
+        if (profileIds.length === 1) {
+          userId = profileIds[0];
+        } else if (profileIds.length > 1) {
+          console.error('[Fonnte Webhook] Ambiguous profile phone ownership; refusing financial mutation');
+          return NextResponse.json({ status: true, note: 'Ambiguous sender ownership' }, { status: 200 });
         }
       } catch {
         // Ignored if profiles.phone column does not exist
@@ -101,7 +135,7 @@ export async function POST(req: Request) {
     }
 
     if (!userId) {
-      console.warn(`[Fonnte Webhook] Unrecognized sender phone number: ${sender}`);
+      console.warn('[Fonnte Webhook] Unrecognized sender phone number');
       await sendFonnteMessage(sender, "Nomor WhatsApp Anda belum terhubung dengan akun Douit AI. Pastikan nomor telah diinput saat membuat target nabung.");
       return NextResponse.json({ status: true }, { status: 200 });
     }
@@ -149,6 +183,19 @@ export async function POST(req: Request) {
         return NextResponse.json({ status: true }, { status: 200 });
       }
 
+      const operationKey = buildSavingsOperationKey({
+        namespace: 'fonnte',
+        stableId: providerEventId,
+      });
+      if (!operationKey) {
+        console.error('[Fonnte Webhook] Savings command rejected: stable inboxid is unavailable');
+        await sendFonnteMessage(
+          sender,
+          'Setoran belum dicatat karena identitas pesan WhatsApp tidak tersedia. Silakan catat melalui halaman Nabung agar tidak berisiko tercatat ganda.',
+        );
+        return NextResponse.json({ status: true, note: 'Stable provider event ID required' });
+      }
+
       // Query user's active savings goals with savings_logs
       const { data: activeGoals, error: activeGoalsErr } = await supabaseAdmin
         .from('savings_goals')
@@ -171,16 +218,35 @@ export async function POST(req: Request) {
       if (hasKeyword) {
         // Target Matching:
         // 1. Check if first word of goal.title matches extracted keyword (case-insensitive)
-        goal = activeGoals.find((g: any) => {
+        const firstWordMatches = activeGoals.filter((g: any) => {
           const firstWord = (g.title || '').trim().split(/\s+/)[0].toLowerCase();
           return firstWord === keyword.toLowerCase();
         });
 
+        if (firstWordMatches.length === 1) {
+          goal = firstWordMatches[0];
+        } else if (firstWordMatches.length > 1) {
+          await sendFonnteMessage(
+            sender,
+            `Ada lebih dari satu target yang cocok dengan '*${keyword}*'. Gunakan kata kunci target yang lebih spesifik.`,
+          );
+          return NextResponse.json({ status: true, note: 'Ambiguous savings goal' }, { status: 200 });
+        }
+
         // 2. Fallback: Check if goal.title contains keyword anywhere
         if (!goal) {
-          goal = activeGoals.find((g: any) => {
+          const containsMatches = activeGoals.filter((g: any) => {
             return (g.title || '').toLowerCase().includes(keyword.toLowerCase());
           });
+          if (containsMatches.length === 1) {
+            goal = containsMatches[0];
+          } else if (containsMatches.length > 1) {
+            await sendFonnteMessage(
+              sender,
+              `Ada lebih dari satu target yang cocok dengan '*${keyword}*'. Gunakan kata kunci target yang lebih spesifik.`,
+            );
+            return NextResponse.json({ status: true, note: 'Ambiguous savings goal' }, { status: 200 });
+          }
         }
 
         if (!goal) {
@@ -191,7 +257,13 @@ export async function POST(req: Request) {
           return NextResponse.json({ status: true }, { status: 200 });
         }
       } else {
-        // Fallback to latest active goal if no keyword provided
+        if (activeGoals.length !== 1) {
+          await sendFonnteMessage(
+            sender,
+            'Sebutkan kata kunci target karena Anda memiliki lebih dari satu target tabungan aktif.',
+          );
+          return NextResponse.json({ status: true, note: 'Savings goal keyword required' }, { status: 200 });
+        }
         goal = activeGoals[0];
       }
 
@@ -227,6 +299,7 @@ export async function POST(req: Request) {
       // Account Validation based on savings destination method
       const isCashGoal = goal.storage_type === 'TUNAI';
       let recordedSumberDana = 'Tunai';
+      let sourceAccountId: string | null = null;
 
       if (isCashGoal) {
         recordedSumberDana = 'Tunai';
@@ -234,8 +307,9 @@ export async function POST(req: Request) {
         // Non-Cash Goals (GOPAY_MERCHANT / BANK_TRANSFER)
         const { data: userAccounts } = await supabaseAdmin
           .from('payment_accounts')
-          .select('id, name, type, is_primary')
-          .eq('user_id', userId);
+          .select('id, user_id, name, type, is_primary')
+          .eq('user_id', userId)
+          .not('user_id', 'is', null);
 
         const registeredAccounts = userAccounts || [];
         const registeredListStr = registeredAccounts.length > 0
@@ -256,11 +330,12 @@ Format: Nabung ${displayKeyword} ${amount} pakai [nama_rekening]`
           return NextResponse.json({ status: true }, { status: 200 });
         }
 
-        const matchedAccount = registeredAccounts.find((acc: any) => {
-          return isAccountMatch(acc.name, rawAccountInput) ||
-                 acc.name.toLowerCase() === rawAccountInput.toLowerCase() ||
-                 acc.name.toLowerCase().includes(rawAccountInput.toLowerCase()) ||
-                 rawAccountInput.toLowerCase().includes(acc.name.toLowerCase());
+        const matchedAccount = findUniqueOwnedSavingsAccount({
+          accounts: registeredAccounts as SavingsSourceAccount[],
+          actorUserId: userId,
+          matches: (account) => {
+            return isDeterministicSavingsAccountMatch(account.name, rawAccountInput);
+          },
         });
 
         if (!matchedAccount) {
@@ -276,19 +351,35 @@ Format: Nabung ${displayKeyword} ${amount} pakai [nama_rekening]`
         }
 
         recordedSumberDana = matchedAccount.name;
+        sourceAccountId = matchedAccount.id;
       }
 
-      // 1. Persist deposit record into savings_logs
-      const { error: logError } = await supabaseAdmin.from('savings_logs').insert({
-        goal_id: goal.id,
-        user_id: userId,
-        amount: amount,
-        notes: `Setoran via WhatsApp Bot (Fonnte) - Sumber Dana: ${recordedSumberDana}`,
-        source_type: 'WHATSAPP_BOT',
-      });
+      const { data: contributionData, error: contributionError } = await supabaseAdmin.rpc(
+        'record_savings_contribution_as_service',
+        {
+          p_actor_user_id: userId,
+          p_goal_id: goal.id,
+          p_amount: amount,
+          p_source_account_id: sourceAccountId,
+          p_recording_method: 'MANUAL_WHATSAPP',
+          p_evidence_level: 'USER_CONFIRMED',
+          p_operation_key: operationKey,
+          p_external_event_id: null,
+          p_notes: `Setoran via WhatsApp Bot (Fonnte) - Sumber Dana: ${recordedSumberDana}`,
+          p_occurred_at: new Date().toISOString(),
+          p_raw_email_body: null,
+        },
+      );
 
-      if (logError) {
-        console.error('[Fonnte Webhook] Failed to insert savings_logs:', logError);
+      if (contributionError) {
+        console.error('[Fonnte Webhook] Atomic savings contribution failed:', contributionError.message);
+        return NextResponse.json({ status: false, error: 'Savings contribution failed' }, { status: 500 });
+      }
+
+      const contribution = getSingleRpcRow<SavingsContributionResult>(contributionData);
+      if (!contribution) {
+        console.error('[Fonnte Webhook] Atomic savings contribution returned no result');
+        return NextResponse.json({ status: false, error: 'Savings contribution result missing' }, { status: 500 });
       }
 
       // 2. Build updated deposits array & calculate metrics
@@ -300,7 +391,7 @@ Format: Nabung ${displayKeyword} ${amount} pakai [nama_rekening]`
         { date: new Date().toISOString(), amount },
       ];
 
-      const newCurrentAmount = Number(goal.current_amount || 0) + amount;
+      const newCurrentAmount = Number(contribution.out_current_amount || 0);
       const targetAmount = Number(goal.target_amount || 0);
       const isCompleted = newCurrentAmount >= targetAmount;
 
@@ -328,64 +419,11 @@ Format: Nabung ${displayKeyword} ${amount} pakai [nama_rekening]`
       const emptyBlocks = 10 - filledBlocks;
       const progressBar = "🟧".repeat(filledBlocks) + "⬛".repeat(emptyBlocks);
 
-      // 3. Persist Goal updates to savings_goals
-      const coreUpdatePayload: Record<string, any> = {
-        current_amount: newCurrentAmount,
-        target_date: metrics.estimatedDate.toISOString().split('T')[0],
-        streak_count: metrics.currentStreak,
-        last_deposit_date: todayWIB,
-        status: isCompleted ? 'COMPLETED' : 'ACTIVE',
-        accumulated_time_debt: metrics.fractionalDrift,
-        total_delay_days: Math.max(0, metrics.driftDays),
-        updated_at: new Date().toISOString(),
-      };
+      console.log(
+        `[Fonnte Webhook] Atomic contribution ${contribution.out_replayed ? 'replayed' : 'created'} for goal ${goal.id}`,
+      );
 
-      let { error: updateError } = await supabaseAdmin
-        .from('savings_goals')
-        .update(coreUpdatePayload)
-        .eq('id', goal.id);
-
-      if (updateError) {
-        console.error('[Fonnte Webhook] Failed to update savings_goals:', JSON.stringify(updateError, null, 2));
-      } else {
-        console.log(`[Fonnte Webhook] Successfully updated goal "${goal.title}" (${goal.id}): +Rp ${amount} via ${recordedSumberDana}, new total: Rp ${newCurrentAmount}, streak: ${metrics.currentStreak} days`);
-      }
-
-      // 4. Persist transaction record into transactions table
-      try {
-        const nabungCategory = await resolveSystemCategory({
-          supabase: supabaseAdmin,
-          name: SYSTEM_CATEGORY_NAMES.SAVING,
-          type: 'EXPENSE',
-        });
-
-        if (nabungCategory.status !== 'matched') {
-          console.error('[Fonnte Webhook] System savings category resolution failed');
-        } else {
-          const { error: txError } = await supabaseAdmin.from('transactions').insert({
-            user_id: userId,
-            amount: amount,
-            type: 'EXPENSE',
-            merchant: goal.title || 'Nabung Target',
-            category_id: nabungCategory.category.id,
-            subcategory_id: null,
-            status: 'APPROVED',
-            source: 'MANUAL_CHAT',
-            sumber_dana: recordedSumberDana,
-            confidence_score: 1.0,
-            notes: `Setoran tabungan via WhatsApp untuk target: ${goal.title} (${recordedSumberDana})`,
-            transaction_date: new Date().toISOString(),
-          });
-
-          if (txError) {
-            console.error('[Fonnte Webhook] Failed to insert transactions record');
-          }
-        }
-      } catch (txErr) {
-        console.error('[Fonnte Webhook] Error recording transaction:', txErr);
-      }
-
-      // 5. Send formatted confirmation WhatsApp message
+      // Send formatted confirmation only after the atomic contribution succeeds.
       // Formatted Date (e.g. 15 Sep 2026)
       const dateIndo = metrics.estimatedDate.toLocaleDateString("id-ID", {
         day: "numeric",

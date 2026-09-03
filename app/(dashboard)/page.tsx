@@ -212,7 +212,7 @@ export default function DashboardPage() {
       const { data, error } = await supabase
         .from('transactions')
         .select(`
-          id, amount, type, merchant, status, source, confidence_score, transaction_date, category_id, subcategory_id, sumber_dana, notes,
+          id, amount, type, merchant, status, source, confidence_score, transaction_date, category_id, subcategory_id, transaction_kind, sumber_dana, notes,
           categories (name),
           subcategories (id, category_id, user_id, name, is_system, system_key, icon_name, color_hex, created_at)
         `)

@@ -42,6 +42,11 @@ import {
   validateSubcategoryAssignmentFromRows,
 } from "@/lib/categories";
 import { formatTransactionCategoryLabel } from "@/lib/transaction-category-display";
+import {
+  resolveNormalTransactionKind,
+  resolveTransactionKindForCategoryEdit,
+  shouldExposeCategoryInOrdinaryTransactionPicker,
+} from "@/lib/transaction-semantics";
 
 const formatMoney = (value: number | string) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value));
 const formatDate = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" });
@@ -435,7 +440,7 @@ export function TransactionsView() {
       let query = supabase
         .from('transactions')
         .select(`
-          id, amount, type, merchant, status, source, confidence_score, transaction_date, category_id, subcategory_id, notes, sumber_dana,
+          id, amount, type, merchant, status, source, confidence_score, transaction_date, category_id, subcategory_id, transaction_kind, notes, sumber_dana,
           categories (name),
           subcategories (id, category_id, user_id, name, is_system, system_key, icon_name, color_hex, created_at)
         `)
@@ -606,6 +611,14 @@ export function TransactionsView() {
         toast.error("Kategori tidak dapat digunakan.");
         return;
       }
+      if (categoryChanged && !shouldExposeCategoryInOrdinaryTransactionPicker(safeCategory)) {
+        toast.error("Kategori ini hanya dapat digunakan melalui fitur Nabung.");
+        return;
+      }
+      if (shouldSaveRule && !shouldExposeCategoryInOrdinaryTransactionPicker(safeCategory)) {
+        toast.error("Kategori khusus Nabung tidak dapat dijadikan aturan transaksi biasa.");
+        return;
+      }
 
       if (newSubcategoryId) {
         const subcategories = await listSubcategoriesForParent(
@@ -627,9 +640,18 @@ export function TransactionsView() {
         }
       }
 
+      const nextTransactionKind = resolveTransactionKindForCategoryEdit({
+        currentTransactionKind: editRow.transaction_kind,
+        previousCategoryId: editRow.category_id,
+        nextCategory: safeCategory,
+      });
+
       const { error: transactionError } = await supabase.from('transactions').update({
         category_id: newCategoryId,
         subcategory_id: newSubcategoryId,
+        ...(categoryChanged
+          ? { transaction_kind: nextTransactionKind }
+          : {}),
         sumber_dana: newSumberDana,
         notes: newNotes,
         status: 'APPROVED'
@@ -665,6 +687,7 @@ export function TransactionsView() {
               ...sharedRetroactivePayload,
               category_id: newCategoryId,
               subcategory_id: null,
+              transaction_kind: resolveNormalTransactionKind(safeCategory),
             })
             .match({ user_id: user.id, merchant: editRow.merchant })
             .neq('category_id', newCategoryId);
@@ -775,7 +798,15 @@ export function TransactionsView() {
   };
 
   const categoryOptions = categories
-    .filter(c => !editRow || c.type.toUpperCase() === editRow.type)
+    .filter((category) => {
+      if (editRow && category.type.toUpperCase() !== editRow.type) return false;
+      if (shouldExposeCategoryInOrdinaryTransactionPicker(category)) return true;
+      // Legacy canonical Nabung remains displayable only while it is the
+      // unchanged current value. Once changed away, it is not a new target.
+      return !!editRow
+        && category.id === editRow.category_id
+        && editCategoryId === editRow.category_id;
+    })
     .map(c => ({ value: c.id, label: c.name, icon: <CategoryIcon category={c.name} /> }));
 
   const sumberDanaOptions = transactionSourceNames.map((source) => ({

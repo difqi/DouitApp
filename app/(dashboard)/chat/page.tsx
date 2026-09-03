@@ -27,6 +27,7 @@ import { useDouit } from "../../providers/DouitProvider";
 import { createClient } from "@/lib/supabase/client";
 import { triggerBudgetAlertCheck } from "@/app/actions/savings-alert";
 import { SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
+import { resolveNormalTransactionKind } from "@/lib/transaction-semantics";
 import { BankLogo } from "@/app/components/BankLogo";
 import { CategoryIcon } from "@/app/components/CategoryIcon";
 import type { TransactionDraftPreview } from "@/types";
@@ -509,7 +510,7 @@ export default function ChatPage() {
       {
         const { data: safeCategory, error: categoryError } = await supabase
           .from('categories')
-          .select('id')
+          .select('id, user_id, name, type, is_system')
           .eq('id', txPayload.category_id)
           .eq('type', txPayload.type)
           .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
@@ -524,6 +525,7 @@ export default function ChatPage() {
           }, "error");
           return;
         }
+        txPayload.transaction_kind = resolveNormalTransactionKind(safeCategory);
       }
       const payloads = [txPayload];
 
@@ -546,6 +548,7 @@ export default function ChatPage() {
           type: 'EXPENSE',
           merchant: `Biaya Admin ${txPayload.sumber_dana}`,
           category_id: feeCategory?.id || null,
+          transaction_kind: 'FEE',
           status: feeCategory ? 'APPROVED' : 'PENDING_APPROVAL',
           idempotency_key: `chat:${actionId}:admin-fee`,
         });

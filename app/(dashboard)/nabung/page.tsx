@@ -34,6 +34,16 @@ import { ConfirmDialog } from "@/app/components/ui/ConfirmDialog";
 import { CustomDatePicker } from "@/app/components/ui/CustomDatePicker";
 import { CustomTimePicker } from "@/app/components/ui/CustomTimePicker";
 import { calculateGoalMetrics, calculateGlobalDisciplineStreak, SavingsGoal as SavingsGoalCalc } from "@/lib/savings-calc";
+import { isSavingsTransactionForExpenseCompatibility } from "@/lib/transaction-semantics";
+import {
+  buildManualWebSavingsRpcArgs,
+  buildSavingsOperationKey,
+  getSingleRpcRow,
+  resolveSavingsSource,
+  savingsStorageRequiresAccount,
+  type SavingsContributionResult,
+  type SavingsSourceAccount,
+} from "@/lib/savings-contributions";
 
 interface SavingsGoal {
   id: string;
@@ -63,6 +73,10 @@ interface SavingsGoal {
   created_at: string;
   updated_at: string;
   savings_logs?: { id: string; amount: number; created_at: string }[];
+}
+
+interface PaymentAccount extends SavingsSourceAccount {
+  type: string;
 }
 
 // Module-level in-memory cache for instant cross-tab navigation
@@ -182,6 +196,11 @@ export default function NabungPage() {
   // Deposit Form State
   const [depositAmount, setDepositAmount] = useState<string>("");
   const [depositNotes, setDepositNotes] = useState<string>("");
+  const [depositAccounts, setDepositAccounts] = useState<PaymentAccount[]>([]);
+  const [depositSourceAccountId, setDepositSourceAccountId] = useState<string>("");
+  const [depositOperationKey, setDepositOperationKey] = useState<string | null>(null);
+  const [depositAccountError, setDepositAccountError] = useState<string | null>(null);
+  const [loadingDepositAccounts, setLoadingDepositAccounts] = useState(false);
   const [submittingDeposit, setSubmittingDeposit] = useState(false);
   const [todayExpenseTotal, setTodayExpenseTotal] = useState<number>(cachedTodayExpenseTotal);
   const [globalDailyLimit, setGlobalDailyLimit] = useState<number | null>(cachedGlobalDailyLimit);
@@ -214,7 +233,7 @@ export default function NabungPage() {
           .maybeSingle(),
         supabase
           .from('transactions')
-          .select('amount, transaction_date, created_at, type, status, merchant, notes, category_id')
+          .select('amount, transaction_date, created_at, type, status, merchant, notes, category_id, transaction_kind')
           .eq('user_id', user.id)
           .eq('type', 'EXPENSE')
           .eq('status', 'APPROVED'),
@@ -290,15 +309,10 @@ export default function NabungPage() {
             }).format(new Date(rawDate));
             if (txDateWIB !== todayWIB) return false;
 
-            // Exclude Nabung category
-            if (nabungCategoryId && tx.category_id === nabungCategoryId) return false;
-
-            // Exclude merchant / notes mentioning savings
-            const merchant = (tx.merchant || '').toLowerCase();
-            const notes = (tx.notes || '').toLowerCase();
-            if (merchant.startsWith('nabung') || notes.includes('setoran tabungan') || notes.includes('setoran via whatsapp')) {
-              return false;
-            }
+            if (isSavingsTransactionForExpenseCompatibility({
+              transaction: tx,
+              canonicalSavingCategoryId: nabungCategoryId,
+            })) return false;
 
             return true;
           })
@@ -763,72 +777,94 @@ export default function NabungPage() {
   };
 
   // Quick Deposit Handler
-  const handleOpenDepositModal = (goal: SavingsGoal) => {
+  const handleOpenDepositModal = async (goal: SavingsGoal) => {
     setSelectedGoal(goal);
     setDepositAmount(goal.daily_target ? goal.daily_target.toString() : "");
     setDepositNotes("Setoran Harian");
+    setDepositSourceAccountId("");
+    setDepositAccountError(null);
+    setDepositAccounts([]);
+    setDepositOperationKey(buildSavingsOperationKey({
+      namespace: "manual_web",
+      stableId: crypto.randomUUID(),
+    }));
     setDepositModalOpen(true);
+
+    if (!user || !savingsStorageRequiresAccount(goal.storage_type)) return;
+
+    setLoadingDepositAccounts(true);
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('payment_accounts')
+      .select('id, user_id, name, type')
+      .eq('user_id', user.id)
+      .not('user_id', 'is', null)
+      .order('created_at', { ascending: true });
+    setLoadingDepositAccounts(false);
+
+    if (error) {
+      setDepositAccountError('Gagal memuat sumber dana. Coba buka ulang form setoran.');
+      return;
+    }
+    setDepositAccounts((data || []) as PaymentAccount[]);
   };
 
 
   const handleQuickDeposit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !selectedGoal || !depositAmount) return;
+    if (!user || !selectedGoal || !depositAmount || !depositOperationKey) return;
 
     const amountNum = parseFloat(depositAmount);
-    if (amountNum <= 0) return;
+    if (!Number.isFinite(amountNum) || amountNum <= 0) return;
 
-    setSubmittingDeposit(true);
-    const supabase = createClient();
-
-    // 1. Insert into savings_logs
-    const { error: logErr } = await supabase.from('savings_logs').insert({
-      goal_id: selectedGoal.id,
-      user_id: user.id,
-      amount: amountNum,
-      notes: depositNotes || 'Setoran manual',
-      source_type: 'MANUAL'
+    const sourceResolution = resolveSavingsSource({
+      storageType: selectedGoal.storage_type,
+      actorUserId: user.id,
+      sourceAccountId: depositSourceAccountId || null,
+      accounts: depositAccounts,
     });
-
-    if (logErr) {
-      toast.error(`Gagal mencatat setoran: ${logErr.message}`);
-      setSubmittingDeposit(false);
+    if (sourceResolution.status !== 'valid') {
+      setDepositAccountError(
+        sourceResolution.status === 'source_account_required'
+          ? 'Pilih rekening atau wallet sumber dana.'
+          : 'Sumber dana tidak valid untuk akun ini.',
+      );
       return;
     }
 
-    // 2. Update current_amount, streak & status
-    const newCurrent = (selectedGoal.current_amount || 0) + amountNum;
-    const isCompleted = newCurrent >= selectedGoal.target_amount;
-    const todayStr = new Date().toISOString().split('T')[0];
-
-    let newStreak = selectedGoal.streak_count || 0;
-    if (selectedGoal.last_deposit_date !== todayStr) {
-      newStreak += 1;
-    }
-
-    const { data: updatedGoal, error: updateErr } = await supabase
-      .from('savings_goals')
-      .update({
-        current_amount: newCurrent,
-        streak_count: newStreak,
-        last_deposit_date: todayStr,
-        status: isCompleted ? 'COMPLETED' : selectedGoal.status,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', selectedGoal.id)
-      .select()
-      .single();
-
-    if (updatedGoal) {
-      const nextGoals = goals.map(g => g.id === updatedGoal.id ? (updatedGoal as SavingsGoal) : g);
-      cachedGoals = nextGoals;
-      setGoals(nextGoals);
-      setDepositModalOpen(false);
-      setSelectedGoal(null);
-      toast.success("Setoran berhasil dicatat!");
-      fetchGoals(true);
-    }
+    setSubmittingDeposit(true);
+    setDepositAccountError(null);
+    const supabase = createClient();
+    const { data, error } = await supabase.rpc(
+      'record_savings_contribution',
+      buildManualWebSavingsRpcArgs({
+        goalId: selectedGoal.id,
+        amount: amountNum,
+        sourceAccountId: sourceResolution.sourceAccountId,
+        operationKey: depositOperationKey,
+        notes: depositNotes || 'Setoran manual',
+      }),
+    );
     setSubmittingDeposit(false);
+
+    if (error) {
+      toast.error(`Gagal mencatat setoran: ${error.message}`);
+      return;
+    }
+
+    const contribution = getSingleRpcRow<SavingsContributionResult>(data);
+    if (!contribution) {
+      toast.error('Setoran tidak mengembalikan hasil yang valid.');
+      return;
+    }
+
+    setDepositModalOpen(false);
+    setSelectedGoal(null);
+    setDepositOperationKey(null);
+    toast.success(contribution.out_replayed
+      ? "Setoran sebelumnya sudah tercatat."
+      : "Setoran berhasil dicatat!");
+    fetchGoals(true);
   };
 
   const handleDeleteGoal = (id: string) => {
@@ -2119,6 +2155,48 @@ export default function NabungPage() {
                 />
               </div>
 
+              {savingsStorageRequiresAccount(selectedGoal.storage_type) ? (
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-700">
+                    Sumber Dana
+                  </label>
+                  <select
+                    required
+                    value={depositSourceAccountId}
+                    onChange={(event) => {
+                      setDepositSourceAccountId(event.target.value);
+                      setDepositAccountError(null);
+                    }}
+                    disabled={loadingDepositAccounts}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-100"
+                  >
+                    <option value="">
+                      {loadingDepositAccounts ? 'Memuat sumber dana...' : 'Pilih rekening atau wallet'}
+                    </option>
+                    {depositAccounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name}
+                      </option>
+                    ))}
+                  </select>
+                  {!loadingDepositAccounts && depositAccounts.length === 0 && (
+                    <p className="mt-1 text-xs text-amber-700">
+                      Tambahkan rekening atau wallet terlebih dahulu di halaman Dompet.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                  Sumber dana Celengan Fisik dicatat sebagai Tunai.
+                </div>
+              )}
+
+              {depositAccountError && (
+                <p role="alert" className="text-xs font-medium text-red-600">
+                  {depositAccountError}
+                </p>
+              )}
+
               <div className="pt-3 mt-2 border-t border-slate-100 flex items-center justify-end gap-3">
                 <button
                   type="button"
@@ -2129,7 +2207,12 @@ export default function NabungPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={submittingDeposit}
+                  disabled={
+                    submittingDeposit
+                    || loadingDepositAccounts
+                    || (savingsStorageRequiresAccount(selectedGoal.storage_type)
+                      && !depositSourceAccountId)
+                  }
                   className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#0F2A1D] to-[#163827] hover:from-[#133525] hover:to-[#1a4430] border border-emerald-500/20 text-white font-semibold text-sm shadow-sm transition-all duration-200 active:scale-[0.98] disabled:opacity-60 cursor-pointer"
                 >
                   {submittingDeposit ? (
@@ -2155,7 +2238,7 @@ export default function NabungPage() {
         onClose={() => setDeleteGoalId(null)}
         onConfirm={confirmDeleteGoal}
         title="Hapus Target Nabung"
-        description="Hapus target tabungan ini? Seluruh riwayat setorannya juga akan dihapus."
+        description="Target hanya dapat dihapus jika belum memiliki riwayat setoran. Riwayat finansial tidak akan dihapus."
         confirmLabel="Hapus Target"
         variant="danger"
         isLoading={isDeletingGoal}

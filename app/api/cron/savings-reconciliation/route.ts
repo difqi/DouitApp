@@ -53,25 +53,9 @@ export async function GET(req: Request) {
       return logDateWIB === todayWIB;
     });
 
-    let isValidDepositToday = false;
-    let unverifiedClaimAmount = 0;
-
-    const storageType = goal.storage_type || 'GOPAY_MERCHANT';
-
-    if (storageType === 'GOPAY_MERCHANT' || storageType === 'BANK_TRANSFER') {
-      // QRIS & Bank Transfer: Valid deposit ONLY if actual inbound transaction log exists
-      const inboundEmailLogs = logsToday.filter((l: any) => l.source_type === 'INBOUND_EMAIL');
-      isValidDepositToday = inboundEmailLogs.length > 0;
-
-      if (!isValidDepositToday) {
-        // Collect unverified chat/manual claims made today
-        const unverifiedLogs = logsToday.filter((l: any) => l.source_type !== 'INBOUND_EMAIL');
-        unverifiedClaimAmount = unverifiedLogs.reduce((sum: number, l: any) => sum + (Number(l.amount) || 0), 0);
-      }
-    } else {
-      // Tunai / Physical Celengan: Valid if any deposit was logged today
-      isValidDepositToday = logsToday.length > 0;
-    }
+    // USER_CONFIRMED contributions are valid financial actions. Email evidence
+    // may upgrade evidence later, but its absence never reverses saved money.
+    const isValidDepositToday = logsToday.length > 0;
 
     if (isValidDepositToday) {
       reconciliationResults.push({
@@ -84,16 +68,8 @@ export async function GET(req: Request) {
     }
 
     // Handle Missed Day Actions
-    let updatedCurrentAmount = Number(goal.current_amount || 0);
-
-    // If unverified claims were made without actual bank mutasi, reverse unverified amount
-    if (unverifiedClaimAmount > 0) {
-      updatedCurrentAmount = Math.max(0, updatedCurrentAmount - unverifiedClaimAmount);
-    }
-
     let updatePayload: Record<string, any> = {
       streak_count: 0,
-      current_amount: updatedCurrentAmount,
       updated_at: new Date().toISOString(),
     };
 
@@ -110,7 +86,6 @@ export async function GET(req: Request) {
         title: goal.title,
         status: 'MISSED_EXTENDED',
         newTargetDate: extendedTargetDate,
-        reversedClaimAmount: unverifiedClaimAmount,
       });
     } else if (goal.mode === 'DISCIPLINED') {
       // Keep target_date fixed, recalculate daily_target
@@ -119,7 +94,7 @@ export async function GET(req: Request) {
       const diffMs = targetDateObj.getTime() - todayDateObj.getTime();
       const remainingDays = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
 
-      const remainingAmount = Math.max(0, Number(goal.target_amount || 0) - updatedCurrentAmount);
+      const remainingAmount = Math.max(0, Number(goal.target_amount || 0) - Number(goal.current_amount || 0));
       const newDailyTarget = Math.ceil(remainingAmount / remainingDays);
 
       updatePayload.daily_target = newDailyTarget;
@@ -130,7 +105,6 @@ export async function GET(req: Request) {
         status: 'MISSED_RECALCULATED',
         newDailyTarget,
         remainingDays,
-        reversedClaimAmount: unverifiedClaimAmount,
       });
     }
 

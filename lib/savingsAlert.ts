@@ -1,6 +1,7 @@
 import { sendFonnteMessageWithFailover } from "@/lib/fonnte";
 import { resolveSystemCategory, SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isSavingsTransactionForExpenseCompatibility } from "@/lib/transaction-semantics";
 
 function getSupabaseClient(providedClient?: any) {
   if (providedClient) return providedClient;
@@ -42,7 +43,7 @@ export async function checkAndSendOverBudgetAlert(userId: string, customSupabase
     // 2. Fetch total expenses recorded today for user
     const { data: todayTxs, error: txErr } = await supabase
       .from('transactions')
-      .select('amount, transaction_date, created_at, status, type, category_id, merchant, notes')
+      .select('amount, transaction_date, created_at, status, type, category_id, transaction_kind, merchant, notes')
       .eq('user_id', userId)
       .eq('type', 'EXPENSE')
       .eq('status', 'APPROVED');
@@ -62,15 +63,10 @@ export async function checkAndSendOverBudgetAlert(userId: string, customSupabase
         }).format(new Date(rawDate));
         if (txDateWIB !== todayWIB) return false;
 
-        // Exclude Nabung category
-        if (nabungCategoryId && tx.category_id === nabungCategoryId) return false;
-
-        // Exclude merchant / notes mentioning savings
-        const merchant = (tx.merchant || '').toLowerCase();
-        const notes = (tx.notes || '').toLowerCase();
-        if (merchant.startsWith('nabung') || notes.includes('setoran tabungan') || notes.includes('setoran via whatsapp')) {
-          return false;
-        }
+        if (isSavingsTransactionForExpenseCompatibility({
+          transaction: tx,
+          canonicalSavingCategoryId: nabungCategoryId,
+        })) return false;
 
         return true;
       })

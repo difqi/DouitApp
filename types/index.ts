@@ -1,5 +1,6 @@
 export type TransactionStatus = 'APPROVED' | 'PENDING_APPROVAL' | 'IGNORED';
 export type TransactionSource = 'AUTOMATIC_EMAIL' | 'MANUAL_CHAT' | 'MANUAL_FORM';
+export type TransactionKind = 'ORDINARY' | 'TRANSFER' | 'SAVING' | 'FEE';
 
 export type CategoryRecord = {
   id: string;
@@ -46,6 +47,7 @@ export interface Transaction {
   category_id?: string | null;
   subcategory_id?: string | null;
   subcategory?: SubcategoryRecord | null;
+  transaction_kind: TransactionKind | null;
   status: TransactionStatus;
   source: TransactionSource;
   confidence_score: number;

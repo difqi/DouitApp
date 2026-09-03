@@ -34,6 +34,42 @@ export function isAccountMatch(accountName: string, transactionSource: string): 
          transactionSource.toLowerCase().includes(accountName.toLowerCase());
 }
 
+function normalizeExactAccountReference(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("id-ID")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function getExactAccountAliasKey(value: string): string | null {
+  const normalized = normalizeExactAccountReference(value);
+  const withoutGenericPrefix = normalized.replace(/^(?:rekening bank|rekening|bank)\s+/, "");
+  const matches = Object.entries(BANK_ALIASES)
+    .filter(([, aliases]) => aliases.some((alias) => {
+      const normalizedAlias = normalizeExactAccountReference(alias);
+      return normalized === normalizedAlias || withoutGenericPrefix === normalizedAlias;
+    }))
+    .map(([key]) => key);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+/** Conservative matching for trusted savings sources; never uses substring-only evidence. */
+export function isDeterministicSavingsAccountMatch(
+  accountName: string,
+  sourceReference: string,
+): boolean {
+  const account = normalizeExactAccountReference(accountName);
+  const source = normalizeExactAccountReference(sourceReference);
+  if (!account || !source) return false;
+  if (account === source) return true;
+
+  const accountAlias = getExactAccountAliasKey(accountName);
+  const sourceAlias = getExactAccountAliasKey(sourceReference);
+  return accountAlias !== null && accountAlias === sourceAlias;
+}
+
 export function normalizeSumberDana(input: string): string {
   if (!input) return "Tunai";
   const normalized = input.toLowerCase();

@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { sendFonnteMessageWithFailover } from '@/lib/fonnte';
 import { calculateGoalMetrics, SavingsGoal as SavingsGoalCalc } from '@/lib/savings-calc';
 import { resolveSystemCategory, SYSTEM_CATEGORY_NAMES } from '@/lib/categories';
+import { isSavingsTransactionForExpenseCompatibility } from '@/lib/transaction-semantics';
 
 export async function GET(req: Request) {
   const isDev = process.env.NODE_ENV === 'development';
@@ -120,7 +121,7 @@ export async function GET(req: Request) {
     // 4. Calculate today's non-savings expenses vs safe limit
     const { data: userTxs } = await supabase
       .from('transactions')
-      .select('amount, transaction_date, created_at, type, status, merchant, notes, category_id')
+      .select('amount, transaction_date, created_at, type, status, merchant, notes, category_id, transaction_kind')
       .eq('user_id', goal.user_id)
       .eq('type', 'EXPENSE')
       .eq('status', 'APPROVED');
@@ -146,13 +147,10 @@ export async function GET(req: Request) {
         }).format(new Date(rawDate));
         if (txDateWIB !== todayWIB) return false;
 
-        if (nabungCategoryId && tx.category_id === nabungCategoryId) return false;
-
-        const merchant = (tx.merchant || '').toLowerCase();
-        const notes = (tx.notes || '').toLowerCase();
-        if (merchant.startsWith('nabung') || notes.includes('setoran tabungan') || notes.includes('setoran via whatsapp')) {
-          return false;
-        }
+        if (isSavingsTransactionForExpenseCompatibility({
+          transaction: tx,
+          canonicalSavingCategoryId: nabungCategoryId,
+        })) return false;
 
         return true;
       })
