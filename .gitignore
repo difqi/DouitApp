@@ -48,3 +48,11 @@ Thumbs.db
 # Temporary / generated files
 /outputs/
 /work/
+
+# Internal project documentation
+AGENTS.md
+PRD.md
+
+# Internal Supabase database files
+supabase/schema.sql
+supabase_*.sql
