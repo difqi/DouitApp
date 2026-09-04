@@ -1,14 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 export async function GET(req: NextRequest) {
   if (process.env.NODE_ENV === "production") {
     return new NextResponse(null, { status: 404 });
   }
 
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({
+      status: "CONFIG_ERROR",
+      error: "RESEND_API_KEY is not configured"
+    }, { status: 500 });
+  }
+
   try {
+    const resend = new Resend(apiKey);
     const searchParams = req.nextUrl.searchParams;
     const emailId = searchParams.get("emailId");
 
