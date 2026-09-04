@@ -85,7 +85,6 @@ export async function POST(req: NextRequest) {
       .update({
         whatsapp_number: cleanPhone,
         is_whatsapp_verified: true,
-        updated_at: new Date().toISOString(),
       })
       .eq("id", user.id)
       .select("id")
