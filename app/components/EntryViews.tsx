@@ -400,11 +400,12 @@ export function SignupView() {
     setErrorMessage(null);
     setLoading(true);
     const supabase = createClient();
-    const { error } = await supabase.auth.signUp({
+    const { error } = await supabase.auth.signInWithOtp({
       email,
-      password,
       options: {
-        data: { name }
+        shouldCreateUser: true,
+        data: { name },
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
       }
     });
     setLoading(false);
@@ -412,7 +413,7 @@ export function SignupView() {
       setErrorMessage(error.message);
       return;
     }
-    toast.success("Kode verifikasi telah dikirim ke email Anda.");
+    toast.success("Instruksi verifikasi telah dikirim ke email Anda.");
     setVerify(true);
   }
 
@@ -421,13 +422,27 @@ export function SignupView() {
     setErrorMessage(null);
     setLoading(true); 
     const supabase = createClient();
-    const { error } = await supabase.auth.verifyOtp({ email, token: otp, type: 'signup' });
-    setLoading(false);
+    const { data, error } = await supabase.auth.verifyOtp({ email, token: otp, type: 'email' });
     if (error) {
+      setLoading(false);
       setErrorMessage("Kode OTP salah atau telah kadaluwarsa");
       return;
     }
-    toast.success("Pendaftaran berhasil!");
+
+    if (!data.user || !data.session) {
+      setLoading(false);
+      setErrorMessage("Verifikasi berhasil, tetapi sesi tidak dapat dibuat. Silakan coba masuk kembali.");
+      return;
+    }
+
+    const { error: passwordError } = await supabase.auth.updateUser({ password });
+    setLoading(false);
+    if (passwordError && passwordError.code !== 'same_password') {
+      setErrorMessage(passwordError.message);
+      return;
+    }
+
+    toast.success("Berhasil masuk ke Douit!");
     window.location.assign("/");
   }
 
@@ -438,7 +453,7 @@ export function SignupView() {
         <div className="entry-form-wrap signup">
           <span className="entry-kicker">Mulai perjalanan finansialmu</span>
           <h1>{verify ? "Verifikasi emailmu" : "Mulai kelola uangmu"}</h1>
-          <p>{verify ? `Masukkan kode 6 digit yang dikirim ke ${email}.` : "Catat transaksi, pahami pengeluaran, dan jaga target tabunganmu bersama Douit."}</p>
+          <p>{verify ? `Masukkan kode 6 digit yang dikirim ke ${email}. Jika email berisi tautan masuk, buka tautan tersebut.` : "Catat transaksi, pahami pengeluaran, dan jaga target tabunganmu bersama Douit."}</p>
 
           {errorMessage && (
             <div className="entry-status entry-status--error" role="alert">

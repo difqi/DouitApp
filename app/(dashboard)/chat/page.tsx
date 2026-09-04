@@ -811,7 +811,7 @@ export default function ChatPage() {
               onMouseDown={(event) => event.stopPropagation()}
               className={`history-item-menu-button p-1 rounded-md cursor-pointer transition-all active:scale-95 ${menuSessionId === s.id
                   ? "opacity-100 bg-slate-200 text-slate-700"
-                  : "opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-700 hover:bg-slate-200/70"
+                  : "opacity-100 md:opacity-0 md:group-hover:opacity-100 text-slate-400 hover:text-slate-700 hover:bg-slate-200/70"
                 }`}
             >
               <MoreVertical size={14} />

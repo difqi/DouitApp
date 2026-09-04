@@ -79,24 +79,43 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Mark verification record as verified
-    await supabaseAdmin
+    // 2. Persist the verified number before consuming the OTP.
+    const { data: updatedProfile, error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .update({
+        whatsapp_number: cleanPhone,
+        is_whatsapp_verified: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", user.id)
+      .select("id")
+      .maybeSingle();
+
+    if (profileError || !updatedProfile) {
+      console.error("[WhatsApp OTP Verify] Failed to update profile:", profileError);
+      return NextResponse.json(
+        { success: false, message: "Verifikasi belum dapat disimpan. Silakan coba lagi." },
+        { status: 500 }
+      );
+    }
+
+    // 3. Mark verification record as verified
+    const { data: updatedVerification, error: verificationUpdateError } = await supabaseAdmin
       .from("phone_verifications")
       .update({ is_verified: true })
-      .eq("id", verifRecord.id);
+      .eq("id", verifRecord.id)
+      .select("id")
+      .maybeSingle();
 
-    // 3. Update profiles table
-    try {
-      await supabaseAdmin
-        .from("profiles")
-        .update({
-          whatsapp_number: cleanPhone,
-          is_whatsapp_verified: true,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", user.id);
-    } catch (profileErr) {
-      console.warn("[WhatsApp OTP Verify] profiles update warning:", profileErr);
+    if (verificationUpdateError || !updatedVerification) {
+      console.error(
+        "[WhatsApp OTP Verify] Failed to mark verification record:",
+        verificationUpdateError
+      );
+      return NextResponse.json(
+        { success: false, message: "Verifikasi belum dapat disimpan. Silakan coba lagi." },
+        { status: 500 }
+      );
     }
 
     // 4. Update auth user metadata for seamless client-side sync

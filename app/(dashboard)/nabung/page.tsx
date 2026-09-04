@@ -210,7 +210,7 @@ export default function NabungPage() {
     if (!user) return;
     if (!isBackground && !hasLoadedGoalsOnce) setLoading(true);
     const supabase = createClient();
-    
+
     try {
       const todayWIB = new Intl.DateTimeFormat('en-CA', {
         timeZone: 'Asia/Jakarta',
@@ -225,6 +225,7 @@ export default function NabungPage() {
           .from('savings_goals')
           .select('*, savings_logs(id, amount, created_at)')
           .eq('user_id', user.id)
+          .eq('status', 'ACTIVE')
           .order('created_at', { ascending: false }),
         supabase
           .from('profiles')
@@ -273,12 +274,9 @@ export default function NabungPage() {
       cachedGlobalDailyLimit = limitValue;
       setGlobalDailyLimit(limitValue);
 
-      const existingGoalPhone = goalsData?.find((g: any) => g.whatsapp_number)?.whatsapp_number || "";
-      const verifiedPhone = profileData?.whatsapp_number || (user as any)?.user_metadata?.whatsapp_number || existingGoalPhone || (user as any)?.phone || "";
+      const verifiedPhone = profileData?.whatsapp_number || "";
       const isPhoneVerified = Boolean(
-        profileData?.is_whatsapp_verified ||
-        (user as any)?.user_metadata?.is_whatsapp_verified ||
-        (existingGoalPhone && existingGoalPhone.length >= 10)
+        verifiedPhone && profileData?.is_whatsapp_verified
       );
 
       const uProfile = {
@@ -713,16 +711,9 @@ export default function NabungPage() {
     setSafeLimitDetailsOpen(false);
     setStep(1);
 
-    const savedPhone =
-      userProfile?.whatsapp_number ||
-      (user as any)?.user_metadata?.whatsapp_number ||
-      goals?.find((g) => g.whatsapp_number)?.whatsapp_number ||
-      "";
-
+    const savedPhone = userProfile?.whatsapp_number || "";
     const isAlreadyVerified = Boolean(
-      userProfile?.is_whatsapp_verified ||
-      (user as any)?.user_metadata?.is_whatsapp_verified ||
-      (savedPhone && savedPhone.length >= 10)
+      savedPhone && userProfile?.is_whatsapp_verified
     );
 
     if (savedPhone && isAlreadyVerified) {
@@ -742,16 +733,9 @@ export default function NabungPage() {
 
   useEffect(() => {
     if (createModalOpen) {
-      const savedPhone =
-        userProfile?.whatsapp_number ||
-        (user as any)?.user_metadata?.whatsapp_number ||
-        goals?.find((g) => g.whatsapp_number)?.whatsapp_number ||
-        "";
-
+      const savedPhone = userProfile?.whatsapp_number || "";
       const isAlreadyVerified = Boolean(
-        userProfile?.is_whatsapp_verified ||
-        (user as any)?.user_metadata?.is_whatsapp_verified ||
-        (savedPhone && savedPhone.length >= 10)
+        savedPhone && userProfile?.is_whatsapp_verified
       );
 
       if (savedPhone && isAlreadyVerified) {
@@ -872,20 +856,62 @@ export default function NabungPage() {
   };
 
   const confirmDeleteGoal = async () => {
-    if (!deleteGoalId) return;
+    if (!deleteGoalId || !user) return;
     setIsDeletingGoal(true);
     const supabase = createClient();
-    const { error } = await supabase.from('savings_goals').delete().eq('id', deleteGoalId);
-    setIsDeletingGoal(false);
-    if (error) {
-      toast.error(`Gagal menghapus target: ${error.message}`);
-      return;
+
+    try {
+      const { data: existingLog, error: logCheckError } = await supabase
+        .from('savings_logs')
+        .select('id')
+        .eq('goal_id', deleteGoalId)
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (logCheckError) {
+        toast.error(`Gagal memeriksa riwayat target: ${logCheckError.message}`);
+        return;
+      }
+
+      const hasSavingsHistory = Boolean(existingLog);
+      const mutation = hasSavingsHistory
+        ? supabase
+          .from('savings_goals')
+          .update({ status: 'ARCHIVED', updated_at: new Date().toISOString() })
+        : supabase.from('savings_goals').delete();
+
+      const { data: changedGoal, error: mutationError } = await mutation
+        .eq('id', deleteGoalId)
+        .eq('user_id', user.id)
+        .select('id')
+        .maybeSingle();
+
+      if (mutationError) {
+        toast.error(`Gagal menghapus target: ${mutationError.message}`);
+        return;
+      }
+
+      if (!changedGoal) {
+        toast.error("Target tidak ditemukan atau tidak dapat diubah.");
+        return;
+      }
+
+      const nextGoals = goals.filter(g => g.id !== deleteGoalId);
+      cachedGoals = nextGoals;
+      setGoals(nextGoals);
+      setDeleteGoalId(null);
+      toast.success(
+        hasSavingsHistory
+          ? "Target diarsipkan karena riwayat transaksinya harus dipertahankan."
+          : "Target nabung berhasil dihapus."
+      );
+    } catch (error) {
+      console.error("Failed to delete or archive savings goal:", error);
+      toast.error("Gagal menghapus target. Silakan coba lagi.");
+    } finally {
+      setIsDeletingGoal(false);
     }
-    const nextGoals = goals.filter(g => g.id !== deleteGoalId);
-    cachedGoals = nextGoals;
-    setGoals(nextGoals);
-    setDeleteGoalId(null);
-    toast.success("Target nabung berhasil dihapus.");
   };
 
   const formatRupiah = (val: number) => {
@@ -961,11 +987,10 @@ export default function NabungPage() {
           )}
           <button
             onClick={handleOpenCreateModal}
-            className={`nabung-add-target inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 ${
-              isGoalLimitReached
+            className={`nabung-add-target inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 ${isGoalLimitReached
                 ? "cursor-not-allowed border border-slate-300 bg-slate-200 text-slate-500"
                 : "cursor-pointer border border-emerald-700/50 bg-[#173b2b] text-white hover:bg-[#1d4935] active:scale-[0.98]"
-            }`}
+              }`}
             aria-disabled={isGoalLimitReached}
             style={isMobileViewport && !isGoalLimitReached ? {
               background: "rgba(255,255,255,.1)",
@@ -1171,13 +1196,12 @@ export default function NabungPage() {
           </div>
         ) : (
           /* GOALS CARDS GRID */
-          <div className={`grid grid-cols-1 items-stretch gap-4 ${
-            goals.length === 1
+          <div className={`grid grid-cols-1 items-stretch gap-4 ${goals.length === 1
               ? 'mx-auto max-w-xl'
               : goals.length === 2
                 ? 'mx-auto max-w-5xl md:grid-cols-2'
                 : 'md:grid-cols-2 lg:grid-cols-3'
-          }`}>
+            }`}>
             {goals.map((goal) => {
               const calcGoal = toCalcGoal(goal);
               const metrics = calculateGoalMetrics(calcGoal);
@@ -1340,116 +1364,116 @@ export default function NabungPage() {
                       </div>
                       <div className="flex flex-col text-xs">
 
-                      {/* Estimasi Target Row */}
-                      <div className="flex items-start justify-between gap-3 border-b border-emerald-900/60 py-2.5 text-slate-300">
-                        <span className="flex shrink-0 items-center gap-1 text-emerald-300/65">
-                          <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-                          Estimasi Target:
-                        </span>
-                        <span className="min-w-0 text-right text-xs text-slate-200">
-                          {metrics.formattedEstimatedTarget}
-                        </span>
-                      </div>
-
-                      {/* Pengingat WA Row */}
-                      <div className="flex items-start justify-between gap-3 border-b border-emerald-900/60 py-2.5 text-slate-300">
-                        <span className="flex shrink-0 items-center gap-1 text-emerald-300/65">
-                          <Bell className="h-3.5 w-3.5 text-emerald-400" />
-                          Pengingat WA:
-                        </span>
-                        <span className="min-w-0 text-right text-slate-200">
-                          {goal.reminder_times && goal.reminder_times.length > 0
-                            ? `${goal.reminder_times.join(', ')} WIB (${goal.reminder_times.length}x/hari)`
-                            : `${goal.reminder_time ? goal.reminder_time.slice(0, 5) : '08:00'} WIB`} ({goal.mode === 'RELAXED' ? 'Santai' : 'Disiplin'})
-                        </span>
-                      </div>
-
-                      {/* Pengeluaran Hari Ini & Adjusted Safe Limit Row with Mini Progress Bar */}
-                      {(() => {
-                        const baseBudget = globalDailyLimit || Number(goal.max_daily_expense) || 0;
-                        const cardSafeLimit = Math.max(0, baseBudget - activeGoalsCommitment);
-                        const expensePct = cardSafeLimit > 0 ? Math.round((todayExpenseTotal / cardSafeLimit) * 100) : (todayExpenseTotal > 0 ? 100 : 0);
-
-                        // Color coding:
-                        // < 75%: Emerald
-                        // 75% - 100%: Amber
-                        // > 100%: Rose
-                        const barColorClass =
-                          expensePct > 100
-                            ? 'bg-rose-500'
-                            : expensePct >= 75
-                            ? 'bg-amber-400'
-                            : 'bg-emerald-400';
-
-                        const textColorClass =
-                          expensePct > 100
-                            ? 'text-rose-400 font-bold'
-                            : expensePct >= 75
-                            ? 'text-amber-300 font-semibold'
-                            : 'text-emerald-300';
-
-                        return (
-                          <div className="flex flex-col gap-1.5 pt-2.5">
-                            <div className="flex items-start justify-between gap-3 text-xs">
-                              <span className="flex shrink-0 items-center gap-1 text-emerald-300/65">
-                                <Wallet className="w-3.5 h-3.5 text-emerald-400" />
-                                Pengeluaran Hari Ini:
-                              </span>
-                              <span className={`min-w-0 text-right tabular-nums ${textColorClass}`}>
-                                {formatRupiah(todayExpenseTotal)}
-                                {cardSafeLimit > 0 ? ` / ${formatRupiah(cardSafeLimit)}` : ''}
-                                {cardSafeLimit > 0 ? ` (${expensePct}%)` : ''}
-                              </span>
-                            </div>
-
-                            {cardSafeLimit > 0 && (
-                              <div
-                                className="h-1.5 w-full overflow-hidden rounded-full border border-emerald-800/50 bg-emerald-950/80"
-                                role="progressbar"
-                                aria-label="Pengeluaran hari ini terhadap batas aman"
-                                aria-valuemin={0}
-                                aria-valuemax={100}
-                                aria-valuenow={Math.min(100, expensePct)}
-                                aria-valuetext={`${formatRupiah(todayExpenseTotal)} dari batas aman ${formatRupiah(cardSafeLimit)}`}
-                              >
-                                <div
-                                  className={`h-full ${barColorClass} transition-all duration-300 rounded-full`}
-                                  style={{ width: `${Math.min(100, expensePct)}%` }}
-                                />
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </div>
-
-
-
-                    {/* Footer Info Row */}
-                    <div className="mb-3 mt-3 grid w-full grid-cols-[minmax(0,1fr)_auto] items-end gap-2.5">
-                      {/* Account Badge with Truncation */}
-                      <div className="min-w-0">
-                        <span className="mb-1 block text-[9px] font-semibold uppercase tracking-[0.1em] text-emerald-300/45">Sumber dana</span>
-                        <span className="inline-flex w-full min-w-0 items-center gap-1.5 text-[11px] font-medium leading-snug text-emerald-200/70">
-                          {goal.storage_type === 'BANK_TRANSFER' ? (
-                            <Building2 className="w-3.5 h-3.5 flex-shrink-0" />
-                          ) : goal.storage_type === 'TUNAI' ? (
-                            <Coins className="w-3.5 h-3.5 flex-shrink-0" />
-                          ) : (
-                            <Smartphone className="w-3.5 h-3.5 flex-shrink-0" />
-                          )}
-                          <span className="min-w-0 [overflow-wrap:anywhere]">
-                            {goal.account_name || goal.storage_detail || (goal.storage_type === 'BANK_TRANSFER' ? 'Rekening Bank' : goal.storage_type === 'TUNAI' ? 'Celengan Fisik' : 'Rekening QRIS')}
+                        {/* Estimasi Target Row */}
+                        <div className="flex items-start justify-between gap-3 border-b border-emerald-900/60 py-2.5 text-slate-300">
+                          <span className="flex shrink-0 items-center gap-1 text-emerald-300/65">
+                            <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                            Estimasi Target:
                           </span>
-                        </span>
+                          <span className="min-w-0 text-right text-xs text-slate-200">
+                            {metrics.formattedEstimatedTarget}
+                          </span>
+                        </div>
+
+                        {/* Pengingat WA Row */}
+                        <div className="flex items-start justify-between gap-3 border-b border-emerald-900/60 py-2.5 text-slate-300">
+                          <span className="flex shrink-0 items-center gap-1 text-emerald-300/65">
+                            <Bell className="h-3.5 w-3.5 text-emerald-400" />
+                            Pengingat WA:
+                          </span>
+                          <span className="min-w-0 text-right text-slate-200">
+                            {goal.reminder_times && goal.reminder_times.length > 0
+                              ? `${goal.reminder_times.join(', ')} WIB (${goal.reminder_times.length}x/hari)`
+                              : `${goal.reminder_time ? goal.reminder_time.slice(0, 5) : '08:00'} WIB`} ({goal.mode === 'RELAXED' ? 'Santai' : 'Disiplin'})
+                          </span>
+                        </div>
+
+                        {/* Pengeluaran Hari Ini & Adjusted Safe Limit Row with Mini Progress Bar */}
+                        {(() => {
+                          const baseBudget = globalDailyLimit || Number(goal.max_daily_expense) || 0;
+                          const cardSafeLimit = Math.max(0, baseBudget - activeGoalsCommitment);
+                          const expensePct = cardSafeLimit > 0 ? Math.round((todayExpenseTotal / cardSafeLimit) * 100) : (todayExpenseTotal > 0 ? 100 : 0);
+
+                          // Color coding:
+                          // < 75%: Emerald
+                          // 75% - 100%: Amber
+                          // > 100%: Rose
+                          const barColorClass =
+                            expensePct > 100
+                              ? 'bg-rose-500'
+                              : expensePct >= 75
+                                ? 'bg-amber-400'
+                                : 'bg-emerald-400';
+
+                          const textColorClass =
+                            expensePct > 100
+                              ? 'text-rose-400 font-bold'
+                              : expensePct >= 75
+                                ? 'text-amber-300 font-semibold'
+                                : 'text-emerald-300';
+
+                          return (
+                            <div className="flex flex-col gap-1.5 pt-2.5">
+                              <div className="flex items-start justify-between gap-3 text-xs">
+                                <span className="flex shrink-0 items-center gap-1 text-emerald-300/65">
+                                  <Wallet className="w-3.5 h-3.5 text-emerald-400" />
+                                  Pengeluaran Hari Ini:
+                                </span>
+                                <span className={`min-w-0 text-right tabular-nums ${textColorClass}`}>
+                                  {formatRupiah(todayExpenseTotal)}
+                                  {cardSafeLimit > 0 ? ` / ${formatRupiah(cardSafeLimit)}` : ''}
+                                  {cardSafeLimit > 0 ? ` (${expensePct}%)` : ''}
+                                </span>
+                              </div>
+
+                              {cardSafeLimit > 0 && (
+                                <div
+                                  className="h-1.5 w-full overflow-hidden rounded-full border border-emerald-800/50 bg-emerald-950/80"
+                                  role="progressbar"
+                                  aria-label="Pengeluaran hari ini terhadap batas aman"
+                                  aria-valuemin={0}
+                                  aria-valuemax={100}
+                                  aria-valuenow={Math.min(100, expensePct)}
+                                  aria-valuetext={`${formatRupiah(todayExpenseTotal)} dari batas aman ${formatRupiah(cardSafeLimit)}`}
+                                >
+                                  <div
+                                    className={`h-full ${barColorClass} transition-all duration-300 rounded-full`}
+                                    style={{ width: `${Math.min(100, expensePct)}%` }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
 
-                      {/* Streak Badge (Guaranteed Space with Original Lucide Flame SVG) */}
-                      <div className="flex flex-shrink-0 items-center gap-1.5 rounded-full border border-emerald-800/50 bg-emerald-950/35 px-2.5 py-1.5 text-[11px] font-medium text-emerald-200/75">
-                        <Flame className="h-3.5 w-3.5 flex-shrink-0 text-emerald-300/75"/>
-                        <span className="whitespace-nowrap">{metrics.currentStreak} Hari Aktif</span>
+
+
+                      {/* Footer Info Row */}
+                      <div className="mb-3 mt-3 grid w-full grid-cols-[minmax(0,1fr)_auto] items-end gap-2.5">
+                        {/* Account Badge with Truncation */}
+                        <div className="min-w-0">
+                          <span className="mb-1 block text-[9px] font-semibold uppercase tracking-[0.1em] text-emerald-300/45">Sumber dana</span>
+                          <span className="inline-flex w-full min-w-0 items-center gap-1.5 text-[11px] font-medium leading-snug text-emerald-200/70">
+                            {goal.storage_type === 'BANK_TRANSFER' ? (
+                              <Building2 className="w-3.5 h-3.5 flex-shrink-0" />
+                            ) : goal.storage_type === 'TUNAI' ? (
+                              <Coins className="w-3.5 h-3.5 flex-shrink-0" />
+                            ) : (
+                              <Smartphone className="w-3.5 h-3.5 flex-shrink-0" />
+                            )}
+                            <span className="min-w-0 [overflow-wrap:anywhere]">
+                              {goal.account_name || goal.storage_detail || (goal.storage_type === 'BANK_TRANSFER' ? 'Rekening Bank' : goal.storage_type === 'TUNAI' ? 'Celengan Fisik' : 'Rekening QRIS')}
+                            </span>
+                          </span>
+                        </div>
+
+                        {/* Streak Badge (Guaranteed Space with Original Lucide Flame SVG) */}
+                        <div className="flex flex-shrink-0 items-center gap-1.5 rounded-full border border-emerald-800/50 bg-emerald-950/35 px-2.5 py-1.5 text-[11px] font-medium text-emerald-200/75">
+                          <Flame className="h-3.5 w-3.5 flex-shrink-0 text-emerald-300/75" />
+                          <span className="whitespace-nowrap">{metrics.currentStreak} Hari Aktif</span>
+                        </div>
                       </div>
-                    </div>
                     </div>
                   </div>
 
@@ -1459,8 +1483,8 @@ export default function NabungPage() {
                       onClick={() => handleOpenDepositModal(goal)}
                       disabled={isCompleted}
                       className={`flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c8f36b] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0d241a] ${isCompleted
-                          ? 'cursor-not-allowed bg-[#d9e7b9] text-[#355143]'
-                          : 'cursor-pointer bg-[#c8f36b] text-[#051910] shadow-sm hover:bg-[#b7e758] active:scale-[0.98]'
+                        ? 'cursor-not-allowed bg-[#d9e7b9] text-[#355143]'
+                        : 'cursor-pointer bg-[#c8f36b] text-[#051910] shadow-sm hover:bg-[#b7e758] active:scale-[0.98]'
                         }`}
                     >
                       <Coins className={`h-4 w-4 stroke-[2.5] ${isCompleted ? 'text-[#355143]' : 'text-[#051910]'}`} />
@@ -1528,225 +1552,225 @@ export default function NabungPage() {
               {step === 1 && (
                 <div className="flex min-h-0 flex-1 flex-col">
                   <div className="min-h-0 flex-1 scroll-pb-24 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:-mr-2 sm:scroll-pb-0 sm:px-0 sm:py-0 sm:pr-2">
-                  <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
-                    <Target className="w-3.5 h-3.5 text-emerald-600" />
-                    Detail target tabungan
-                  </h4>
+                    <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <Target className="w-3.5 h-3.5 text-emerald-600" />
+                      Detail target tabungan
+                    </h4>
 
-                  {isGoalLimitReached && (
-                    <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-800 text-xs animate-in fade-in duration-150">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
-                      <div>
-                        <span className="font-bold">Batas 3 target aktif tercapai.</span> Selesaikan atau hapus salah satu targetmu sebelum membuat yang baru.
-                      </div>
-                    </div>
-                  )}
-
-                  {createGoalError && (
-                    <div className="flex items-center gap-2 p-3 rounded-xl bg-rose-50 border border-rose-200/70 text-rose-700 text-xs animate-in fade-in duration-150">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-                      <span className="font-medium">{createGoalError}</span>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5">
-                    {/* LEFT COLUMN */}
-                    <div className="contents md:block md:space-y-4">
-                      {/* Nama Target */}
-                      <div className="order-1">
-                        <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                          Nama Barang / Tujuan Impian
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="Contoh: Sepatu Salomon XT-6, Laptop Kerja"
-                          value={title}
-                          onChange={(e) => {
-                            setCreateGoalError(null);
-                            setTitle(e.target.value);
-                          }}
-                          className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                        />
-                      </div>
-
-                      {/* Target Nominal */}
-                      <div className="order-2">
-                        <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                          Target Nominal (Rp)
-                        </label>
-                        <input
-                          type="number"
-                          required
-                          min="1000"
-                          placeholder="Contoh: 3000000"
-                          value={targetAmount}
-                          onChange={(e) => {
-                            setCreateGoalError(null);
-                            setTargetAmount(e.target.value);
-                          }}
-                          className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                        />
-                      </div>
-
-                      {/* Komitmen Pengeluaran Harian */}
-                      <div className="order-5">
-                        <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                          Komitmen Pengeluaran Harian <span className="text-slate-400 font-normal text-xs">(Opsional)</span>
-                        </label>
-                        <input
-                          type="number"
-                          min="0"
-                          placeholder="Contoh: 100000"
-                          value={maxDailyExpense}
-                          onChange={(e) => setMaxDailyExpense(e.target.value)}
-                          className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                        />
-                        <div className="flex items-start gap-1.5 mt-1.5 text-xs text-slate-500">
-                          <Info className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                          <span>
-                            Nilai ini berlaku untuk semua target. Perubahan komitmen akan memperbarui batas belanja harianmu secara otomatis.
-                          </span>
+                    {isGoalLimitReached && (
+                      <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-800 text-xs animate-in fade-in duration-150">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                        <div>
+                          <span className="font-bold">Batas 3 target aktif tercapai.</span> Selesaikan atau hapus salah satu targetmu sebelum membuat yang baru.
                         </div>
-
                       </div>
-                    </div>
+                    )}
 
+                    {createGoalError && (
+                      <div className="flex items-center gap-2 p-3 rounded-xl bg-rose-50 border border-rose-200/70 text-rose-700 text-xs animate-in fade-in duration-150">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                        <span className="font-medium">{createGoalError}</span>
+                      </div>
+                    )}
 
-                    {/* RIGHT COLUMN */}
-                    <div className="contents md:block md:space-y-4">
-                      {/* Jangka Waktu / Target Selesai */}
-                      <div className="order-3 space-y-2">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                          <label className="text-sm font-semibold text-slate-700">Jangka Waktu Target</label>
-                          <div className="inline-flex h-11 w-full rounded-lg border border-slate-200/80 bg-slate-100 p-0.5 sm:h-7 sm:w-auto sm:rounded-md">
-                            <button
-                              type="button"
-                              onClick={() => setDurationMode('DAYS')}
-                              className={`flex flex-1 cursor-pointer items-center justify-center whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition-all sm:flex-none sm:rounded-sm ${durationMode === 'DAYS'
-                                  ? 'bg-[#0e281e] text-white shadow-xs border border-emerald-600/40'
-                                  : 'text-slate-600 hover:text-slate-900 bg-transparent'
-                                }`}
-                            >
-                              <span className={durationMode === 'DAYS' ? '!text-white font-medium' : 'text-slate-600 font-medium'}>
-                                Durasi Hari
-                              </span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setDurationMode('DATE')}
-                              className={`flex flex-1 cursor-pointer items-center justify-center whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition-all sm:flex-none sm:rounded-sm ${durationMode === 'DATE'
-                                  ? 'bg-[#0e281e] text-white shadow-xs border border-emerald-600/40'
-                                  : 'text-slate-600 hover:text-slate-900 bg-transparent'
-                                }`}
-                            >
-                              <span className={durationMode === 'DATE' ? '!text-white font-medium' : 'text-slate-600 font-medium'}>
-                                Tanggal Target
-                              </span>
-                            </button>
-                          </div>
-                        </div>
-
-                        {durationMode === 'DAYS' ? (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5">
+                      {/* LEFT COLUMN */}
+                      <div className="contents md:block md:space-y-4">
+                        {/* Nama Target */}
+                        <div className="order-1">
+                          <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                            Nama Barang / Tujuan Impian
+                          </label>
                           <input
-                            type="number"
-                            min="1"
-                            placeholder="Jumlah hari (contoh: 30)"
-                            value={daysCount}
-                            onChange={(e) => setDaysCount(e.target.value)}
+                            type="text"
+                            required
+                            placeholder="Contoh: Sepatu Salomon XT-6, Laptop Kerja"
+                            value={title}
+                            onChange={(e) => {
+                              setCreateGoalError(null);
+                              setTitle(e.target.value);
+                            }}
                             className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                           />
-                        ) : (
-                          <CustomDatePicker
-                            value={targetDate}
-                            onChange={setTargetDate}
-                            placeholder="Pilih Tanggal Target"
-                            buttonClassName="min-h-11"
-                          />
-                        )}
+                        </div>
 
-                        {/* DYNAMIC REAL-TIME CALCULATION BANNER */}
-                        {calculatedDailyTarget > 0 && (
-                          <div className="mt-1.5 p-2.5 bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border border-emerald-700/50 rounded-xl text-xs text-white flex items-center justify-between shadow-sm">
-                            <span className="flex items-center gap-1.5 text-emerald-200">
-                              <Sparkles className="w-4 h-4 text-emerald-400 stroke-[2.5]" />
-                              Estimasi setoran harian:
-                            </span>
-                            <span className="font-bold text-[#a3e635] text-sm">
-                              {formatRupiah(calculatedDailyTarget)} / hari
+                        {/* Target Nominal */}
+                        <div className="order-2">
+                          <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                            Target Nominal (Rp)
+                          </label>
+                          <input
+                            type="number"
+                            required
+                            min="1000"
+                            placeholder="Contoh: 3000000"
+                            value={targetAmount}
+                            onChange={(e) => {
+                              setCreateGoalError(null);
+                              setTargetAmount(e.target.value);
+                            }}
+                            className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                          />
+                        </div>
+
+                        {/* Komitmen Pengeluaran Harian */}
+                        <div className="order-5">
+                          <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                            Komitmen Pengeluaran Harian <span className="text-slate-400 font-normal text-xs">(Opsional)</span>
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="Contoh: 100000"
+                            value={maxDailyExpense}
+                            onChange={(e) => setMaxDailyExpense(e.target.value)}
+                            className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                          />
+                          <div className="flex items-start gap-1.5 mt-1.5 text-xs text-slate-500">
+                            <Info className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                            <span>
+                              Nilai ini berlaku untuk semua target. Perubahan komitmen akan memperbarui batas belanja harianmu secara otomatis.
                             </span>
                           </div>
-                        )}
+
+                        </div>
                       </div>
 
-                      {/* Link Produk / E-commerce (Opsional) */}
-                      <div className="order-4">
-                        <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                          Link Produk / E-commerce (Opsional)
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="Contoh: https://www.tokopedia.com/... (atau kosongkan untuk cari otomatis)"
-                          value={productUrl}
-                          onChange={(e) => setProductUrl(e.target.value)}
-                          className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                        />
-                        <p className="text-xs text-slate-500 mt-1">
-                          Kosongkan untuk pencarian produk dan thumbnail gambar secara otomatis oleh Douit AI.
-                        </p>
+
+                      {/* RIGHT COLUMN */}
+                      <div className="contents md:block md:space-y-4">
+                        {/* Jangka Waktu / Target Selesai */}
+                        <div className="order-3 space-y-2">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <label className="text-sm font-semibold text-slate-700">Jangka Waktu Target</label>
+                            <div className="inline-flex h-11 w-full rounded-lg border border-slate-200/80 bg-slate-100 p-0.5 sm:h-7 sm:w-auto sm:rounded-md">
+                              <button
+                                type="button"
+                                onClick={() => setDurationMode('DAYS')}
+                                className={`flex flex-1 cursor-pointer items-center justify-center whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition-all sm:flex-none sm:rounded-sm ${durationMode === 'DAYS'
+                                  ? 'bg-[#0e281e] text-white shadow-xs border border-emerald-600/40'
+                                  : 'text-slate-600 hover:text-slate-900 bg-transparent'
+                                  }`}
+                              >
+                                <span className={durationMode === 'DAYS' ? '!text-white font-medium' : 'text-slate-600 font-medium'}>
+                                  Durasi Hari
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDurationMode('DATE')}
+                                className={`flex flex-1 cursor-pointer items-center justify-center whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition-all sm:flex-none sm:rounded-sm ${durationMode === 'DATE'
+                                  ? 'bg-[#0e281e] text-white shadow-xs border border-emerald-600/40'
+                                  : 'text-slate-600 hover:text-slate-900 bg-transparent'
+                                  }`}
+                              >
+                                <span className={durationMode === 'DATE' ? '!text-white font-medium' : 'text-slate-600 font-medium'}>
+                                  Tanggal Target
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {durationMode === 'DAYS' ? (
+                            <input
+                              type="number"
+                              min="1"
+                              placeholder="Jumlah hari (contoh: 30)"
+                              value={daysCount}
+                              onChange={(e) => setDaysCount(e.target.value)}
+                              className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                            />
+                          ) : (
+                            <CustomDatePicker
+                              value={targetDate}
+                              onChange={setTargetDate}
+                              placeholder="Pilih Tanggal Target"
+                              buttonClassName="min-h-11"
+                            />
+                          )}
+
+                          {/* DYNAMIC REAL-TIME CALCULATION BANNER */}
+                          {calculatedDailyTarget > 0 && (
+                            <div className="mt-1.5 p-2.5 bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border border-emerald-700/50 rounded-xl text-xs text-white flex items-center justify-between shadow-sm">
+                              <span className="flex items-center gap-1.5 text-emerald-200">
+                                <Sparkles className="w-4 h-4 text-emerald-400 stroke-[2.5]" />
+                                Estimasi setoran harian:
+                              </span>
+                              <span className="font-bold text-[#a3e635] text-sm">
+                                {formatRupiah(calculatedDailyTarget)} / hari
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Link Produk / E-commerce (Opsional) */}
+                        <div className="order-4">
+                          <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                            Link Produk / E-commerce (Opsional)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Contoh: https://www.tokopedia.com/... (atau kosongkan untuk cari otomatis)"
+                            value={productUrl}
+                            onChange={(e) => setProductUrl(e.target.value)}
+                            className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                          />
+                          <p className="text-xs text-slate-500 mt-1">
+                            Kosongkan untuk pencarian produk dan thumbnail gambar secara otomatis oleh Douit AI.
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Full-width safe spending summary */}
-                  {(() => {
-                    const baseBudgetNum = parseFloat(maxDailyExpense) || 0;
-                    if (baseBudgetNum <= 0) return null;
+                    {/* Full-width safe spending summary */}
+                    {(() => {
+                      const baseBudgetNum = parseFloat(maxDailyExpense) || 0;
+                      if (baseBudgetNum <= 0) return null;
 
-                    const netSafeDailyLimit = Math.max(
-                      0,
-                      baseBudgetNum - activeGoalsCommitment - calculatedDailyTarget
-                    );
+                      const netSafeDailyLimit = Math.max(
+                        0,
+                        baseBudgetNum - activeGoalsCommitment - calculatedDailyTarget
+                      );
 
-                    return (
-                      <div className="space-y-2 rounded-xl border border-emerald-700/60 bg-gradient-to-r from-[#0c241b] via-[#123124] to-[#183d2e] p-3.5 text-xs text-white shadow-md md:grid md:grid-cols-[minmax(180px,0.8fr)_minmax(0,2fr)] md:items-center md:gap-5 md:space-y-0 md:px-4">
-                        <div className="flex items-start justify-between gap-3 md:items-center md:justify-start">
-                          <ShieldCheck className="hidden h-8 w-8 shrink-0 text-emerald-400 md:block" />
-                          <div>
-                            <span className="block text-[10px] font-semibold uppercase tracking-[0.1em] text-emerald-300/70">Net Safe Daily Limit</span>
-                            <strong className="mt-0.5 block text-base font-extrabold text-[#c8f36b]">{formatRupiah(netSafeDailyLimit)} / hari</strong>
+                      return (
+                        <div className="space-y-2 rounded-xl border border-emerald-700/60 bg-gradient-to-r from-[#0c241b] via-[#123124] to-[#183d2e] p-3.5 text-xs text-white shadow-md md:grid md:grid-cols-[minmax(180px,0.8fr)_minmax(0,2fr)] md:items-center md:gap-5 md:space-y-0 md:px-4">
+                          <div className="flex items-start justify-between gap-3 md:items-center md:justify-start">
+                            <ShieldCheck className="hidden h-8 w-8 shrink-0 text-emerald-400 md:block" />
+                            <div>
+                              <span className="block text-[10px] font-semibold uppercase tracking-[0.1em] text-emerald-300/70">Net Safe Daily Limit</span>
+                              <strong className="mt-0.5 block text-base font-extrabold text-[#c8f36b]">{formatRupiah(netSafeDailyLimit)} / hari</strong>
+                            </div>
+                            <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-400 md:hidden" />
                           </div>
-                          <ShieldCheck className="h-5 w-5 shrink-0 text-emerald-400 md:hidden" />
+                          <button
+                            type="button"
+                            onClick={() => setSafeLimitDetailsOpen((current) => !current)}
+                            className="mt-1 flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg border border-emerald-700/45 bg-emerald-950/35 px-2.5 py-2 text-left text-[11px] font-semibold text-emerald-100 transition-colors hover:border-emerald-600/60 hover:bg-emerald-900/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#c8f36b] md:hidden"
+                            aria-expanded={safeLimitDetailsOpen}
+                            aria-controls="safe-limit-breakdown"
+                          >
+                            <span>Lihat detail kalkulasi</span>
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-900/70 text-emerald-200" aria-hidden="true">
+                              <ChevronRight className={`h-4 w-4 transition-transform duration-200 motion-reduce:transition-none ${safeLimitDetailsOpen ? 'rotate-90' : ''}`} />
+                            </span>
+                          </button>
+                          <div id="safe-limit-breakdown" className={`${safeLimitDetailsOpen ? 'grid animate-in fade-in slide-in-from-top-1 duration-200 motion-reduce:animate-none' : 'hidden'} gap-2.5 border-t border-emerald-800/60 px-0.5 pt-2.5 text-slate-200 md:grid md:grid-cols-3 md:divide-x md:divide-emerald-800/60 md:border-l md:border-t-0 md:pl-5 md:pt-0 md:animate-none`}>
+                            <div className="flex items-center justify-between gap-2 md:block md:px-3">
+                              <span className="text-emerald-300/70">Anggaran dasar</span>
+                              <strong className="block font-semibold text-white">{formatRupiah(baseBudgetNum)}</strong>
+                            </div>
+                            <div className="flex items-center justify-between gap-2 md:block md:px-3">
+                              <span className="text-emerald-300/70">Target aktif ({activeGoalsCount})</span>
+                              <strong className="block font-semibold text-amber-300">-{formatRupiah(activeGoalsCommitment)}</strong>
+                            </div>
+                            <div className="flex items-center justify-between gap-2 md:block md:px-3">
+                              <span className="text-emerald-300/70">Target harian ini</span>
+                              <strong className="block font-semibold text-lime-300">-{formatRupiah(calculatedDailyTarget)}</strong>
+                            </div>
+                          </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setSafeLimitDetailsOpen((current) => !current)}
-                          className="mt-1 flex min-h-11 w-full cursor-pointer items-center justify-between rounded-lg border border-emerald-700/45 bg-emerald-950/35 px-2.5 py-2 text-left text-[11px] font-semibold text-emerald-100 transition-colors hover:border-emerald-600/60 hover:bg-emerald-900/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#c8f36b] md:hidden"
-                          aria-expanded={safeLimitDetailsOpen}
-                          aria-controls="safe-limit-breakdown"
-                        >
-                          <span>Lihat detail kalkulasi</span>
-                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-900/70 text-emerald-200" aria-hidden="true">
-                            <ChevronRight className={`h-4 w-4 transition-transform duration-200 motion-reduce:transition-none ${safeLimitDetailsOpen ? 'rotate-90' : ''}`} />
-                          </span>
-                        </button>
-                        <div id="safe-limit-breakdown" className={`${safeLimitDetailsOpen ? 'grid animate-in fade-in slide-in-from-top-1 duration-200 motion-reduce:animate-none' : 'hidden'} gap-2.5 border-t border-emerald-800/60 px-0.5 pt-2.5 text-slate-200 md:grid md:grid-cols-3 md:divide-x md:divide-emerald-800/60 md:border-l md:border-t-0 md:pl-5 md:pt-0 md:animate-none`}>
-                          <div className="flex items-center justify-between gap-2 md:block md:px-3">
-                            <span className="text-emerald-300/70">Anggaran dasar</span>
-                            <strong className="block font-semibold text-white">{formatRupiah(baseBudgetNum)}</strong>
-                          </div>
-                          <div className="flex items-center justify-between gap-2 md:block md:px-3">
-                            <span className="text-emerald-300/70">Target aktif ({activeGoalsCount})</span>
-                            <strong className="block font-semibold text-amber-300">-{formatRupiah(activeGoalsCommitment)}</strong>
-                          </div>
-                          <div className="flex items-center justify-between gap-2 md:block md:px-3">
-                            <span className="text-emerald-300/70">Target harian ini</span>
-                            <strong className="block font-semibold text-lime-300">-{formatRupiah(calculatedDailyTarget)}</strong>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
+                      );
+                    })()}
 
                   </div>
                   {/* STEP 1 FOOTER ACTIONS */}
@@ -1773,11 +1797,10 @@ export default function NabungPage() {
                         setCreateGoalError(null);
                         setStep(2);
                       }}
-                      className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border px-6 py-2.5 text-sm font-semibold shadow-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-500 focus-visible:ring-offset-2 active:scale-[0.98] sm:w-auto ${
-                        isGoalLimitReached
+                      className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border px-6 py-2.5 text-sm font-semibold shadow-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-500 focus-visible:ring-offset-2 active:scale-[0.98] sm:w-auto ${isGoalLimitReached
                           ? "bg-slate-200 text-slate-400 border-slate-200 cursor-not-allowed"
                           : "cursor-pointer border-lime-500 bg-[#c8f36b] text-[#0f2a1d] hover:bg-[#b8e557] [&>span]:!text-[#0f2a1d]"
-                      }`}
+                        }`}
                     >
                       <span className={isGoalLimitReached ? "text-slate-400 font-semibold tracking-wide" : "text-white font-semibold tracking-wide"}>Lanjutkan →</span>
                     </button>
@@ -1789,233 +1812,228 @@ export default function NabungPage() {
               {step === 2 && (
                 <div className="flex min-h-0 flex-1 flex-col">
                   <div className="min-h-0 flex-1 scroll-pb-24 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:-mr-2 sm:scroll-pb-0 sm:px-0 sm:py-0 sm:pr-2">
-                  <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
-                    <Wallet className="w-3.5 h-3.5 text-emerald-600" />
-                    Metode & Pengaturan Setoran
-                  </h4>
+                    <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <Wallet className="w-3.5 h-3.5 text-emerald-600" />
+                      Metode & Pengaturan Setoran
+                    </h4>
 
-                  {/* Tempat Menyimpan Dana */}
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                      Tempat Menyimpan Dana
-                    </label>
-                    <div className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      <button
-                        type="button"
-                        onClick={() => setStorageType('GOPAY_MERCHANT')}
-                        className={`flex min-h-12 cursor-pointer flex-row items-center justify-start gap-3 rounded-xl border p-3 text-left text-xs font-medium transition-all sm:flex-col sm:justify-center sm:gap-1.5 sm:text-center ${storageType === 'GOPAY_MERCHANT'
+                    {/* Tempat Menyimpan Dana */}
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                        Tempat Menyimpan Dana
+                      </label>
+                      <div className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        <button
+                          type="button"
+                          onClick={() => setStorageType('GOPAY_MERCHANT')}
+                          className={`flex min-h-12 cursor-pointer flex-row items-center justify-start gap-3 rounded-xl border p-3 text-left text-xs font-medium transition-all sm:flex-col sm:justify-center sm:gap-1.5 sm:text-center ${storageType === 'GOPAY_MERCHANT'
                             ? 'bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border-2 border-emerald-500/70 text-white font-semibold shadow-sm'
                             : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
-                          }`}
-                      >
-                        <Smartphone className={`w-5 h-5 ${storageType === 'GOPAY_MERCHANT' ? 'text-emerald-400' : 'text-slate-400'}`} />
-                        <span className={storageType === 'GOPAY_MERCHANT' ? 'text-white font-semibold text-xs' : 'text-slate-700 font-medium text-xs'}>Rekening QRIS</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setStorageType('BANK_TRANSFER')}
-                        className={`flex min-h-12 cursor-pointer flex-row items-center justify-start gap-3 rounded-xl border p-3 text-left text-xs font-medium transition-all sm:flex-col sm:justify-center sm:gap-1.5 sm:text-center ${storageType === 'BANK_TRANSFER'
-                            ? 'bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border-2 border-emerald-500/70 text-white font-semibold shadow-sm'
-                            : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
-                          }`}
-                      >
-                        <Building2 className={`w-5 h-5 ${storageType === 'BANK_TRANSFER' ? 'text-emerald-400' : 'text-slate-400'}`} />
-                        <span className={storageType === 'BANK_TRANSFER' ? 'text-white font-semibold text-xs' : 'text-slate-700 font-medium text-xs'}>Rekening Bank</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setStorageType('TUNAI')}
-                        className={`flex min-h-12 cursor-pointer flex-row items-center justify-start gap-3 rounded-xl border p-3 text-left text-xs font-medium transition-all sm:flex-col sm:justify-center sm:gap-1.5 sm:text-center ${storageType === 'TUNAI'
-                            ? 'bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border-2 border-emerald-500/70 text-white font-semibold shadow-sm'
-                            : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
-                          }`}
-                      >
-                        <Coins className={`w-5 h-5 ${storageType === 'TUNAI' ? 'text-emerald-400' : 'text-slate-400'}`} />
-                        <span className={storageType === 'TUNAI' ? 'text-white font-semibold text-xs' : 'text-slate-700 font-medium text-xs'}>Celengan Fisik</span>
-                      </button>
-                    </div>
-                    <input
-                      type="text"
-                      placeholder={
-                        storageType === 'GOPAY_MERCHANT'
-                          ? 'Nama Merchant QRIS / Catatan'
-                          : storageType === 'BANK_TRANSFER'
-                            ? 'Nama Bank & No Rekening'
-                            : 'Lokasi Celengan Fisik'
-                      }
-                      value={storageDetail}
-                      onChange={(e) => setStorageDetail(e.target.value)}
-                      className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                    />
-                  </div>
-
-                  {/* Frekuensi & Jam Pengingat WhatsApp */}
-                  <div className="space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <label className="text-sm font-semibold text-slate-700">
-                          Pengingat WhatsApp Harian
-                        </label>
-                        {isVerified && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                            ✓ Terverifikasi
-                          </span>
-                        )}
-                      </div>
-                      <div className="inline-flex h-11 w-full rounded-lg border border-slate-200/80 bg-slate-100 p-0.5 sm:h-7 sm:w-auto sm:rounded-md">
-                        {[1, 2, 3].map((num) => (
-                          <button
-                            key={num}
-                            type="button"
-                            onClick={() => handleFrequencyChange(num)}
-                            className={`flex flex-1 cursor-pointer items-center justify-center whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition-all sm:flex-none sm:rounded-sm ${
-                              reminderCount === num
-                                ? 'bg-[#0e281e] text-white shadow-xs border border-emerald-600/40'
-                                : 'text-slate-600 hover:text-slate-900 bg-transparent'
                             }`}
-                          >
-                            <span className={reminderCount === num ? '!text-white font-medium' : 'text-slate-600 font-medium'}>
-                              {num}x / hari
+                        >
+                          <Smartphone className={`w-5 h-5 ${storageType === 'GOPAY_MERCHANT' ? 'text-emerald-400' : 'text-slate-400'}`} />
+                          <span className={storageType === 'GOPAY_MERCHANT' ? 'text-white font-semibold text-xs' : 'text-slate-700 font-medium text-xs'}>Rekening QRIS</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStorageType('BANK_TRANSFER')}
+                          className={`flex min-h-12 cursor-pointer flex-row items-center justify-start gap-3 rounded-xl border p-3 text-left text-xs font-medium transition-all sm:flex-col sm:justify-center sm:gap-1.5 sm:text-center ${storageType === 'BANK_TRANSFER'
+                            ? 'bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border-2 border-emerald-500/70 text-white font-semibold shadow-sm'
+                            : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
+                            }`}
+                        >
+                          <Building2 className={`w-5 h-5 ${storageType === 'BANK_TRANSFER' ? 'text-emerald-400' : 'text-slate-400'}`} />
+                          <span className={storageType === 'BANK_TRANSFER' ? 'text-white font-semibold text-xs' : 'text-slate-700 font-medium text-xs'}>Rekening Bank</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStorageType('TUNAI')}
+                          className={`flex min-h-12 cursor-pointer flex-row items-center justify-start gap-3 rounded-xl border p-3 text-left text-xs font-medium transition-all sm:flex-col sm:justify-center sm:gap-1.5 sm:text-center ${storageType === 'TUNAI'
+                            ? 'bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border-2 border-emerald-500/70 text-white font-semibold shadow-sm'
+                            : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
+                            }`}
+                        >
+                          <Coins className={`w-5 h-5 ${storageType === 'TUNAI' ? 'text-emerald-400' : 'text-slate-400'}`} />
+                          <span className={storageType === 'TUNAI' ? 'text-white font-semibold text-xs' : 'text-slate-700 font-medium text-xs'}>Celengan Fisik</span>
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder={
+                          storageType === 'GOPAY_MERCHANT'
+                            ? 'Nama Merchant QRIS / Catatan'
+                            : storageType === 'BANK_TRANSFER'
+                              ? 'Nama Bank & No Rekening'
+                              : 'Lokasi Celengan Fisik'
+                        }
+                        value={storageDetail}
+                        onChange={(e) => setStorageDetail(e.target.value)}
+                        className="min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                      />
+                    </div>
+
+                    {/* Frekuensi & Jam Pengingat WhatsApp */}
+                    <div className="space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <label className="text-sm font-semibold text-slate-700">
+                            Pengingat WhatsApp Harian
+                          </label>
+                          {isVerified && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                              ✓ Terverifikasi
                             </span>
-                          </button>
+                          )}
+                        </div>
+                        <div className="inline-flex h-11 w-full rounded-lg border border-slate-200/80 bg-slate-100 p-0.5 sm:h-7 sm:w-auto sm:rounded-md">
+                          {[1, 2, 3].map((num) => (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => handleFrequencyChange(num)}
+                              className={`flex flex-1 cursor-pointer items-center justify-center whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition-all sm:flex-none sm:rounded-sm ${reminderCount === num
+                                  ? 'bg-[#0e281e] text-white shadow-xs border border-emerald-600/40'
+                                  : 'text-slate-600 hover:text-slate-900 bg-transparent'
+                                }`}
+                            >
+                              <span className={reminderCount === num ? '!text-white font-medium' : 'text-slate-600 font-medium'}>
+                                {num}x / hari
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Phone Input Bar */}
+                      <div className="relative flex items-center">
+                        <input
+                          ref={phoneInputRef}
+                          type="tel"
+                          value={whatsappNumber}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setWhatsappNumber(val);
+                            if (isVerified) {
+                              setIsVerified(false);
+                            }
+                          }}
+                          disabled={isVerified}
+                          placeholder="No. WhatsApp (contoh: 081234567890)"
+                          className={`min-h-12 w-full rounded-xl border px-4 py-2.5 text-sm outline-none transition-all ${isVerified
+                              ? "bg-emerald-50/40 border-emerald-300 text-slate-700 font-medium cursor-not-allowed pr-28"
+                              : "bg-white border-slate-200 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 pr-28"
+                            }`}
+                        />
+
+                        {/* Tombol Aksi di dalam Input */}
+                        <div className="absolute right-1.5 flex items-center">
+                          {isVerified ? (
+                            <button
+                              type="button"
+                              onClick={handleResetPhoneNumber}
+                              className="text-xs font-semibold text-emerald-800 hover:text-emerald-950 px-3 py-1.5 rounded-lg hover:bg-emerald-100/70 transition-colors cursor-pointer"
+                            >
+                              Ganti Nomor
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={!whatsappNumber || isSendingOtp || cooldown > 0}
+                              onClick={handleSendOtp}
+                              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 cursor-pointer shadow-sm ${!whatsappNumber || isSendingOtp || cooldown > 0
+                                  ? "bg-slate-400 !text-white text-white cursor-not-allowed opacity-90"
+                                  : "bg-gradient-to-r from-[#0F2A1D] to-[#163827] hover:from-[#143827] hover:to-[#1c4732] !text-white text-white active:scale-[0.97]"
+                                }`}
+                            >
+                              <span className="!text-white text-white font-semibold">
+                                {isSendingOtp ? "Mengirim..." : cooldown > 0 ? `${cooldown}s` : "Kirim Kode"}
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Inline OTP Input Box (Shown after OTP is sent and not yet verified) */}
+                      {!isVerified && otpSent && (
+                        <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 animate-in fade-in duration-150">
+                          <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:justify-between">
+                            <span className="text-xs text-slate-600 font-medium">
+                              Masukkan 4 digit kode yang dikirim ke WhatsApp-mu:
+                            </span>
+                            <span className="text-[11px] text-slate-400">
+                              Sisa jatah hari ini: {remainingAttempts}/3
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              maxLength={4}
+                              value={otpCode}
+                              onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                              placeholder="1234"
+                              className="min-h-11 w-32 rounded-lg border border-slate-300 bg-white px-3 py-2 text-center text-base font-bold tracking-widest outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
+                            />
+                            <button
+                              type="button"
+                              disabled={otpCode.length < 4 || isVerifying}
+                              onClick={handleVerifyOtp}
+                              className={`flex min-h-11 min-w-[90px] cursor-pointer items-center justify-center rounded-lg border border-emerald-900/30 px-4 py-2 text-xs font-semibold shadow-sm transition-all duration-150 ${otpCode.length < 4 || isVerifying
+                                  ? "bg-slate-400 !text-white text-white cursor-not-allowed opacity-90"
+                                  : "bg-gradient-to-r from-[#0F2A1D] to-[#163827] hover:from-[#143827] hover:to-[#1c4732] !text-white text-white active:scale-[0.97]"
+                                }`}
+                            >
+                              <span className="!text-white text-white font-semibold">
+                                {isVerifying ? "Memverifikasi..." : "Verifikasi"}
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Dynamic Time Slots */}
+                      <div className={`grid gap-2 [&>button]:min-h-11 ${reminderCount === 1 ? 'grid-cols-1' : reminderCount === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'
+                        }`}>
+                        {reminderTimes.slice(0, reminderCount).map((time, idx) => (
+                          <CustomTimePicker
+                            key={idx}
+                            value={time}
+                            onChange={(newTime) => handleTimeChange(idx, newTime)}
+                          />
                         ))}
                       </div>
                     </div>
 
-                    {/* Phone Input Bar */}
-                    <div className="relative flex items-center">
-                      <input
-                        ref={phoneInputRef}
-                        type="tel"
-                        value={whatsappNumber}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setWhatsappNumber(val);
-                          if (isVerified) {
-                            setIsVerified(false);
-                          }
-                        }}
-                        disabled={isVerified}
-                        placeholder="No. WhatsApp (contoh: 081234567890)"
-                        className={`min-h-12 w-full rounded-xl border px-4 py-2.5 text-sm outline-none transition-all ${
-                          isVerified
-                            ? "bg-emerald-50/40 border-emerald-300 text-slate-700 font-medium cursor-not-allowed pr-28"
-                            : "bg-white border-slate-200 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 pr-28"
-                        }`}
-                      />
-
-                      {/* Tombol Aksi di dalam Input */}
-                      <div className="absolute right-1.5 flex items-center">
-                        {isVerified ? (
-                          <button
-                            type="button"
-                            onClick={handleResetPhoneNumber}
-                            className="text-xs font-semibold text-emerald-800 hover:text-emerald-950 px-3 py-1.5 rounded-lg hover:bg-emerald-100/70 transition-colors cursor-pointer"
-                          >
-                            Ganti Nomor
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={!whatsappNumber || isSendingOtp || cooldown > 0}
-                            onClick={handleSendOtp}
-                            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 cursor-pointer shadow-sm ${
-                              !whatsappNumber || isSendingOtp || cooldown > 0
-                                ? "bg-slate-400 !text-white text-white cursor-not-allowed opacity-90"
-                                : "bg-gradient-to-r from-[#0F2A1D] to-[#163827] hover:from-[#143827] hover:to-[#1c4732] !text-white text-white active:scale-[0.97]"
-                            }`}
-                          >
-                            <span className="!text-white text-white font-semibold">
-                              {isSendingOtp ? "Mengirim..." : cooldown > 0 ? `${cooldown}s` : "Kirim Kode"}
-                            </span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Inline OTP Input Box (Shown after OTP is sent and not yet verified) */}
-                    {!isVerified && otpSent && (
-                      <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 animate-in fade-in duration-150">
-                        <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:justify-between">
-                          <span className="text-xs text-slate-600 font-medium">
-                            Masukkan 4 digit kode yang dikirim ke WhatsApp-mu:
-                          </span>
-                          <span className="text-[11px] text-slate-400">
-                            Sisa jatah hari ini: {remainingAttempts}/3
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            maxLength={4}
-                            value={otpCode}
-                            onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
-                            placeholder="1234"
-                            className="min-h-11 w-32 rounded-lg border border-slate-300 bg-white px-3 py-2 text-center text-base font-bold tracking-widest outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
-                          />
-                          <button
-                            type="button"
-                            disabled={otpCode.length < 4 || isVerifying}
-                            onClick={handleVerifyOtp}
-                            className={`flex min-h-11 min-w-[90px] cursor-pointer items-center justify-center rounded-lg border border-emerald-900/30 px-4 py-2 text-xs font-semibold shadow-sm transition-all duration-150 ${
-                              otpCode.length < 4 || isVerifying
-                                ? "bg-slate-400 !text-white text-white cursor-not-allowed opacity-90"
-                                : "bg-gradient-to-r from-[#0F2A1D] to-[#163827] hover:from-[#143827] hover:to-[#1c4732] !text-white text-white active:scale-[0.97]"
-                            }`}
-                          >
-                            <span className="!text-white text-white font-semibold">
-                              {isVerifying ? "Memverifikasi..." : "Verifikasi"}
-                            </span>
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Dynamic Time Slots */}
-                    <div className={`grid gap-2 [&>button]:min-h-11 ${
-                      reminderCount === 1 ? 'grid-cols-1' : reminderCount === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'
-                    }`}>
-                      {reminderTimes.slice(0, reminderCount).map((time, idx) => (
-                        <CustomTimePicker
-                          key={idx}
-                          value={time}
-                          onChange={(newTime) => handleTimeChange(idx, newTime)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Mode Menabung */}
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                      Mode Disiplin Menabung
-                    </label>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setMode('RELAXED')}
-                        className={`min-h-16 cursor-pointer rounded-xl border p-3 text-left text-sm transition-all ${mode === 'RELAXED'
+                    {/* Mode Menabung */}
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                        Mode Disiplin Menabung
+                      </label>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setMode('RELAXED')}
+                          className={`min-h-16 cursor-pointer rounded-xl border p-3 text-left text-sm transition-all ${mode === 'RELAXED'
                             ? 'bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border-2 border-emerald-500/70 shadow-xs text-white'
                             : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
-                          }`}
-                      >
-                        <div className={`font-semibold mb-0.5 text-xs ${mode === 'RELAXED' ? 'text-white' : 'text-slate-700'}`}>Mode Santai (Rekomendasi)</div>
-                        <div className={`text-[11px] ${mode === 'RELAXED' ? 'text-emerald-200/80' : 'text-slate-500'}`}>Tenggat otomatis diperpanjang</div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setMode('DISCIPLINED')}
-                        className={`min-h-16 cursor-pointer rounded-xl border p-3 text-left text-sm transition-all ${mode === 'DISCIPLINED'
+                            }`}
+                        >
+                          <div className={`font-semibold mb-0.5 text-xs ${mode === 'RELAXED' ? 'text-white' : 'text-slate-700'}`}>Mode Santai (Rekomendasi)</div>
+                          <div className={`text-[11px] ${mode === 'RELAXED' ? 'text-emerald-200/80' : 'text-slate-500'}`}>Tenggat otomatis diperpanjang</div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMode('DISCIPLINED')}
+                          className={`min-h-16 cursor-pointer rounded-xl border p-3 text-left text-sm transition-all ${mode === 'DISCIPLINED'
                             ? 'bg-gradient-to-r from-[#0d261d] via-[#143527] to-[#1c3e2e] border-2 border-emerald-500/70 shadow-xs text-white'
                             : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
-                          }`}
-                      >
-                        <div className={`font-semibold mb-0.5 text-xs ${mode === 'DISCIPLINED' ? 'text-white' : 'text-slate-700'}`}>Mode Disiplin Strictly</div>
-                        <div className={`text-[11px] ${mode === 'DISCIPLINED' ? 'text-emerald-200/80' : 'text-slate-500'}`}>Nominal harian naik jika skip</div>
-                      </button>
+                            }`}
+                        >
+                          <div className={`font-semibold mb-0.5 text-xs ${mode === 'DISCIPLINED' ? 'text-white' : 'text-slate-700'}`}>Mode Disiplin Strictly</div>
+                          <div className={`text-[11px] ${mode === 'DISCIPLINED' ? 'text-emerald-200/80' : 'text-slate-500'}`}>Nominal harian naik jika skip</div>
+                        </button>
+                      </div>
                     </div>
-                  </div>
                   </div>
 
                   {/* STEP 2 FOOTER ACTIONS */}
@@ -2035,13 +2053,12 @@ export default function NabungPage() {
                         <button
                           type="submit"
                           disabled={isSubmitDisabled}
-                          className={`inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold shadow-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-500 focus-visible:ring-offset-2 active:scale-[0.98] sm:px-6 ${
-                            submitting
+                          className={`inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold shadow-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-500 focus-visible:ring-offset-2 active:scale-[0.98] sm:px-6 ${submitting
                               ? "cursor-wait border-emerald-700 bg-[#173b2b] text-white"
                               : isSubmitDisabled
                                 ? "cursor-not-allowed border-slate-200 bg-slate-200 text-slate-400"
                                 : "cursor-pointer border-lime-500 bg-[#c8f36b] text-[#0f2a1d] hover:bg-[#b8e557] [&>span]:!text-[#0f2a1d]"
-                          }`}
+                            }`}
                         >
                           {submitting ? (
                             <>
