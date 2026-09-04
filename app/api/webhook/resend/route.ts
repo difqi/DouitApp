@@ -35,11 +35,19 @@ import {
 import { sendFonnteMessageWithFailover, generateWaProgressBar } from "@/lib/fonnte";
 import { checkAndSendOverBudgetAlert } from "@/lib/savingsAlert";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 // Resend Webhook handler
 export async function POST(req: NextRequest) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.error("[Resend Webhook] RESEND_API_KEY is not configured");
+    return NextResponse.json(
+      { error: "Server configuration error" },
+      { status: 503 }
+    );
+  }
+
   try {
+    const resend = new Resend(apiKey);
     const rawBody = await req.text();
     const signature = req.headers.get("svix-signature");
     
