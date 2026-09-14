@@ -45,6 +45,12 @@ import {
   type SavingsSourceAccount,
 } from "@/lib/savings-contributions";
 
+import {
+  resolveSavingsGoalRemovalAction,
+  type SavingsGoalDeleteResult,
+  type SavingsGoalHistoryState,
+} from '@/lib/savings-goal-state';
+
 interface SavingsGoal {
   id: string;
   user_id: string;
@@ -69,7 +75,7 @@ interface SavingsGoal {
   streak_count: number;
   streak_days?: number;
   last_deposit_date: string | null;
-  status: 'ACTIVE' | 'COMPLETED' | 'PAUSED';
+  status: 'ACTIVE' | 'COMPLETED' | 'PAUSED' | 'ARCHIVED';
   created_at: string;
   updated_at: string;
   savings_logs?: { id: string; amount: number; created_at: string }[];
@@ -861,38 +867,84 @@ export default function NabungPage() {
     const supabase = createClient();
 
     try {
-      const { data: existingLog, error: logCheckError } = await supabase
-        .from('savings_logs')
-        .select('id')
-        .eq('goal_id', deleteGoalId)
-        .eq('user_id', user.id)
-        .limit(1)
+      const { data: historyData, error: historyError } = await supabase
+        .rpc('get_savings_goal_history_state', {
+          p_goal_id: deleteGoalId,
+        })
         .maybeSingle();
 
-      if (logCheckError) {
-        toast.error(`Gagal memeriksa riwayat target: ${logCheckError.message}`);
+      if (historyError) {
+        toast.error(`Gagal memeriksa riwayat target: ${historyError.message}`);
         return;
       }
 
-      const hasSavingsHistory = Boolean(existingLog);
-      const mutation = hasSavingsHistory
-        ? supabase
-          .from('savings_goals')
-          .update({ status: 'ARCHIVED', updated_at: new Date().toISOString() })
-        : supabase.from('savings_goals').delete();
-
-      const { data: changedGoal, error: mutationError } = await mutation
-        .eq('id', deleteGoalId)
-        .eq('user_id', user.id)
-        .select('id')
-        .maybeSingle();
-
-      if (mutationError) {
-        toast.error(`Gagal menghapus target: ${mutationError.message}`);
+      const historyState = historyData as SavingsGoalHistoryState | null;
+      if (!historyState) {
+        toast.error('Target tidak ditemukan atau tidak dapat diperiksa.');
         return;
       }
 
-      if (!changedGoal) {
+      let removalAction = resolveSavingsGoalRemovalAction({
+        hasSavingsLogs: historyState.out_has_savings_logs,
+        hasMissedDayResolutions:
+          historyState.out_has_missed_day_resolutions,
+      });
+
+      let mutationSucceeded = false;
+      let mutationErrorMessage: string | null = null;
+
+      if (removalAction === 'ARCHIVE') {
+        const { data, error } = await supabase
+          .rpc('set_savings_goal_status', {
+            p_goal_id: deleteGoalId,
+            p_status: 'ARCHIVED',
+          })
+          .maybeSingle();
+        mutationSucceeded = Boolean(data);
+        mutationErrorMessage = error?.message || null;
+      } else {
+        const { data, error } = await supabase
+          .rpc('delete_empty_savings_goal', {
+            p_goal_id: deleteGoalId,
+          })
+          .maybeSingle();
+
+        const deleteResult = data as SavingsGoalDeleteResult | null;
+        mutationErrorMessage = error?.message || null;
+
+        if (!mutationErrorMessage && deleteResult?.out_outcome === 'DELETED') {
+          mutationSucceeded = true;
+        } else if (
+          !mutationErrorMessage
+          && deleteResult?.out_outcome === 'HAS_HISTORY'
+        ) {
+          // History may appear after the preliminary read. The delete RPC is
+          // authoritative and never deletes in that race; preserve the goal.
+          const { data: archivedData, error: archiveError } = await supabase
+            .rpc('set_savings_goal_status', {
+              p_goal_id: deleteGoalId,
+              p_status: 'ARCHIVED',
+            })
+            .maybeSingle();
+          removalAction = 'ARCHIVE';
+          mutationSucceeded = Boolean(archivedData);
+          mutationErrorMessage = archiveError?.message || null;
+        } else if (
+          !mutationErrorMessage
+          && deleteResult?.out_outcome === 'NOT_ACTIVE'
+        ) {
+          mutationErrorMessage = 'Hanya target aktif tanpa riwayat yang dapat dihapus.';
+        } else if (!mutationErrorMessage) {
+          mutationErrorMessage = 'Operasi hapus tidak mengembalikan hasil yang valid.';
+        }
+      }
+
+      if (mutationErrorMessage) {
+        toast.error(`Gagal menghapus target: ${mutationErrorMessage}`);
+        return;
+      }
+
+      if (!mutationSucceeded) {
         toast.error("Target tidak ditemukan atau tidak dapat diubah.");
         return;
       }
@@ -902,9 +954,9 @@ export default function NabungPage() {
       setGoals(nextGoals);
       setDeleteGoalId(null);
       toast.success(
-        hasSavingsHistory
-          ? "Target diarsipkan karena riwayat transaksinya harus dipertahankan."
-          : "Target nabung berhasil dihapus."
+        removalAction === 'ARCHIVE'
+          ? 'Target diarsipkan karena riwayatnya harus dipertahankan.'
+          : 'Target nabung berhasil dihapus.'
       );
     } catch (error) {
       console.error("Failed to delete or archive savings goal:", error);
