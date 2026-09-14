@@ -10,6 +10,11 @@ import {
   type SavingsContributionResult,
   type SavingsSourceAccount,
 } from '@/lib/savings-contributions';
+import {
+  buildSavingsMissedDayRpcArgs,
+  getWibCalendarDate,
+  type SavingsMissedDayResult,
+} from '@/lib/savings-missed-day';
 
 interface FonnteWebhookPayload {
   sender?: string;
@@ -156,12 +161,7 @@ export async function POST(req: Request) {
     }
 
     // Today in WIB (Asia/Jakarta) format YYYY-MM-DD
-    const todayWIB = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Jakarta',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(new Date());
+    const todayWIB = getWibCalendarDate();
 
     // 2. Command Parser Logic: "Nabung [keyword] [nominal]" optionally followed by "pakai [account_name]"
     if (/^nabung\b/i.test(messageText)) {
@@ -532,113 +532,123 @@ ${footerText}`;
         skippedGoals = matched;
       }
 
-      // Check if any of these goals have already been skipped today
-      const { data: existingNotifications } = await supabaseAdmin
-        .from('notifications')
-        .select('id, created_at, metadata')
-        .eq('user_id', userId)
-        .eq('type', 'INFO');
+      const resolutionRows: Array<{
+        goal: any;
+        result: SavingsMissedDayResult;
+      }> = [];
+      const failedGoalIds: string[] = [];
 
-      const alreadySkippedGoalIds = new Set<string>();
-      (existingNotifications || []).forEach((n: any) => {
-        if (!n.created_at) return;
-        const nDateWIB = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'Asia/Jakarta',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        }).format(new Date(n.created_at));
+      for (const goal of skippedGoals) {
+        const { data: resolutionData, error: resolutionError } =
+          await supabaseAdmin.rpc(
+            'resolve_savings_missed_day',
+            buildSavingsMissedDayRpcArgs({
+              actorUserId: userId,
+              goalId: goal.id,
+              effectiveDate: todayWIB,
+              resolutionSource: 'USER_SKIP',
+            }),
+          );
 
-        if (nDateWIB === todayWIB && n.metadata?.action_type === 'SKIP_SAVINGS') {
-          if (n.metadata?.goal_id) alreadySkippedGoalIds.add(n.metadata.goal_id);
-          if (Array.isArray(n.metadata?.goal_ids)) {
-            n.metadata.goal_ids.forEach((id: string) => alreadySkippedGoalIds.add(id));
-          }
+        if (resolutionError) {
+          failedGoalIds.push(goal.id);
+          console.error(
+            '[Fonnte Webhook] Missed-day RPC failed for goal ' + goal.id + ':',
+            resolutionError.message,
+          );
+          continue;
         }
-      });
 
-      const goalsToProcess = skippedGoals.filter((g: any) => !alreadySkippedGoalIds.has(g.id));
+        const result = getSingleRpcRow<SavingsMissedDayResult>(resolutionData);
+        if (!result) {
+          failedGoalIds.push(goal.id);
+          console.error(
+            '[Fonnte Webhook] Missed-day RPC returned no row for goal ' + goal.id,
+          );
+          continue;
+        }
 
-      if (goalsToProcess.length === 0) {
-        await sendFonnteMessage(
-          sender,
-          skippedGoals.length === 1
-            ? `⚠️ Anda sudah mengambil konfirmasi *Skip* untuk target *${skippedGoals[0].title}* hari ini.`
-            : `⚠️ Anda sudah mengambil konfirmasi *Skip* untuk target-target tabungan hari ini.`
+        resolutionRows.push({ goal, result });
+      }
+
+      if (failedGoalIds.length > 0) {
+        return NextResponse.json(
+          { status: false, error: 'Savings skip resolution failed' },
+          { status: 500 },
         );
-        return NextResponse.json({ status: true }, { status: 200 });
       }
 
-      // Execution: extend target_date by +1 day and increment total_delay_days for each goal being skipped (Mode Santai / RELAXED)
-      for (const goal of goalsToProcess) {
-        const currentDelays = Number(goal.total_delay_days) || 0;
-        const newDelays = currentDelays + 1;
+      const appliedRows = resolutionRows.filter(
+        ({ result }) => result.out_outcome === 'APPLIED',
+      );
 
-        let newTargetDate = goal.target_date;
-        if (goal.target_date && /^\d{4}-\d{2}-\d{2}$/.test(goal.target_date)) {
-          const [y, m, d] = goal.target_date.split('-').map(Number);
-          const targetDateObj = new Date(y, m - 1, d);
-          targetDateObj.setDate(targetDateObj.getDate() + 1);
-          newTargetDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(targetDateObj);
-        } else {
-          // If target_date was null or missing, compute from today + remainingDays + 1
-          const dailyTarget = Math.max(1, Number(goal.daily_target) || 1);
-          const remainingAmount = Math.max(0, Number(goal.target_amount || 0) - Number(goal.current_amount || 0));
-          const remainingDays = Math.ceil(remainingAmount / dailyTarget);
-          const targetDateObj = new Date();
-          targetDateObj.setDate(targetDateObj.getDate() + remainingDays + 1);
-          newTargetDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(targetDateObj);
+      // Notifications remain presentation/reminder metadata. The operation ledger
+      // inside resolve_savings_missed_day is the lifecycle idempotency authority.
+      if (appliedRows.length > 0) {
+        const { error: notificationError } = await supabaseAdmin
+          .from('notifications')
+          .insert({
+            user_id: userId,
+            title: appliedRows.length === 1
+              ? 'Istirahat Menabung (' + appliedRows[0].goal.title + ')'
+              : 'Istirahat Menabung (' + appliedRows.length + ' Target)',
+            message: 'Konfirmasi skip menabung hari ini untuk: ' + appliedRows
+              .map(({ goal }) => goal.title)
+              .join(', ') + '.',
+            type: 'INFO',
+            metadata: {
+              action_type: 'SKIP_SAVINGS',
+              goal_id: appliedRows.length === 1
+                ? appliedRows[0].goal.id
+                : undefined,
+              goal_ids: appliedRows.map(({ goal }) => goal.id),
+              date: todayWIB,
+            },
+          });
+
+        if (notificationError) {
+          console.error(
+            '[Fonnte Webhook] Skip notification insert failed:',
+            notificationError.message,
+          );
         }
-
-        await supabaseAdmin
-          .from('savings_goals')
-          .update({
-            target_date: newTargetDate,
-            total_delay_days: newDelays,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', goal.id);
       }
 
-      // Record skip in notifications table for 1x daily limit deduplication & cron reminder suppression
-      await supabaseAdmin.from('notifications').insert({
-        user_id: userId,
-        title: goalsToProcess.length === 1
-          ? `Istirahat Menabung (${goalsToProcess[0].title})`
-          : `Istirahat Menabung (${goalsToProcess.length} Target)`,
-        message: `Konfirmasi skip menabung hari ini untuk: ${goalsToProcess.map((g: any) => g.title).join(', ')}.`,
-        type: 'INFO',
-        metadata: {
-          action_type: 'SKIP_SAVINGS',
-          goal_id: goalsToProcess.length === 1 ? goalsToProcess[0].id : undefined,
-          goal_ids: goalsToProcess.map((g: any) => g.id),
-          date: todayWIB,
-        },
+      const resultLines = resolutionRows.map(({ goal, result }) => {
+        if (result.out_outcome === 'ALREADY_RESOLVED') {
+          const sourceLabel = result.out_resolved_source === 'USER_SKIP'
+            ? 'Skip WhatsApp'
+            : 'rekonsiliasi otomatis';
+          return '- *' + goal.title + '*: sudah diselesaikan hari ini oleh '
+            + sourceLabel + '; tidak ada perubahan kedua.';
+        }
+        if (result.out_outcome === 'VALID_DEPOSIT') {
+          return '- *' + goal.title
+            + '*: setoran hari ini sudah tercatat; Skip tidak diterapkan.';
+        }
+        if (result.out_outcome === 'NOT_ACTIVE') {
+          return '- *' + goal.title
+            + '*: target sudah tidak aktif; Skip tidak diterapkan.';
+        }
+        if (result.out_outcome === 'INVALID') {
+          return '- *' + goal.title
+            + '*: konfigurasi target tidak valid untuk Skip.';
+        }
+        if (result.out_mode === 'DISCIPLINED') {
+          const dailyTarget = Number(result.out_daily_target || 0)
+            .toLocaleString('id-ID');
+          return '- *' + goal.title
+            + '*: diterapkan (Mode Disiplin); tenggat tetap dan target harian menjadi Rp '
+            + dailyTarget + '.';
+        }
+        return '- *' + goal.title
+          + '*: diterapkan (Mode Santai); tenggat diperpanjang satu hari.';
       });
 
-      // Build confirmation response message
-      let replyConfirmation = "";
-      if (goalsToProcess.length === 1) {
-        replyConfirmation = 
-`😴 *Istirahat Menabung Dicatat!*
-
-Target: *${goalsToProcess[0].title}*
-Status: Istirahat hari ini (Mode Santai: target otomatis disesuaikan)
-
-Keuangan Anda diprioritaskan hari ini. Istirahat sejenak agar arus kas tetap sehat! 💪`;
-      } else {
-        const listItems = goalsToProcess
-          .map((g: any) => `• *${g.title}* (Mode Santai)`)
-          .join("\n");
-
-        replyConfirmation = 
-`😴 *Istirahat Menabung Dicatat!*
-
-Target yang diistirahatkan hari ini:
-${listItems}
-
-Status: Semua target di atas otomatis disesuaikan 1 hari. Keuangan Anda diprioritaskan hari ini! 💪`;
-      }
+      const replyConfirmation = '*Status Skip Menabung*\n\n'
+        + resultLines.join('\n')
+        + '\n\nKeuangan Anda diprioritaskan hari ini. '
+        + 'Tidak ada penyesuaian yang diterapkan dua kali.';
 
       await sendFonnteMessage(sender, replyConfirmation);
       return NextResponse.json({ status: true }, { status: 200 });

@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getSingleRpcRow } from '@/lib/savings-contributions';
+import {
+  buildSavingsMissedDayRpcArgs,
+  getWibCalendarDate,
+  type SavingsMissedDayResult,
+} from '@/lib/savings-missed-day';
 
 export async function GET(req: Request) {
   const isDev = process.env.NODE_ENV === 'development';
@@ -14,19 +20,13 @@ export async function GET(req: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Today in WIB (Asia/Jakarta)
-  const now = new Date();
-  const todayWIB = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Jakarta',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(now);
+  const todayWIB = getWibCalendarDate();
 
-  // Query all active goals
+  // This prefilter is only an optimization. The RPC repeats the ACTIVE check
+  // with a row lock and compare-and-set at the mutation boundary.
   const { data: goals, error } = await supabase
     .from('savings_goals')
-    .select('*')
+    .select('id, user_id, title')
     .eq('status', 'ACTIVE');
 
   if (error || !goals) {
@@ -34,90 +34,76 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Failed to fetch goals' }, { status: 500 });
   }
 
-  const reconciliationResults = [];
+  const reconciliationResults: Array<Record<string, unknown>> = [];
+  let failureCount = 0;
 
   for (const goal of goals) {
-    // Fetch logs recorded today for this goal
-    const { data: logs } = await supabase
-      .from('savings_logs')
-      .select('*')
-      .eq('goal_id', goal.id);
-
-    const logsToday = (logs || []).filter((log: any) => {
-      if (!log.created_at) return false;
-      const logDateWIB = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'Asia/Jakarta',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      }).format(new Date(log.created_at));
-      return logDateWIB === todayWIB;
-    });
-
-    // USER_CONFIRMED contributions are valid financial actions. Email evidence
+    // USER_CONFIRMED contributions remain valid financial actions. Email evidence
     // may upgrade evidence later, but its absence never reverses saved money.
-    const isValidDepositToday = logsToday.length > 0;
+    // The RPC checks canonical/historical savings_logs for the effective WIB date.
+    const { data: resolutionData, error: resolutionError } = await supabase.rpc(
+      'resolve_savings_missed_day',
+      buildSavingsMissedDayRpcArgs({
+        actorUserId: goal.user_id,
+        goalId: goal.id,
+        effectiveDate: todayWIB,
+        resolutionSource: 'AUTO_RECONCILIATION',
+      }),
+    );
 
-    if (isValidDepositToday) {
+    if (resolutionError) {
+      failureCount += 1;
+      console.error(
+        `[Reconciliation Cron] Missed-day RPC failed for goal ${goal.id}:`,
+        resolutionError.message,
+      );
       reconciliationResults.push({
         goalId: goal.id,
         title: goal.title,
-        status: 'VALID_DEPOSIT',
-        message: 'Deposit verified for today',
+        status: 'FAILED',
+        message: 'Missed-day resolution failed',
       });
       continue;
     }
 
-    // Handle Missed Day Actions
-    let updatePayload: Record<string, any> = {
-      streak_count: 0,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (goal.mode === 'RELAXED') {
-      // Extend target_date by +1 day
-      const tDate = new Date(goal.target_date || todayWIB);
-      tDate.setDate(tDate.getDate() + 1);
-      const extendedTargetDate = tDate.toISOString().split('T')[0];
-
-      updatePayload.target_date = extendedTargetDate;
-
+    const resolution = getSingleRpcRow<SavingsMissedDayResult>(resolutionData);
+    if (!resolution) {
+      failureCount += 1;
+      console.error(
+        `[Reconciliation Cron] Missed-day RPC returned no row for goal ${goal.id}`,
+      );
       reconciliationResults.push({
         goalId: goal.id,
         title: goal.title,
-        status: 'MISSED_EXTENDED',
-        newTargetDate: extendedTargetDate,
+        status: 'FAILED',
+        message: 'Missed-day resolution result missing',
       });
-    } else if (goal.mode === 'DISCIPLINED') {
-      // Keep target_date fixed, recalculate daily_target
-      const todayDateObj = new Date(todayWIB);
-      const targetDateObj = new Date(goal.target_date || todayWIB);
-      const diffMs = targetDateObj.getTime() - todayDateObj.getTime();
-      const remainingDays = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
-
-      const remainingAmount = Math.max(0, Number(goal.target_amount || 0) - Number(goal.current_amount || 0));
-      const newDailyTarget = Math.ceil(remainingAmount / remainingDays);
-
-      updatePayload.daily_target = newDailyTarget;
-
-      reconciliationResults.push({
-        goalId: goal.id,
-        title: goal.title,
-        status: 'MISSED_RECALCULATED',
-        newDailyTarget,
-        remainingDays,
-      });
+      continue;
     }
 
-    await supabase
-      .from('savings_goals')
-      .update(updatePayload)
-      .eq('id', goal.id);
+    if (resolution.out_outcome === 'INVALID') {
+      failureCount += 1;
+      console.error(
+        `[Reconciliation Cron] Invalid missed-day state for goal ${goal.id}`,
+      );
+    }
+
+    reconciliationResults.push({
+      goalId: goal.id,
+      title: goal.title,
+      status: resolution.out_outcome,
+      mode: resolution.out_mode,
+      effectiveDate: resolution.out_effective_date,
+      resolvedSource: resolution.out_resolved_source,
+      targetDate: resolution.out_target_date,
+      dailyTarget: resolution.out_daily_target,
+    });
   }
 
   return NextResponse.json({
-    success: true,
+    success: failureCount === 0,
     processedCount: reconciliationResults.length,
+    failureCount,
     results: reconciliationResults,
-  });
+  }, { status: failureCount === 0 ? 200 : 500 });
 }
