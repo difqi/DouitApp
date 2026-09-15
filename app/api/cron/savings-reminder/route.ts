@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { sendFonnteMessageWithFailover } from '@/lib/fonnte';
 import { calculateGoalMetrics, SavingsGoal as SavingsGoalCalc } from '@/lib/savings-calc';
 import { resolveSystemCategory, SYSTEM_CATEGORY_NAMES } from '@/lib/categories';
 import { isSavingsTransactionForExpenseCompatibility } from '@/lib/transaction-semantics';
-import { filterUnsentReminderSlots, resolveEligibleReminderSlots } from '@/lib/savings-reminder-schedule';
+import { resolveEligibleReminderSlots } from '@/lib/savings-reminder-schedule';
+import {
+  buildSavingsReminderClaimArgs,
+  claimSavingsReminderDelivery,
+  sendClaimedFonnteDelivery,
+} from '@/lib/notification-delivery';
 
 export async function GET(req: Request) {
   const isDev = process.env.NODE_ENV === 'development';
@@ -65,65 +69,8 @@ export async function GET(req: Request) {
         continue;
       }
 
-      // 2. Skip if user already deposited on the scheduled reminder date.
-      scheduledIdentities = scheduledIdentities.filter(
-        (scheduledIdentity) => goal.last_deposit_date !== scheduledIdentity.date,
-      );
-      if (scheduledIdentities.length === 0) {
-        continue;
-      }
-
-      // 3. Per-slot deduplication safeguard & Skip Suppression
-      const { data: existingNotifications } = await supabase
-        .from('notifications')
-        .select('id, created_at, metadata')
-        .eq('user_id', goal.user_id)
-        .eq('type', 'INFO');
-
-      scheduledIdentities = scheduledIdentities.filter((scheduledIdentity) => {
-        const alreadySkippedOnScheduledDate = existingNotifications?.some((n: any) => {
-          if (!n.created_at) return false;
-          const notificationDateWIB = new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'Asia/Jakarta',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-          }).format(new Date(n.created_at));
-
-          if (notificationDateWIB !== scheduledIdentity.date) return false;
-          if (n.metadata?.action_type !== 'SKIP_SAVINGS') return false;
-
-          if (n.metadata?.goal_id === goal.id) return true;
-          if (Array.isArray(n.metadata?.goal_ids) && n.metadata.goal_ids.includes(goal.id)) return true;
-          return false;
-        });
-        return !alreadySkippedOnScheduledDate;
-      });
-
-      const sentScheduledIdentities = (existingNotifications || []).flatMap((n: any) => {
-        if (n.metadata?.action_type !== 'SAVINGS_REMINDER' || n.metadata?.goal_id !== goal.id) {
-          return [];
-        }
-
-        const notificationDateWIB = n.metadata?.date || (n.created_at
-          ? new Intl.DateTimeFormat('en-CA', {
-              timeZone: 'Asia/Jakarta',
-              year: 'numeric',
-              month: '2-digit',
-              day: '2-digit',
-            }).format(new Date(n.created_at))
-          : null);
-        const notificationSlot = n.metadata?.slot;
-
-        return notificationDateWIB && typeof notificationSlot === 'string'
-          ? [{ date: notificationDateWIB, slot: notificationSlot }]
-          : [];
-      });
-      scheduledIdentities = filterUnsentReminderSlots(scheduledIdentities, sentScheduledIdentities);
-
-      if (scheduledIdentities.length === 0) {
-        continue;
-      }
+      // Canonical deposit/missed-day suppression and per-slot concurrency are
+      // rechecked atomically by claim_savings_reminder_delivery before sending.
     }
 
     // 4. Calculate today's non-savings expenses vs safe limit
@@ -268,14 +215,57 @@ _Ketik "Nabung ${goal.title.toLowerCase()} [nominal]" untuk mencatat setoran man
 🔗 *Link Produk:*
 ${publicProxyUrl}`;
 
-      const res = await sendFonnteMessageWithFailover({
+      const { claim, error: claimError } = await claimSavingsReminderDelivery(
+        supabase,
+        buildSavingsReminderClaimArgs({
+          actorUserId: goal.user_id,
+          goalId: goal.id,
+          effectiveDate: scheduledIdentity.date,
+          scheduleSlot: scheduledIdentity.slot,
+        }),
+      );
+
+      if (claimError || !claim) {
+        console.error('[Savings Reminder] Delivery claim failed:', claimError?.message);
+        dispatched.push({
+          goalId: goal.id,
+          success: false,
+          slot: scheduledIdentity.slot,
+          outcome: 'CLAIM_FAILED',
+        });
+        continue;
+      }
+
+      if (claim.out_outcome !== 'CLAIMED') {
+        dispatched.push({
+          goalId: goal.id,
+          success: claim.out_state === 'ACCEPTED',
+          slot: scheduledIdentity.slot,
+          outcome: claim.out_outcome,
+          suppressionReason: claim.out_suppression_reason,
+        });
+        continue;
+      }
+
+      const delivery = await sendClaimedFonnteDelivery({
+        supabase,
+        actorUserId: goal.user_id,
+        claim,
         target: goal.whatsapp_number,
         message: reminderMessage,
         imageUrl: goal.image_url,
       });
 
-      // Record deduplication notification log
-      await supabase.from('notifications').insert({
+      if (delivery.finalizeError) {
+        console.error(
+          '[Savings Reminder] Provider outcome could not be finalized:',
+          delivery.finalizeError.message,
+        );
+      }
+
+      // UI presentation is deliberately independent from provider acceptance.
+      // Its deletion or insert failure cannot reopen the durable delivery claim.
+      const { error: notificationError } = await supabase.from('notifications').insert({
         user_id: goal.user_id,
         title: `Pengingat Menabung: ${goal.title}`,
         message: `Setoran harian Rp ${goalForCalc.dailyTarget.toLocaleString("id-ID")} untuk target ${goal.title}.`,
@@ -283,12 +273,23 @@ ${publicProxyUrl}`;
         metadata: {
           action_type: 'SAVINGS_REMINDER',
           goal_id: goal.id,
+          delivery_id: claim.out_delivery_id,
           slot: scheduledIdentity.slot,
           date: scheduledIdentity.date,
         },
       });
 
-      dispatched.push({ goalId: goal.id, success: res.success, slot: scheduledIdentity.slot });
+      if (notificationError) {
+        console.error('[Savings Reminder] UI notification insert failed:', notificationError.message);
+      }
+
+      dispatched.push({
+        goalId: goal.id,
+        success: delivery.providerAccepted,
+        slot: scheduledIdentity.slot,
+        outcome: delivery.finalState,
+        uiNotificationCreated: !notificationError,
+      });
     }
   }
 

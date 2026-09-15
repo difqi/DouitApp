@@ -32,7 +32,13 @@ import {
   type SavingsSourceAccount,
 } from "@/lib/savings-contributions";
 
-import { sendFonnteMessageWithFailover, generateWaProgressBar } from "@/lib/fonnte";
+import { generateWaProgressBar } from "@/lib/fonnte";
+import {
+  buildGenericDeliveryClaimArgs,
+  buildNotificationOperationKey,
+  claimNotificationDelivery,
+  sendClaimedFonnteDelivery,
+} from '@/lib/notification-delivery';
 import { checkAndSendOverBudgetAlert } from "@/lib/savingsAlert";
 
 // Resend Webhook handler
@@ -210,7 +216,20 @@ export async function POST(req: NextRequest) {
         console.log("Full Cleaned Body Logged For Diagnostic Analysis:\n", cleanedBody);
       }
 
-      await supabase.from("notifications").insert({
+      const forwardingStatus = confirmationUrl ? 'PENDING' : 'FAILED';
+      const { error: forwardingStatusError } = await supabase
+        .from('profiles')
+        .update({
+          email_forwarding_status: forwardingStatus,
+        })
+        .eq('id', profile.id);
+
+      if (forwardingStatusError) {
+        console.error('[Resend Webhook] Durable forwarding status update failed:', forwardingStatusError.message);
+        return NextResponse.json({ error: 'Failed to update forwarding status' }, { status: 500 });
+      }
+
+      const { error: forwardingNotificationError } = await supabase.from("notifications").insert({
         user_id: profile.id,
         title: "Konfirmasi Penautan Email Transaksi",
         message: confirmationUrl 
@@ -223,10 +242,13 @@ export async function POST(req: NextRequest) {
           confirmation_url: confirmationUrl,
           has_body: combinedBody.length > 0,
           receiving_api_success: !!receivingData,
-          is_confirmed: false,
           provider: "Gmail"
         }
       });
+
+      if (forwardingNotificationError) {
+        console.error('[Resend Webhook] Forwarding UI notification insert failed:', forwardingNotificationError.message);
+      }
 
       return NextResponse.json({
         success: true,
@@ -251,6 +273,15 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (existingTx) {
+      const { error: forwardingStatusError } = await supabase
+        .from('profiles')
+        .update({
+          email_forwarding_status: 'ACTIVE',
+        })
+        .eq('id', profile.id);
+      if (forwardingStatusError) {
+        console.error('[Resend Webhook] Durable forwarding status update failed:', forwardingStatusError.message);
+      }
       console.log(`Transaction already processed for messageId: ${messageId}`);
       return NextResponse.json({ success: true, note: "Already processed" });
     }
@@ -293,6 +324,16 @@ export async function POST(req: NextRequest) {
     const parsed = JSON.parse(textResponse);
     
     if (parsed.is_transaction_notification && parsed.transaction_details) {
+      const { error: forwardingStatusError } = await supabase
+        .from('profiles')
+        .update({
+          email_forwarding_status: 'ACTIVE',
+        })
+        .eq('id', profile.id);
+      if (forwardingStatusError) {
+        console.error('[Resend Webhook] Durable forwarding status update failed:', forwardingStatusError.message);
+      }
+
       const tx = parsed.transaction_details;
       const transactionType: TransactionType | null = tx.type === 'INCOME' || tx.type === 'EXPENSE'
         ? tx.type
@@ -572,11 +613,46 @@ Total Terkumpul: *Rp ${formatRupiah(currentAmount)}* / Rp ${formatRupiah(matched
 Progress: ${generateWaProgressBar(percentage)}
 
 _Tabungan impian Anda makin dekat! Tetap konsisten!_ 💪`;
-          await sendFonnteMessageWithFailover({
-            target: targetPhone,
-            message: waMessage,
-            url: matchedGoal.image_url || undefined,
+          const deliveryOperationKey = buildNotificationOperationKey({
+            actorUserId: profile.id,
+            notificationType: 'SAVINGS_EMAIL_CONFIRMATION',
+            source: 'RESEND',
+            stableId: emailId,
           });
+          if (!deliveryOperationKey) {
+            console.error('[Resend Webhook] Stable delivery identity missing for savings confirmation');
+          } else {
+            const { claim, error: claimError } = await claimNotificationDelivery(
+              supabase,
+              buildGenericDeliveryClaimArgs({
+                actorUserId: profile.id,
+                operationKey: deliveryOperationKey,
+                notificationType: 'SAVINGS_EMAIL_CONFIRMATION',
+                relatedGoalId: matchedGoal.id,
+                effectiveDate: new Intl.DateTimeFormat('en-CA', {
+                  timeZone: 'Asia/Jakarta',
+                  year: 'numeric',
+                  month: '2-digit',
+                  day: '2-digit',
+                }).format(new Date(occurredAt)),
+              }),
+            );
+            if (claimError || !claim) {
+              console.error('[Resend Webhook] Savings confirmation claim failed:', claimError?.message);
+            } else if (claim.out_outcome === 'CLAIMED') {
+              const delivery = await sendClaimedFonnteDelivery({
+                supabase,
+                actorUserId: profile.id,
+                claim,
+                target: targetPhone,
+                message: waMessage,
+                imageUrl: matchedGoal.image_url,
+              });
+              if (delivery.finalizeError) {
+                console.error('[Resend Webhook] Savings confirmation finalization failed:', delivery.finalizeError.message);
+              }
+            }
+          }
         }
 
         return NextResponse.json({

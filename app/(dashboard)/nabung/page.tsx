@@ -226,7 +226,7 @@ export default function NabungPage() {
       }).format(new Date());
 
       // Parallelize Supabase queries
-      const [goalsRes, profileRes, txsRes, nabungCatRes, notifsRes] = await Promise.all([
+      const [goalsRes, profileRes, txsRes, nabungCatRes, resolutionsRes] = await Promise.all([
         supabase
           .from('savings_goals')
           .select('*, savings_logs(id, amount, created_at)')
@@ -251,11 +251,9 @@ export default function NabungPage() {
           .eq('is_system', true)
           .is('user_id', null)
           .maybeSingle(),
-        supabase
-          .from('notifications')
-          .select('id, created_at, metadata')
-          .eq('user_id', user.id)
-          .eq('type', 'INFO')
+        supabase.rpc('get_savings_missed_day_resolutions', {
+          p_effective_date: todayWIB,
+        }),
       ]);
 
       const goalsData = goalsRes.data as SavingsGoal[] | null;
@@ -327,19 +325,9 @@ export default function NabungPage() {
       }
 
       const skippedGoalIds = new Set<string>();
-      (notifsRes.data || []).forEach((n: any) => {
-        if (!n.created_at) return;
-        const nDateWIB = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'Asia/Jakarta',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        }).format(new Date(n.created_at));
-        if (nDateWIB === todayWIB && n.metadata?.action_type === 'SKIP_SAVINGS') {
-          if (n.metadata?.goal_id) skippedGoalIds.add(n.metadata.goal_id);
-          if (Array.isArray(n.metadata?.goal_ids)) {
-            n.metadata.goal_ids.forEach((id: string) => skippedGoalIds.add(id));
-          }
+      (resolutionsRes.data || []).forEach((resolution: any) => {
+        if (typeof resolution.out_goal_id === 'string') {
+          skippedGoalIds.add(resolution.out_goal_id);
         }
       });
       setTodaySkippedGoalIds(skippedGoalIds);

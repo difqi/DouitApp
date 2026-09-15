@@ -15,6 +15,12 @@ import {
   getWibCalendarDate,
   type SavingsMissedDayResult,
 } from '@/lib/savings-missed-day';
+import {
+  buildGenericDeliveryClaimArgs,
+  buildNotificationOperationKey,
+  claimNotificationDelivery,
+  sendClaimedFonnteDelivery,
+} from '@/lib/notification-delivery';
 
 interface FonnteWebhookPayload {
   sender?: string;
@@ -479,7 +485,38 @@ Streak: 🔥 *${metrics.currentStreak} Hari Aktif*
 
 ${footerText}`;
 
-      await sendFonnteMessage(sender, depositConfirmationMessage);
+      const confirmationOperationKey = buildNotificationOperationKey({
+        actorUserId: userId,
+        notificationType: 'SAVINGS_CONTRIBUTION_CONFIRMATION',
+        source: 'FONNTE',
+        stableId: providerEventId,
+      });
+      if (confirmationOperationKey) {
+        const { claim, error: claimError } = await claimNotificationDelivery(
+          supabaseAdmin,
+          buildGenericDeliveryClaimArgs({
+            actorUserId: userId,
+            operationKey: confirmationOperationKey,
+            notificationType: 'SAVINGS_CONTRIBUTION_CONFIRMATION',
+            relatedGoalId: goal.id,
+            effectiveDate: todayWIB,
+          }),
+        );
+        if (claimError || !claim) {
+          console.error('[Fonnte Webhook] Contribution confirmation claim failed:', claimError?.message);
+        } else if (claim.out_outcome === 'CLAIMED') {
+          const delivery = await sendClaimedFonnteDelivery({
+            supabase: supabaseAdmin,
+            actorUserId: userId,
+            claim,
+            target: sender,
+            message: depositConfirmationMessage,
+          });
+          if (delivery.finalizeError) {
+            console.error('[Fonnte Webhook] Contribution confirmation finalization failed:', delivery.finalizeError.message);
+          }
+        }
+      }
       return NextResponse.json({ status: true }, { status: 200 });
     }
 
@@ -650,7 +687,45 @@ ${footerText}`;
         + '\n\nKeuangan Anda diprioritaskan hari ini. '
         + 'Tidak ada penyesuaian yang diterapkan dua kali.';
 
-      await sendFonnteMessage(sender, replyConfirmation);
+      const skipConfirmationOperationKey = buildNotificationOperationKey({
+        actorUserId: userId,
+        notificationType: 'SAVINGS_SKIP_CONFIRMATION',
+        source: 'FONNTE',
+        stableId: providerEventId,
+      });
+
+      if (!skipConfirmationOperationKey) {
+        // Some legacy webhook configurations omit inboxid. Preserve the reply,
+        // but it cannot receive a durable per-event identity until Fonnte sends it.
+        await sendFonnteMessage(sender, replyConfirmation);
+      } else {
+        const { claim, error: claimError } = await claimNotificationDelivery(
+          supabaseAdmin,
+          buildGenericDeliveryClaimArgs({
+            actorUserId: userId,
+            operationKey: skipConfirmationOperationKey,
+            notificationType: 'SAVINGS_SKIP_CONFIRMATION',
+            relatedGoalId: resolutionRows.length === 1
+              ? resolutionRows[0].goal.id
+              : null,
+            effectiveDate: todayWIB,
+          }),
+        );
+        if (claimError || !claim) {
+          console.error('[Fonnte Webhook] Skip confirmation claim failed:', claimError?.message);
+        } else if (claim.out_outcome === 'CLAIMED') {
+          const delivery = await sendClaimedFonnteDelivery({
+            supabase: supabaseAdmin,
+            actorUserId: userId,
+            claim,
+            target: sender,
+            message: replyConfirmation,
+          });
+          if (delivery.finalizeError) {
+            console.error('[Fonnte Webhook] Skip confirmation finalization failed:', delivery.finalizeError.message);
+          }
+        }
+      }
       return NextResponse.json({ status: true }, { status: 200 });
     }
 

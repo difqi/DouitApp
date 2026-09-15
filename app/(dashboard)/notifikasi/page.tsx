@@ -30,25 +30,7 @@ export default function NotifikasiPage() {
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
 
-      if (data) {
-        const cleanedData = data.map((n: any) => {
-          if (
-            n.metadata?.action_type === 'FORWARDING_CONFIRMATION' &&
-            n.metadata?.is_confirmed === true &&
-            (!n.metadata?.confirmation_url || typeof n.metadata.confirmation_url !== 'string' || !n.metadata.confirmation_url.includes('/vf-'))
-          ) {
-            return {
-              ...n,
-              metadata: {
-                ...n.metadata,
-                is_confirmed: false
-              }
-            };
-          }
-          return n;
-        });
-        setNotifications(cleanedData as AppNotification[]);
-      }
+      if (data) setNotifications(data as AppNotification[]);
       
       const { data: accounts } = await supabase.from('payment_accounts').select('name').eq('user_id', user.id);
       if (accounts) {
@@ -174,17 +156,7 @@ export default function NotifikasiPage() {
     if (!urlToOpen || typeof urlToOpen !== 'string' || !urlToOpen.includes('/vf-')) return;
     
     window.open(urlToOpen, '_blank');
-    
-    const supabase = createClient();
-    const newMetadata = { ...n.metadata, is_confirmed: true };
-    await supabase.from("notifications").update({ 
-      metadata: newMetadata, 
-      is_read: true 
-    }).eq("id", n.id);
-    
-    setNotifications((prev) =>
-      prev.map((item) => (item.id === n.id ? { ...item, is_read: true, metadata: newMetadata } : item))
-    );
+    await markAsRead(n.id);
   };
 
   const filteredNotifications = notifications.filter(n => {
@@ -284,26 +256,15 @@ export default function NotifikasiPage() {
                     {n.metadata?.action_type === "FORWARDING_CONFIRMATION" && (() => {
                       const url = n.metadata?.confirmation_url;
                       const hasValidVfLink = typeof url === "string" && url.includes("/vf-");
-                      const isConfirmed = n.metadata?.is_confirmed === true;
 
-                      if (isConfirmed && hasValidVfLink) {
-                        return (
-                          <div style={{ marginTop: '12px' }}>
-                            <span className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl bg-[#1d402e] text-emerald-300 border border-[#2b5e43] shadow-inner cursor-default">
-                              <CheckCircle2 size={14} /> Email Berhasil Ditautkan
-                            </span>
-                          </div>
-                        );
-                      }
-
-                      if (!isConfirmed && hasValidVfLink) {
+                      if (hasValidVfLink) {
                         return (
                           <div style={{ marginTop: '12px' }}>
                             <button 
                               onClick={() => handleForwardingActionClick(n)}
                               className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-xl bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 border border-emerald-500/20 transition-all shadow-sm active:scale-95 cursor-pointer"
                             >
-                              <span>Konfirmasi Penautan di Google</span>
+                              <span>Buka Verifikasi di Google</span>
                               <ExternalLink size={14} />
                             </button>
                           </div>

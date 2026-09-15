@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
-import { sendFonnteMessageWithFailover } from "@/lib/fonnte";
+import {
+  buildGenericDeliveryClaimArgs,
+  buildNotificationOperationKey,
+  claimNotificationDelivery,
+  sendClaimedFonnteDelivery,
+} from '@/lib/notification-delivery';
 
 function normalizeIndonesianPhone(phone: string): string {
   let clean = phone.replace(/[^0-9]/g, "");
@@ -105,7 +110,7 @@ export async function POST(req: NextRequest) {
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
     // 4. Save to phone_verifications table
-    const { error: insertErr } = await supabaseAdmin
+    const { data: verificationRow, error: insertErr } = await supabaseAdmin
       .from("phone_verifications")
       .insert({
         user_id: user.id,
@@ -115,7 +120,9 @@ export async function POST(req: NextRequest) {
         is_verified: false,
         attempts_today: usedAttempts + 1,
         last_sent_at: new Date().toISOString(),
-      });
+      })
+      .select('id')
+      .single();
 
     if (insertErr) {
       console.error("[WhatsApp OTP Send] Database insert error:", insertErr);
@@ -127,13 +134,46 @@ export async function POST(req: NextRequest) {
 
     // 5. Dispatch OTP via Fonnte API
     const fonnteMessage = `🔐 *Kode Verifikasi Douit AI*\n\nKode verifikasi nomor WhatsApp Anda adalah: *${otpCode}*\n\nKode ini berlaku selama 5 menit. Jangan bagikan kode ini kepada siapa pun.`;
-    const sendResult = await sendFonnteMessageWithFailover({
+    const operationKey = buildNotificationOperationKey({
+      actorUserId: user.id,
+      notificationType: 'WHATSAPP_OTP',
+      source: 'DOUIT',
+      stableId: verificationRow?.id,
+    });
+    if (!operationKey) {
+      console.error('[WhatsApp OTP Send] Verification identity missing after insert');
+      return NextResponse.json(
+        { success: false, message: 'Gagal menyiapkan pengiriman kode verifikasi.' },
+        { status: 500 },
+      );
+    }
+
+    const { claim, error: claimError } = await claimNotificationDelivery(
+      supabaseAdmin,
+      buildGenericDeliveryClaimArgs({
+        actorUserId: user.id,
+        operationKey,
+        notificationType: 'WHATSAPP_OTP',
+      }),
+    );
+    if (claimError || !claim || claim.out_outcome !== 'CLAIMED') {
+      console.error('[WhatsApp OTP Send] Delivery claim failed:', claimError?.message);
+      return NextResponse.json(
+        { success: false, message: 'Gagal menyiapkan pengiriman WhatsApp.' },
+        { status: 500 },
+      );
+    }
+
+    const sendResult = await sendClaimedFonnteDelivery({
+      supabase: supabaseAdmin,
+      actorUserId: user.id,
+      claim,
       target: cleanPhone,
       message: fonnteMessage,
     });
 
-    if (!sendResult.success && !sendResult.status) {
-      console.error("[WhatsApp OTP Send] Fonnte message dispatch error:", sendResult.error);
+    if (!sendResult.providerAccepted) {
+      console.error('[WhatsApp OTP Send] Fonnte message was not accepted:', sendResult.finalState);
       return NextResponse.json(
         {
           success: false,

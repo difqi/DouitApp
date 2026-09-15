@@ -215,7 +215,7 @@ export default function SettingsPage() {
   }, [user, activeTab]);
 
   // Email Integration Status State
-  const [emailStatus, setEmailStatus] = useState<'CONNECTED' | 'PENDING' | 'UNLINKED'>('UNLINKED');
+  const [emailStatus, setEmailStatus] = useState<'ACTIVE' | 'PENDING' | 'FAILED' | 'UNLINKED' | 'UNKNOWN'>('UNKNOWN');
   const [isFetchingEmailStatus, setIsFetchingEmailStatus] = useState(true);
 
   useEffect(() => {
@@ -229,46 +229,22 @@ export default function SettingsPage() {
     setIsFetchingEmailStatus(true);
     const supabase = createClient();
     
-    const { data: notifs } = await supabase
-      .from('notifications')
-      .select('id, metadata, created_at')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('email_forwarding_status')
+      .eq('id', user.id)
+      .single();
 
-    const forwardingNotifs = notifs?.filter(
-      (n: any) => n.metadata?.action_type === 'FORWARDING_CONFIRMATION'
-    ) || [];
-
-    // AUTO-CLEANUP / RESET: If any notification was marked as confirmed but lacks a valid /vf- link, reset is_confirmed to false in DB
-    for (const n of forwardingNotifs) {
-      const url = n.metadata?.confirmation_url;
-      const isValidVfLink = typeof url === 'string' && url.includes('/vf-');
-      if (n.metadata?.is_confirmed === true && !isValidVfLink) {
-        console.warn(`[Auto-Cleanup] Resetting invalid confirmed state for notification ${n.id}`);
-        const updatedMetadata = { ...n.metadata, is_confirmed: false, error: 'INVALID_VERIFICATION_LINK' };
-        await supabase
-          .from('notifications')
-          .update({ metadata: updatedMetadata })
-          .eq('id', n.id);
-        n.metadata = updatedMetadata;
-      }
-    }
-
-    const isFullyConnected = forwardingNotifs.some((n: any) => 
-      n.metadata?.action_type === 'FORWARDING_CONFIRMATION' &&
-      n.metadata?.is_confirmed === true &&
-      typeof n.metadata?.confirmation_url === 'string' &&
-      n.metadata.confirmation_url.includes('/vf-')
-    );
-
-    const hasPendingRecord = forwardingNotifs.length > 0;
-
-    if (isFullyConnected) {
-      setEmailStatus('CONNECTED');
-    } else if (hasPendingRecord) {
-      setEmailStatus('PENDING');
+    const durableStatus = profile?.email_forwarding_status;
+    if (
+      error
+      || typeof durableStatus !== 'string'
+      || !['ACTIVE', 'PENDING', 'FAILED', 'UNLINKED'].includes(durableStatus)
+    ) {
+      console.error('[Settings] Unable to load durable email forwarding status:', error?.message);
+      setEmailStatus('UNKNOWN');
     } else {
-      setEmailStatus('UNLINKED');
+      setEmailStatus(durableStatus as 'ACTIVE' | 'PENDING' | 'FAILED' | 'UNLINKED');
     }
     setIsFetchingEmailStatus(false);
   };
@@ -974,10 +950,14 @@ export default function SettingsPage() {
               </div>
               {isFetchingEmailStatus ? (
                 <span className="settings-status neutral"><CircleDashed className="settings-status-spinner" size={14} /> Memeriksa...</span>
-              ) : emailStatus === 'CONNECTED' ? (
+              ) : emailStatus === 'ACTIVE' ? (
                 <span className="settings-status success"><CheckCircle2 size={14} /> Aktif</span>
               ) : emailStatus === 'PENDING' ? (
                 <span className="settings-status warning"><Clock size={14} /> Menunggu konfirmasi</span>
+              ) : emailStatus === 'FAILED' ? (
+                <span className="settings-status warning"><AlertTriangle size={14} /> Perlu tindakan</span>
+              ) : emailStatus === 'UNKNOWN' ? (
+                <span className="settings-status neutral"><AlertCircle size={14} /> Status tidak tersedia</span>
               ) : (
                 <span className="settings-status neutral"><Circle size={14} /> Belum aktif</span>
               )}

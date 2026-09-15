@@ -37,6 +37,9 @@ export interface FonnteSendResult {
   error?: any;
   message?: string;
   usedTokenIndex?: number;
+  deliveryOutcome?: 'ACCEPTED' | 'REJECTED' | 'AMBIGUOUS';
+  providerMessageId?: string;
+  errorCode?: string;
 }
 
 /**
@@ -47,7 +50,13 @@ export async function sendFonnteMessageWithFailover(options: FonnteSendOptions):
 
   if (tokens.length === 0) {
     console.error("[Fonnte] Tidak ada FONNTE_API_TOKEN yang ditemukan di .env");
-    return { status: false, success: false, message: "Fonnte token not configured" };
+    return {
+      status: false,
+      success: false,
+      deliveryOutcome: 'REJECTED',
+      errorCode: 'FONNTE_TOKEN_NOT_CONFIGURED',
+      message: 'Fonnte token not configured',
+    };
   }
 
   let cleanPhone = (options.target || "").replace(/[^0-9]/g, "");
@@ -98,26 +107,78 @@ export async function sendFonnteMessageWithFailover(options: FonnteSendOptions):
         body: JSON.stringify(payload),
       });
 
-      const data = (await response.json().catch(() => ({}))) as { status?: boolean | string; [key: string]: any };
+      let data: { status?: boolean | string; [key: string]: any };
+      try {
+        data = (await response.json()) as { status?: boolean | string; [key: string]: any };
+      } catch {
+        console.warn('[Fonnte Dispatcher] Provider response could not be classified; send outcome is ambiguous.');
+        return {
+          status: false,
+          success: false,
+          deliveryOutcome: 'AMBIGUOUS',
+          errorCode: 'FONNTE_RESPONSE_AMBIGUOUS',
+          message: 'Fonnte response was not classifiable.',
+        };
+      }
 
       // Fonnte returns { status: true, ... } on success
       if (data && (data.status === true || data.status === "true")) {
-        console.log(`[Fonnte API Response]: Pesan sukses terkirim via token ke-${i + 1} ke ${cleanPhone}`);
-        return { status: true, success: true, data, usedTokenIndex: i + 1 };
+        const rawProviderMessageId = Array.isArray(data.id) ? data.id[0] : data.id;
+        const providerMessageId =
+          typeof rawProviderMessageId === 'string' || typeof rawProviderMessageId === 'number'
+            ? String(rawProviderMessageId)
+            : undefined;
+        console.log(`[Fonnte API Response]: Pesan diterima provider via token ke-${i + 1}`);
+        return {
+          status: true,
+          success: true,
+          data,
+          usedTokenIndex: i + 1,
+          deliveryOutcome: 'ACCEPTED',
+          providerMessageId,
+        };
       }
 
-      console.warn(
-        `[Fonnte Failover] Token ke-${i + 1} gagal mengirim pesan (Respon Fonnte: ${JSON.stringify(data)}). Mencoba token berikutnya...`
-      );
+      const explicitlyRejected = data?.status === false || data?.status === 'false';
+      if (!explicitlyRejected) {
+        console.warn('[Fonnte Dispatcher] Provider response had no definitive status; send outcome is ambiguous.');
+        return {
+          status: false,
+          success: false,
+          data,
+          deliveryOutcome: 'AMBIGUOUS',
+          errorCode: 'FONNTE_STATUS_AMBIGUOUS',
+          message: 'Fonnte response did not contain a definitive status.',
+        };
+      }
+
+      console.warn(`[Fonnte Failover] Token ke-${i + 1} ditolak provider. Mencoba token berikutnya...`);
       lastResponse = data;
     } catch (err) {
-      console.warn(`[Fonnte Failover] Error jaringan pada token ke-${i + 1}:`, err);
-      lastResponse = err;
+      // A transport failure can happen after Fonnte accepted the request. Trying
+      // another token here could duplicate the message, so stop and surface the
+      // outcome as ambiguous instead of treating it as a safe rejection.
+      console.warn(`[Fonnte Failover] Hasil token ke-${i + 1} ambigu karena kegagalan transport.`);
+      return {
+        status: false,
+        success: false,
+        error: err,
+        deliveryOutcome: 'AMBIGUOUS',
+        errorCode: 'FONNTE_TRANSPORT_AMBIGUOUS',
+        message: 'Fonnte transport outcome is ambiguous.',
+      };
     }
   }
 
   console.error("[Fonnte] Semua token Fonnte gagal mengirim pesan.");
-  return { status: false, success: false, error: lastResponse, message: "Semua token Fonnte gagal mengirim pesan." };
+  return {
+    status: false,
+    success: false,
+    error: lastResponse,
+    deliveryOutcome: 'REJECTED',
+    errorCode: 'FONNTE_REJECTED',
+    message: 'Semua token Fonnte menolak pesan.',
+  };
 }
 
 /**

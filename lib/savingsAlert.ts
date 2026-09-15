@@ -1,7 +1,11 @@
-import { sendFonnteMessageWithFailover } from "@/lib/fonnte";
 import { resolveSystemCategory, SYSTEM_CATEGORY_NAMES } from "@/lib/categories";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSavingsTransactionForExpenseCompatibility } from "@/lib/transaction-semantics";
+import {
+  buildBudgetAlertClaimArgs,
+  claimBudgetAlertDelivery,
+  sendClaimedFonnteDelivery,
+} from "@/lib/notification-delivery";
 
 function getSupabaseClient(providedClient?: any) {
   if (providedClient) return providedClient;
@@ -15,7 +19,7 @@ function getSupabaseClient(providedClient?: any) {
  * 2. 100% Over-Budget Alert (when expenses exceed 100% of safe limit, unlocking "Skip")
  *
  * Consolidates all active goals into a SINGLE WhatsApp message to avoid multi-target spam.
- * Strictly enforces 1x daily deduplication per user via the notifications table.
+ * Daily delivery identity is claimed in the private notification delivery ledger.
  */
 export async function checkAndSendOverBudgetAlert(userId: string, customSupabase?: any) {
   try {
@@ -115,13 +119,6 @@ export async function checkAndSendOverBudgetAlert(userId: string, customSupabase
     const netSafeDailyLimit = Math.max(0, baseBudget - activeGoalsCommitment);
     if (netSafeDailyLimit <= 0) return;
 
-    // Fetch existing warning notifications today for deduplication
-    const { data: existingAlerts } = await supabase
-      .from('notifications')
-      .select('id, created_at, metadata')
-      .eq('user_id', userId)
-      .eq('type', 'WARNING');
-
     const expensePercentage = (todayTotalExpenses / netSafeDailyLimit) * 100;
     const formatNum = (val: number) => new Intl.NumberFormat('id-ID').format(val);
     const formattedTotalExpenses = formatNum(todayTotalExpenses);
@@ -129,19 +126,6 @@ export async function checkAndSendOverBudgetAlert(userId: string, customSupabase
 
     // --- 100% OVER-BUDGET ALERT (CONSOLIDATED) ---
     if (expensePercentage >= 100) {
-      const alreadySent100 = existingAlerts?.some((n: any) => {
-        if (!n.created_at) return false;
-        const nDateWIB = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'Asia/Jakarta',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        }).format(new Date(n.created_at));
-        return nDateWIB === todayWIB && n.metadata?.action_type === 'OVER_BUDGET_ALERT';
-      });
-
-      if (alreadySent100) return;
-
       const overAmount = todayTotalExpenses - netSafeDailyLimit;
       const formattedOver = formatNum(overAmount);
       const totalDailySaving = activeGoals.reduce(
@@ -178,12 +162,33 @@ Target akan otomatis diperpanjang 1 hari (Mode Santai) jika tidak ada setoran ya
 
 Ketik *"Skip"* untuk konfirmasi istirahat semua target hari ini, atau ketik *"Skip [nama target]"* jika hanya ingin melewati target tertentu.`;
 
-      await sendFonnteMessageWithFailover({
+      const { claim, error: claimError } = await claimBudgetAlertDelivery(
+        supabase,
+        buildBudgetAlertClaimArgs({
+          actorUserId: userId,
+          effectiveDate: todayWIB,
+          notificationType: 'OVER_BUDGET_ALERT',
+        }),
+      );
+      if (claimError || !claim) {
+        console.error('[Savings Alert] Over-budget delivery claim failed:', claimError?.message);
+        return;
+      }
+      if (claim.out_outcome !== 'CLAIMED') return;
+
+      const delivery = await sendClaimedFonnteDelivery({
+        supabase,
+        actorUserId: userId,
+        claim,
         target: targetPhone,
         message: alertMessage,
       });
 
-      await supabase.from('notifications').insert({
+      if (delivery.finalizeError) {
+        console.error('[Savings Alert] Over-budget delivery finalization failed:', delivery.finalizeError.message);
+      }
+
+      const { error: notificationError } = await supabase.from('notifications').insert({
         user_id: userId,
         title: activeGoals.length === 1 
           ? `Peringatan Over-Budget (${activeGoals[0].title})` 
@@ -192,6 +197,7 @@ Ketik *"Skip"* untuk konfirmasi istirahat semua target hari ini, atau ketik *"Sk
         type: 'WARNING',
         metadata: {
           action_type: 'OVER_BUDGET_ALERT',
+          delivery_id: claim.out_delivery_id,
           goal_ids: activeGoals.map((g: any) => g.id),
           date: todayWIB,
           total_expenses: todayTotalExpenses,
@@ -200,26 +206,14 @@ Ketik *"Skip"* untuk konfirmasi istirahat semua target hari ini, atau ketik *"Sk
         },
       });
 
-      console.log(`🚨 Consolidated over-budget WhatsApp alert sent to ${targetPhone} for user ${userId}`);
+      if (notificationError) {
+        console.error('[Savings Alert] Over-budget UI notification insert failed:', notificationError.message);
+      }
+      console.log(`[Savings Alert] Over-budget provider outcome: ${delivery.finalState}`);
+
     }
     // --- 75% BUDGET WARNING ALERT (CONSOLIDATED) ---
     else if (expensePercentage >= 75) {
-      const alreadySent75 = existingAlerts?.some((n: any) => {
-        if (!n.created_at) return false;
-        const nDateWIB = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'Asia/Jakarta',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        }).format(new Date(n.created_at));
-        return (
-          nDateWIB === todayWIB &&
-          (n.metadata?.action_type === 'BUDGET_WARNING_75' || n.metadata?.action_type === 'OVER_BUDGET_ALERT')
-        );
-      });
-
-      if (alreadySent75) return;
-
       const remainingSafe = netSafeDailyLimit - todayTotalExpenses;
       const formattedRemaining = formatNum(remainingSafe);
       const totalDailySaving = activeGoals.reduce(
@@ -249,12 +243,33 @@ ${targetInfoText}
 
 _Tetap pantau pengeluaran Anda agar target tabungan tetap tercapai sesuai rencana!_ 💪`;
 
-      await sendFonnteMessageWithFailover({
+      const { claim, error: claimError } = await claimBudgetAlertDelivery(
+        supabase,
+        buildBudgetAlertClaimArgs({
+          actorUserId: userId,
+          effectiveDate: todayWIB,
+          notificationType: 'BUDGET_WARNING_75',
+        }),
+      );
+      if (claimError || !claim) {
+        console.error('[Savings Alert] 75% delivery claim failed:', claimError?.message);
+        return;
+      }
+      if (claim.out_outcome !== 'CLAIMED') return;
+
+      const delivery = await sendClaimedFonnteDelivery({
+        supabase,
+        actorUserId: userId,
+        claim,
         target: targetPhone,
         message: waMessage,
       });
 
-      await supabase.from('notifications').insert({
+      if (delivery.finalizeError) {
+        console.error('[Savings Alert] 75% delivery finalization failed:', delivery.finalizeError.message);
+      }
+
+      const { error: notificationError } = await supabase.from('notifications').insert({
         user_id: userId,
         title: activeGoals.length === 1
           ? `Peringatan 75% Batas Harian (${activeGoals[0].title})`
@@ -263,6 +278,7 @@ _Tetap pantau pengeluaran Anda agar target tabungan tetap tercapai sesuai rencan
         type: 'WARNING',
         metadata: {
           action_type: 'BUDGET_WARNING_75',
+          delivery_id: claim.out_delivery_id,
           goal_ids: activeGoals.map((g: any) => g.id),
           date: todayWIB,
           total_expenses: todayTotalExpenses,
@@ -271,7 +287,11 @@ _Tetap pantau pengeluaran Anda agar target tabungan tetap tercapai sesuai rencan
         },
       });
 
-      console.log(`⚠️ Consolidated 75% Budget Warning WhatsApp alert sent to ${targetPhone} for user ${userId}`);
+      if (notificationError) {
+        console.error('[Savings Alert] 75% UI notification insert failed:', notificationError.message);
+      }
+      console.log(`[Savings Alert] 75% provider outcome: ${delivery.finalState}`);
+
     }
   } catch (err) {
     console.error("[Savings Alert] Error checking expense limits:", err);
