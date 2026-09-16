@@ -619,7 +619,7 @@ export default function ChatPage() {
         return;
       }
 
-      if (txPayload.type === 'EXPENSE') {
+      if (txPayload.type === 'EXPENSE' && !idempotentReplay) {
         triggerBudgetAlertCheck()
           .then((result) => {
             if (!result.success) {

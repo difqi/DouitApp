@@ -18,6 +18,7 @@ import {
   Search,
   CheckCircle2,
   CircleAlert,
+  XCircle,
   Bot,
   Wallet,
   X
@@ -47,6 +48,12 @@ import {
   resolveTransactionKindForCategoryEdit,
   shouldExposeCategoryInOrdinaryTransactionPicker,
 } from "@/lib/transaction-semantics";
+import {
+  buildTransactionApprovalRpcArgs,
+  getTransactionApprovalResult,
+  shouldTriggerBudgetAlertForApproval,
+  type TransactionApprovalDecision,
+} from "@/lib/transaction-approval";
 
 const formatMoney = (value: number | string) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(value));
 const formatDate = (value: string) => new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Jakarta" });
@@ -80,6 +87,16 @@ function TransactionBankLogo({ bankName, className = "" }: { bankName: string; c
   );
 }
 
+function TransactionStatusBadge({ status }: { status: Transaction['status'] }) {
+  if (status === 'APPROVED') {
+    return <span className="transaction-status approved"><CheckCircle2 size={12}/> Disetujui</span>;
+  }
+  if (status === 'IGNORED') {
+    return <span className="transaction-status ignored"><XCircle size={12}/> Diabaikan</span>;
+  }
+  return <span className="transaction-status pending"><CircleAlert size={12}/> Menunggu persetujuan</span>;
+}
+
 type DisplayTransaction = Transaction & { sumber_dana?: string; category_id?: string };
 type TransactionViewMode = "list" | "calendar";
 type CalendarMonth = { year: number; month: number };
@@ -110,6 +127,7 @@ function TransactionFeedRow({ row, onSelect }: { row: DisplayTransaction; onSele
         <span className="transaction-feed-secondary">
           <span>{formatTransactionCategoryLabel(row.category, row.subcategory?.name)}</span>
           {row.status === "PENDING_APPROVAL" && <span className="transaction-feed-pending">Menunggu</span>}
+          {row.status === "IGNORED" && <span className="transaction-feed-pending">Diabaikan</span>}
         </span>
       </span>
       <span className={`transaction-feed-amount ${row.type === "INCOME" ? "income" : "expense"}`}>{row.type === "INCOME" ? "+" : "−"}{formatMoney(row.amount)}</span>
@@ -234,11 +252,7 @@ function TransactionDetailSections({ row }: { row: DisplayTransaction }) {
             <h3>{row.merchant}</h3>
             <div className="transaction-detail-meta">
               <span className="transaction-detail-type">{row.type === 'INCOME' ? 'Pemasukan' : 'Pengeluaran'}</span>
-              {row.status === 'APPROVED' ? (
-                <span className="transaction-status approved"><CheckCircle2 size={12}/> Disetujui</span>
-              ) : (
-                <span className="transaction-status pending"><CircleAlert size={12}/> Menunggu persetujuan</span>
-              )}
+              <TransactionStatusBadge status={row.status} />
             </div>
           </div>
           <strong className={`transaction-detail-amount ${row.type === 'INCOME' ? 'income' : 'expense'}`}>{row.type === 'INCOME' ? '+' : '−'}{formatMoney(row.amount)}</strong>
@@ -396,6 +410,7 @@ export function TransactionsView() {
   const [editSubcategoryId, setEditSubcategoryId] = useState<string | null>(null);
   const [editSumberDana, setEditSumberDana] = useState("Tunai");
   const [isUpdatingTransaction, setIsUpdatingTransaction] = useState(false);
+  const [decidingTransactionId, setDecidingTransactionId] = useState<string | null>(null);
   
   const [rows, setRows] = useState<Transaction[]>(cachedWorkspaceTx);
   const [todayActivityRows, setTodayActivityRows] = useState<Transaction[]>(cachedWorkspaceTodayTx);
@@ -407,6 +422,7 @@ export function TransactionsView() {
   const listScrollPositionRef = useRef(0);
   const advancedOptionRef = useRef<HTMLLabelElement>(null);
   const isUpdatingTransactionRef = useRef(false);
+  const decidingTransactionIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     if (!saveRule) return;
@@ -544,33 +560,88 @@ export function TransactionsView() {
     return sources;
   }, new Map<string, { name: string; count: number }>()).values());
 
-  async function approveTransaction(row: any) {
-    if (!user) return;
+  async function decideTransaction(row: DisplayTransaction, decision: TransactionApprovalDecision) {
+    if (!user || decidingTransactionIdsRef.current.has(row.id)) return;
     const supabase = createClient();
 
-    const category = categories.find((item) =>
-      item.id === row.category_id && item.type.toUpperCase() === row.type,
-    );
-    if (!category) {
-      toast.error("Pilih kategori yang valid sebelum menyetujui transaksi.");
-      return;
-    }
-    const { data: safeCategory, error: categoryError } = await supabase
-      .from('categories')
-      .select('id')
-      .eq('id', category.id)
-      .eq('type', row.type)
-      .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
-      .maybeSingle();
-    if (categoryError || !safeCategory) {
-      toast.error("Kategori tidak dapat digunakan.");
-      return;
+    if (decision === 'APPROVE') {
+      const category = categories.find((item) =>
+        item.id === row.category_id && item.type.toUpperCase() === row.type,
+      );
+      if (!category) {
+        toast.error("Pilih kategori yang valid sebelum menyetujui transaksi.");
+        return;
+      }
+      const { data: safeCategory, error: categoryError } = await supabase
+        .from('categories')
+        .select('id')
+        .eq('id', category.id)
+        .eq('type', row.type)
+        .or(`user_id.eq.${user.id},and(is_system.eq.true,user_id.is.null)`)
+        .maybeSingle();
+      if (categoryError || !safeCategory) {
+        toast.error("Kategori tidak dapat digunakan.");
+        return;
+      }
     }
 
-    // Update status to APPROVED
-    await supabase.from('transactions').update({ status: 'APPROVED' }).eq('id', row.id);
-    if (row.type === 'EXPENSE' && user) {
-      triggerBudgetAlertCheck().catch(console.error);
+    decidingTransactionIdsRef.current.add(row.id);
+    setDecidingTransactionId(row.id);
+    try {
+      const { data, error } = await supabase.rpc(
+        'set_transaction_approval_state',
+        buildTransactionApprovalRpcArgs({
+          transactionId: row.id,
+          expectedStatus: row.status,
+          decision,
+        }),
+      );
+      if (error) throw error;
+
+      const result = getTransactionApprovalResult(data);
+      if (!result) throw new Error('Transaction approval result is missing or invalid');
+
+      if (result.out_current_status) {
+        const applyStatus = (transaction: Transaction) => transaction.id === result.out_transaction_id
+          ? { ...transaction, status: result.out_current_status! }
+          : transaction;
+        cachedWorkspaceTx = cachedWorkspaceTx.map(applyStatus);
+        cachedWorkspaceTodayTx = cachedWorkspaceTodayTx.map(applyStatus);
+        setRows(currentRows => currentRows.map(applyStatus));
+        setTodayActivityRows(currentRows => currentRows.map(applyStatus));
+        setDetailRow(currentRow => currentRow?.id === result.out_transaction_id
+          ? { ...currentRow, status: result.out_current_status! }
+          : currentRow);
+      }
+
+      if (result.out_outcome === 'NOT_FOUND') {
+        toast.error("Transaksi tidak ditemukan atau tidak dapat diakses.");
+        return;
+      }
+      if (result.out_outcome === 'INVALID_TRANSITION') {
+        toast.error("Status transaksi sudah berubah. Muat ulang sebelum mencoba lagi.");
+        return;
+      }
+      if (result.out_outcome === 'ALREADY_APPROVED') {
+        toast.info("Transaksi sudah disetujui.");
+        return;
+      }
+      if (result.out_outcome === 'ALREADY_REJECTED') {
+        toast.info("Transaksi sudah diabaikan.");
+        return;
+      }
+
+      toast.success(decision === 'APPROVE'
+        ? "Transaksi disetujui."
+        : "Transaksi diabaikan.");
+      if (shouldTriggerBudgetAlertForApproval(result)) {
+        triggerBudgetAlertCheck().catch(console.error);
+      }
+    } catch {
+      toast.error("Keputusan transaksi belum dapat disimpan. Silakan coba lagi.");
+    } finally {
+      decidingTransactionIdsRef.current.delete(row.id);
+      setDecidingTransactionId(currentId => currentId === row.id ? null : currentId);
     }
   }
 
@@ -653,8 +724,7 @@ export function TransactionsView() {
           ? { transaction_kind: nextTransactionKind }
           : {}),
         sumber_dana: newSumberDana,
-        notes: newNotes,
-        status: 'APPROVED'
+        notes: newNotes
       }).eq('id', editRow.id).eq('user_id', user.id);
       if (transactionError) throw transactionError;
 
@@ -671,8 +741,7 @@ export function TransactionsView() {
         if (shouldRetroactive) {
           const sharedRetroactivePayload = {
             sumber_dana: newSumberDana,
-            notes: newNotes,
-            status: 'APPROVED'
+            notes: newNotes
           };
           const { error: unchangedCategoryError } = await supabase
             .from('transactions')
@@ -880,17 +949,24 @@ export function TransactionsView() {
             <PencilLine size={16} /> Edit transaksi
           </button>
           {detailRow.status === 'PENDING_APPROVAL' && (
-            <button
-              type="button"
-              className="button primary"
-              onClick={() => {
-                void approveTransaction(detailRow);
-                setDetailRow(null);
-                restoreTransactionListPosition();
-              }}
-            >
-              <CheckCircle2 size={16} /> Setujui
-            </button>
+            <>
+              <button
+                type="button"
+                className="button secondary"
+                disabled={decidingTransactionId === detailRow.id}
+                onClick={() => void decideTransaction(detailRow, 'REJECT')}
+              >
+                <XCircle size={16} /> Abaikan
+              </button>
+              <button
+                type="button"
+                className="button primary"
+                disabled={decidingTransactionId === detailRow.id}
+                onClick={() => void decideTransaction(detailRow, 'APPROVE')}
+              >
+                <CheckCircle2 size={16} /> Setujui
+              </button>
+            </>
           )}
         </footer>
       </main>
@@ -1110,11 +1186,7 @@ export function TransactionsView() {
                     </div>
                   </td>
                   <td className="transaction-status-cell">
-                    {row.status === 'APPROVED' ? (
-                      <span className="transaction-status approved"><CheckCircle2 size={12}/> Disetujui</span>
-                    ) : (
-                      <span className="transaction-status pending"><CircleAlert size={12}/> Menunggu</span>
-                    )}
+                    <TransactionStatusBadge status={row.status} />
                   </td>
                   <td className={`transaction-amount ${row.type === "INCOME" ? "income" : "expense"}`}>
                     {row.type === "INCOME" ? "+" : "−"}{formatMoney(row.amount)}
@@ -1123,7 +1195,20 @@ export function TransactionsView() {
                     {row.status === 'PENDING_APPROVAL' ? (
                       <div>
                         <button type="button" onClick={() => openEditModal(row)} className="transaction-menu-button" aria-label={`Edit transaksi ${row.merchant}`}><MoreHorizontal size={17} /></button>
-                        <button type="button" onClick={() => approveTransaction(row)} className="transaction-approve-button"><CheckCircle2 size={14}/> Setujui</button>
+                        <button
+                          type="button"
+                          onClick={() => void decideTransaction(row as DisplayTransaction, 'REJECT')}
+                          className="transaction-menu-button"
+                          disabled={decidingTransactionId === row.id}
+                          aria-label={`Abaikan transaksi ${row.merchant}`}
+                          title="Abaikan transaksi"
+                        ><XCircle size={17} /></button>
+                        <button
+                          type="button"
+                          onClick={() => void decideTransaction(row as DisplayTransaction, 'APPROVE')}
+                          className="transaction-approve-button"
+                          disabled={decidingTransactionId === row.id}
+                        ><CheckCircle2 size={14}/> Setujui</button>
                       </div>
                     ) : (
                       <button type="button" onClick={() => openEditModal(row)} className="transaction-menu-button" aria-label={`Edit transaksi ${row.merchant}`}><MoreHorizontal size={17} /></button>
@@ -1162,7 +1247,20 @@ export function TransactionsView() {
             <footer className="transaction-detail-actions">
               <button type="button" className="button secondary" onClick={() => { const row = detailRow; setDetailRow(null); openEditModal(row); }}><PencilLine size={16} /> Edit transaksi</button>
               {detailRow.status === 'PENDING_APPROVAL' && (
-                <button type="button" className="button primary" onClick={() => { void approveTransaction(detailRow); setDetailRow(null); }}><CheckCircle2 size={16} /> Setujui</button>
+                <>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    disabled={decidingTransactionId === detailRow.id}
+                    onClick={() => void decideTransaction(detailRow, 'REJECT')}
+                  ><XCircle size={16} /> Abaikan</button>
+                  <button
+                    type="button"
+                    className="button primary"
+                    disabled={decidingTransactionId === detailRow.id}
+                    onClick={() => void decideTransaction(detailRow, 'APPROVE')}
+                  ><CheckCircle2 size={16} /> Setujui</button>
+                </>
               )}
             </footer>
           </section>
